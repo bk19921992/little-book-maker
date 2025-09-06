@@ -1,42 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=Fredoka:wght@300;400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* Storybook Design System - Warm, child-friendly, professional */
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Core colors - warm and friendly */
+    --background: 45 30% 98%;
+    --foreground: 25 25% 15%;
 
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card: 45 40% 97%;
+    --card-foreground: 25 25% 15%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover: 45 40% 97%;
+    --popover-foreground: 25 25% 15%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    /* Primary - warm amber/gold */
+    --primary: 35 85% 55%;
+    --primary-foreground: 45 30% 98%;
+    --primary-soft: 35 70% 85%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    /* Secondary - soft coral */
+    --secondary: 15 75% 75%;
+    --secondary-foreground: 25 25% 15%;
+    --secondary-soft: 15 60% 92%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    /* Accent - playful purple */
+    --accent: 260 60% 70%;
+    --accent-foreground: 45 30% 98%;
+    --accent-soft: 260 40% 92%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    /* Story theme colors */
+    --story-calm: 200 60% 75%;
+    --story-adventure: 25 80% 65%;
+    --story-magical: 280 65% 75%;
+    --story-nature: 120 50% 60%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    /* Text colors */
+    --muted: 45 20% 92%;
+    --muted-foreground: 25 15% 45%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 45 30% 98%;
 
-    --radius: 0.5rem;
+    --border: 45 25% 88%;
+    --input: 45 25% 88%;
+    --ring: 35 85% 55%;
+
+    --radius: 12px;
+
+    /* Gradients */
+    --gradient-warm: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--secondary)));
+    --gradient-soft: linear-gradient(180deg, hsl(var(--background)), hsl(var(--muted)));
+    --gradient-story: linear-gradient(135deg, hsl(var(--story-calm)), hsl(var(--story-magical)));
+
+    /* Shadows */
+    --shadow-soft: 0 4px 20px -4px hsl(var(--primary) / 0.15);
+    --shadow-card: 0 2px 12px -2px hsl(25 25% 15% / 0.08);
+    --shadow-story: 0 8px 32px -8px hsl(var(--accent) / 0.25);
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 
     --sidebar-background: 0 0% 98%;
 
@@ -100,6 +128,64 @@ All colors MUST be HSL.
   }
 
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
+    font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
+
+  h1, h2, h3 {
+    font-family: 'Fredoka', 'Nunito', sans-serif;
+    font-weight: 600;
+  }
+}
+
+@layer components {
+  .story-card {
+    @apply bg-card border border-border rounded-2xl p-6 shadow-[var(--shadow-card)] transition-[var(--transition-smooth)];
+  }
+
+  .story-card:hover {
+    @apply shadow-[var(--shadow-soft)] transform -translate-y-1;
+  }
+
+  .gradient-warm {
+    background: var(--gradient-warm);
+  }
+
+  .gradient-story {
+    background: var(--gradient-story);
+  }
+
+  .text-gradient {
+    background: var(--gradient-warm);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .animate-gentle-bounce {
+    animation: gentle-bounce 2s ease-in-out infinite;
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.6s ease-out forwards;
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.5s ease-out forwards;
+  }
+}
+
+@keyframes gentle-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
 }

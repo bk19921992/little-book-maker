@@ -1,0 +1,124 @@
+import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
+
+const API_BASE = import.meta.env.DEV ? 'http://localhost:8080' : '';
+
+// API client for communicating with the backend
+class APIClient {
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const url = `${API_BASE}/api${endpoint}`;
+    
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(error || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async planStory(config: StoryConfig): Promise<PlanResponse> {
+    return this.request<PlanResponse>('/story/plan', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async writeStory(config: StoryConfig, outline: StoryOutline): Promise<WriteResponse> {
+    return this.request<WriteResponse>('/story/write', {
+      method: 'POST',
+      body: JSON.stringify({ config, outline }),
+    });
+  }
+
+  async generateImages(
+    pageSize: PageSizePreset,
+    prompts: { page: number; prompt: string; seed?: number }[]
+  ): Promise<ImageGenerateResponse> {
+    return this.request<ImageGenerateResponse>('/images/generate', {
+      method: 'POST',
+      body: JSON.stringify({
+        pageSize,
+        dpi: 300,
+        bleedMm: 3,
+        prompts,
+      }),
+    });
+  }
+
+  async exportPDF(
+    config: StoryConfig,
+    pages: StoryPage[],
+    includeBleed: boolean = true
+  ): Promise<ExportResponse> {
+    return this.request<ExportResponse>('/export/pdf', {
+      method: 'POST',
+      body: JSON.stringify({
+        config,
+        pages,
+        includeBleed,
+      }),
+    });
+  }
+
+  async createPrintOrder(
+    provider: 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO',
+    pdfUrl: string,
+    pageSize: PageSizePreset
+  ): Promise<PrintOrderResponse> {
+    return this.request<PrintOrderResponse>('/print/order', {
+      method: 'POST',
+      body: JSON.stringify({
+        provider,
+        pdfUrl,
+        pageSize,
+      }),
+    });
+  }
+
+  // Mock data for development
+  async getMockStory(): Promise<{ config: StoryConfig; outline: StoryOutline; pages: StoryPage[] }> {
+    // Return a sample story for testing
+    const config: StoryConfig = {
+      children: ['Emma', 'Sam'],
+      storyType: 'Adventure',
+      themePreset: 'Calm pastels',
+      themeCustom: null,
+      palette: ['#FFB5A7', '#F8CD07', '#A8E6CF', '#DDA0DD'],
+      characters: ['Dog', 'Dragon'],
+      setting: 'Forest',
+      educationalFocus: 'kindness',
+      readingLevel: 'Early 4–5',
+      lengthPages: 10,
+      narrationStyle: 'Simple prose',
+      personal: {
+        town: 'Brighton',
+        favouriteToy: 'teddy bear',
+        favouriteColour: 'blue',
+        pets: 'cat named Whiskers',
+      },
+      contentSafety: true,
+      imageStyle: 'Picture-book',
+      pageSize: 'A5 portrait',
+      imageSeed: 12345,
+    };
+
+    return new Promise(resolve => {
+      setTimeout(() => {
+        resolve({
+          config,
+          outline: { pages: [] },
+          pages: [],
+        });
+      }, 1000);
+    });
+  }
+}
+
+export const api = new APIClient();
