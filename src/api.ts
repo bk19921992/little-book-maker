@@ -29,7 +29,18 @@ class APIClient {
       throw new Error(errorMessage);
     }
 
-    return response.json();
+    const responseText = await response.text();
+    
+    // Check if response is HTML instead of JSON (indicates Supabase functions not working)
+    if (responseText.trim().startsWith('<!doctype html>') || responseText.trim().startsWith('<html')) {
+      throw new Error('Supabase connection required. Please click the green Supabase button to connect your project.');
+    }
+
+    try {
+      return JSON.parse(responseText);
+    } catch (error) {
+      throw new Error(`Invalid JSON response: ${responseText.substring(0, 100)}...`);
+    }
   }
 
   async planStory(config: StoryConfig): Promise<PlanResponse> {
