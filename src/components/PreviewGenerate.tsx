@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, BookOpen, Image, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
 import { StoryConfig, StoryPage, StoryOutline, StyleBible } from '../types';
 import { api } from '../api';
+import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
 
 interface PreviewGenerateProps {
@@ -30,6 +31,15 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
 
   const generateStory = async () => {
     try {
+      // Validate config first
+      const validationErrors = validateStoryConfig(config);
+      if (validationErrors.length > 0) {
+        const errorMessages = validationErrors.map(e => e.message).join(', ');
+        setError(`Please fix these issues: ${errorMessages}`);
+        toast.error('Please complete the setup form');
+        return;
+      }
+
       setError(null);
       setCurrentStep('planning');
       setProgress(10);

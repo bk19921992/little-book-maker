@@ -1,11 +1,11 @@
 import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
 
-const API_BASE = import.meta.env.DEV ? 'http://localhost:8080' : '';
+const API_BASE = '/functions/v1';
 
 // API client for communicating with the backend
 class APIClient {
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${API_BASE}/api${endpoint}`;
+    const url = `${API_BASE}${endpoint}`;
     
     const response = await fetch(url, {
       headers: {
@@ -16,22 +16,31 @@ class APIClient {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(error || `HTTP ${response.status}`);
+      const errorText = await response.text();
+      let errorMessage = `HTTP ${response.status}`;
+      
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.error || errorMessage;
+      } catch {
+        errorMessage = errorText || errorMessage;
+      }
+      
+      throw new Error(errorMessage);
     }
 
     return response.json();
   }
 
   async planStory(config: StoryConfig): Promise<PlanResponse> {
-    return this.request<PlanResponse>('/story/plan', {
+    return this.request<PlanResponse>('/story-plan', {
       method: 'POST',
-      body: JSON.stringify(config),
+      body: JSON.stringify({ config }),
     });
   }
 
   async writeStory(config: StoryConfig, outline: StoryOutline): Promise<WriteResponse> {
-    return this.request<WriteResponse>('/story/write', {
+    return this.request<WriteResponse>('/story-write', {
       method: 'POST',
       body: JSON.stringify({ config, outline }),
     });
@@ -41,12 +50,10 @@ class APIClient {
     pageSize: PageSizePreset,
     prompts: { page: number; prompt: string; seed?: number }[]
   ): Promise<ImageGenerateResponse> {
-    return this.request<ImageGenerateResponse>('/images/generate', {
+    return this.request<ImageGenerateResponse>('/generate-images', {
       method: 'POST',
       body: JSON.stringify({
         pageSize,
-        dpi: 300,
-        bleedMm: 3,
         prompts,
       }),
     });
