@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { HfInference } from 'https://esm.sh/@huggingface/inference@2.3.2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,10 +15,12 @@ serve(async (req) => {
     const { pageSize, prompts } = await req.json()
     console.log('Generate images request received:', { pageSize, prompts })
     
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!geminiKey) {
-      throw new Error('GEMINI_API_KEY is required')
+    const hfToken = Deno.env.get('HF_TOKEN')
+    if (!hfToken) {
+      throw new Error('HF_TOKEN is required')
     }
+    
+    const hf = new HfInference(hfToken)
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
     const pageSizes = {
@@ -29,7 +32,7 @@ serve(async (req) => {
     const dimensions = pageSizes[pageSize] || pageSizes['A5 portrait']
     const images = []
 
-    // Generate AI images using Gemini Flash 2.5
+    // Generate AI images using HuggingFace FLUX.1-schnell
     for (const promptData of prompts) {
       try {
         console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
@@ -57,45 +60,24 @@ serve(async (req) => {
         
         let dataUrl: string | null = null
 
-        // Use Google Gemini 2.5 Flash Image Preview for image generation
-        const geminiPayload = {
-          contents: [{
-            parts: [{
-              text: enhancedPrompt
-            }]
-          }]
-        }
-
-        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${geminiKey}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(geminiPayload),
-        })
-
-        if (geminiResponse.ok) {
-          const result = await geminiResponse.json()
-          console.log('Gemini API response:', JSON.stringify(result, null, 2))
+        // Use HuggingFace FLUX.1-schnell for fast, high-quality image generation
+        try {
+          console.log(`Generating image for page ${promptData.page} with HuggingFace FLUX.1-schnell`)
           
-          if (result.candidates && result.candidates.length > 0) {
-            const candidate = result.candidates[0]
-            if (candidate.content && candidate.content.parts) {
-              // Look for image data in the response
-              for (const part of candidate.content.parts) {
-                if (part.inlineData && part.inlineData.data) {
-                  // Convert base64 to data URL
-                  const mimeType = part.inlineData.mimeType || 'image/jpeg'
-                  dataUrl = `data:${mimeType};base64,${part.inlineData.data}`
-                  console.log(`Generated high-quality image for page ${promptData.page} using Gemini Flash 2.5`)
-                  break
-                }
-              }
-            }
-          }
-        } else {
-          const errorText = await geminiResponse.text()
-          console.error(`Gemini API error for page ${promptData.page}:`, geminiResponse.status, errorText)
+          const image = await hf.textToImage({
+            inputs: enhancedPrompt,
+            model: 'black-forest-labs/FLUX.1-schnell',
+          })
+
+          // Convert the blob to a base64 string
+          const arrayBuffer = await image.arrayBuffer()
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+          dataUrl = `data:image/png;base64,${base64}`
+          
+          console.log(`Generated high-quality image for page ${promptData.page} using HuggingFace FLUX.1-schnell`)
+          
+        } catch (hfError) {
+          console.error(`HuggingFace API error for page ${promptData.page}:`, hfError)
         }
 
         if (!dataUrl) {
