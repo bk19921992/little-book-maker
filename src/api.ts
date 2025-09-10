@@ -15,16 +15,28 @@ class APIClient {
 
       if (error) {
         console.error(`Error calling ${functionName}:`, error);
-        throw new Error(error.message || `Failed to call ${functionName}`);
+        const msg = (error as any)?.message || 'Edge Function error';
+        // Retry once if the request failed to send (common transient issue)
+        if (msg.includes('Failed to send a request to the Edge Function')) {
+          console.warn(`[${functionName}] Retry after transient send failure...`);
+          await new Promise((r) => setTimeout(r, 600));
+          const retry = await supabase.functions.invoke(functionName, { body, headers });
+          if (retry.error) {
+            throw new Error(`[${functionName}] ${retry.error.message || 'Edge Function request failed again'}`);
+          }
+          return retry.data as T;
+        }
+        throw new Error(`[${functionName}] ${msg}`);
       }
 
       return data as T;
     } catch (error) {
       console.error(`Error invoking function ${functionName}:`, error);
       if (error instanceof Error) {
-        throw error;
+        // Surface a clearer message including the function name
+        throw new Error(`[${functionName}] ${error.message}`);
       }
-      throw new Error(`Failed to invoke ${functionName}`);
+      throw new Error(`[${functionName}] Failed to invoke`);
     }
   }
 
