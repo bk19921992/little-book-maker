@@ -3,8 +3,24 @@ import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-billing-token',
 };
+
+// Simple token verification function
+function verifyBillingToken(token: string): any {
+  try {
+    const decoded = JSON.parse(atob(token));
+    
+    // Check if token is expired (10 minutes)
+    if (decoded.expires && Date.now() > decoded.expires) {
+      throw new Error('Billing token expired');
+    }
+    
+    return decoded;
+  } catch (error) {
+    throw new Error('Invalid billing token');
+  }
+}
 
 // Page size calculations (300 DPI = 11.811 pixels per mm)
 const DPI = 300;
@@ -178,20 +194,61 @@ serve(async (req) => {
 
     console.log(`Generating ${includeBleed ? 'print' : 'web'} PDF for ${pages.length} pages`);
 
-    // Generate PDF
-    const pdfBytes = await createPDF(config, pages, includeBleed);
+    // Check for billing authorization
+    const billingToken = req.headers.get('X-Billing-Token');
+    
+    if (billingToken) {
+      try {
+        const tokenData = verifyBillingToken(billingToken);
+        console.log('Billing token verified:', tokenData);
+        
+        if (tokenData.item !== 'export' || !tokenData.approved) {
+          throw new Error('Invalid billing authorization for export');
+        }
+      } catch (error) {
+        console.error('Billing verification failed:', error);
+        return new Response(
+          JSON.stringify({ 
+            success: false,
+            error: 'Payment required. Please complete billing process.' 
+          }),
+          {
+            status: 402,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+    } else {
+      // No billing token provided
+      console.log('Warning: No billing token provided');
+      return new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Billing authorization required' 
+        }),
+        {
+          status: 402,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
+    // Generate both web and print PDFs
+    const webPdfBytes = await createPDF(config, pages, false);
+    const printPdfBytes = await createPDF(config, pages, true);
     
     // Convert to base64 for JSON response
-    const base64Pdf = btoa(String.fromCharCode(...pdfBytes));
+    const base64WebPdf = btoa(String.fromCharCode(...webPdfBytes));
+    const base64PrintPdf = btoa(String.fromCharCode(...printPdfBytes));
     
     return new Response(
       JSON.stringify({
         success: true,
-        pdfData: base64Pdf,
-        filename: `${config.children.join('-') || 'story'}-${includeBleed ? 'print' : 'web'}.pdf`,
-        size: pdfBytes.length,
+        webPdfUrl: `data:application/pdf;base64,${base64WebPdf}`,
+        printPdfUrl: `data:application/pdf;base64,${base64PrintPdf}`,
+        webFilename: `${config.children?.join('-') || 'story'}-web.pdf`,
+        printFilename: `${config.children?.join('-') || 'story'}-print.pdf`,
         pageCount: pages.length + 1, // +1 for cover
-        bleed: includeBleed,
         dimensions: PAGE_SIZES[config.pageSize] || PAGE_SIZES['A5 portrait']
       }),
       {

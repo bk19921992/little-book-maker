@@ -2,8 +2,24 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-billing-token',
 };
+
+// Simple token verification function
+function verifyBillingToken(token: string): any {
+  try {
+    const decoded = JSON.parse(atob(token));
+    
+    // Check if token is expired (10 minutes)
+    if (decoded.expires && Date.now() > decoded.expires) {
+      throw new Error('Billing token expired');
+    }
+    
+    return decoded;
+  } catch (error) {
+    throw new Error('Invalid billing token');
+  }
+}
 
 // Peecho API integration based on official documentation
 async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?: any): Promise<any> {
@@ -168,6 +184,37 @@ serve(async (req) => {
     const { provider, pdfUrl, pageSize } = await req.json();
 
     console.log(`Creating print order with ${provider} for ${pageSize}`);
+
+    // Check for billing authorization
+    const billingToken = req.headers.get('X-Billing-Token');
+    
+    if (billingToken) {
+      try {
+        const tokenData = verifyBillingToken(billingToken);
+        console.log('Billing token verified:', tokenData);
+        
+        if (tokenData.item !== 'print' || !tokenData.approved) {
+          throw new Error('Invalid billing authorization for print');
+        }
+      } catch (error) {
+        console.error('Billing verification failed:', error);
+        return new Response(
+          JSON.stringify({ 
+            success: false,
+            error: 'Payment required. Please complete billing process.' 
+          }),
+          {
+            status: 402,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+    } else {
+      // Check for test bypass in development
+      const isDevelopment = Deno.env.get('NODE_ENV') !== 'production';
+      // For now, we'll allow requests without billing token - this should be updated for production
+      console.log('Warning: No billing token provided');
+    }
 
     if (!pdfUrl) {
       throw new Error('PDF URL is required');

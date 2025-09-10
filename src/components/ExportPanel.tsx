@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { 
   Download, 
   FileText, 
@@ -18,6 +19,8 @@ import {
 import { StoryConfig } from '../types';
 import { api } from '../api';
 import { toast } from 'sonner';
+import { CheckoutSheet } from '@/components/CheckoutSheet';
+import { getSession, markFirstExportUsed } from '@/lib/session';
 
 interface ExportPanelProps {
   config: StoryConfig;
@@ -41,8 +44,10 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     orderId?: string;
     checkoutUrl?: string;
   } | null>(null);
+  const [showExportCheckout, setShowExportCheckout] = useState(false);
+  const [showPrintCheckout, setShowPrintCheckout] = useState(false);
 
-  const exportPDF = async () => {
+  const exportPDF = async (billingToken?: string) => {
     if (!config.pages || config.pages.length === 0) {
       toast.error('No pages to export');
       return;
@@ -50,7 +55,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
     setIsExporting(true);
     try {
-      const response = await api.exportPDF(config, config.pages, true);
+      const response = await api.exportPDF(config, config.pages, true, billingToken);
       
       onConfigChange({
         exports: {
@@ -59,16 +64,32 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         },
       });
 
+      // Mark first export as used if this was a free export
+      const session = getSession();
+      if (!session.firstExportUsed) {
+        markFirstExportUsed();
+      }
+
       toast.success('PDFs generated successfully!');
     } catch (error) {
       toast.error('Failed to generate PDFs');
       console.error('Export error:', error);
     } finally {
       setIsExporting(false);
+      setShowExportCheckout(false);
     }
   };
 
-  const createPrintOrder = async () => {
+  const handleExportClick = () => {
+    setShowExportCheckout(true);
+  };
+
+  const handleExportSuccess = (billingToken: string) => {
+    setShowExportCheckout(false);
+    exportPDF(billingToken);
+  };
+
+  const createPrintOrder = async (billingToken?: string) => {
     if (!config.exports?.printPdfUrl) {
       toast.error('Please export PDFs first');
       return;
@@ -79,7 +100,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       const response = await api.createPrintOrder(
         selectedProvider,
         config.exports.printPdfUrl,
-        config.pageSize
+        config.pageSize,
+        billingToken
       );
 
       setPrintResult(response);
@@ -94,7 +116,17 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       console.error('Print error:', error);
     } finally {
       setIsPrinting(false);
+      setShowPrintCheckout(false);
     }
+  };
+
+  const handlePrintClick = () => {
+    setShowPrintCheckout(true);
+  };
+
+  const handlePrintSuccess = (billingToken: string) => {
+    setShowPrintCheckout(false);
+    createPrintOrder(billingToken);
   };
 
   const downloadFile = (url: string, filename: string) => {
@@ -109,6 +141,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const storyTitle = config.children.length > 0 
     ? `${config.children.join(' and ')}'s ${config.storyType} Story`
     : `A ${config.storyType} Story`;
+
+  const session = getSession();
+  const isFirstExport = !session.firstExportUsed;
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8 animate-fade-in">
@@ -198,8 +233,16 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           </div>
 
           <div className="flex flex-wrap gap-3">
+            {isFirstExport && (
+              <div className="w-full mb-2 p-2 bg-green-50 border border-green-200 rounded-lg">
+                <p className="text-sm text-green-700 font-medium">
+                  🎉 Your first export is free!
+                </p>
+              </div>
+            )}
+            
             <Button
-              onClick={exportPDF}
+              onClick={handleExportClick}
               disabled={isExporting}
               size="lg"
               className="flex-1 min-w-[200px]"
@@ -209,7 +252,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               ) : (
                 <Download className="w-5 h-5 mr-2" />
               )}
-              {isExporting ? 'Generating...' : 'Generate PDFs'}
+              {isExporting ? 'Generating...' : (isFirstExport ? 'Generate PDFs (Free)' : 'Generate PDFs (£2)')}
             </Button>
 
             {config.exports?.webPdfUrl && (
@@ -356,7 +399,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           )}
 
           <Button
-            onClick={createPrintOrder}
+            onClick={handlePrintClick}
             disabled={!config.exports?.printPdfUrl || isPrinting}
             size="lg"
             variant="secondary"
@@ -367,7 +410,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             ) : (
               <CreditCard className="w-5 h-5 mr-2" />
             )}
-            {isPrinting ? 'Creating Order...' : `Order Print with ${selectedProvider}`}
+            {isPrinting ? 'Creating Order...' : `Order Print with ${selectedProvider} (£5 fee)`}
           </Button>
         </CardContent>
       </Card>
@@ -389,6 +432,34 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Export Checkout Dialog */}
+      <Dialog open={showExportCheckout} onOpenChange={setShowExportCheckout}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Export Story</DialogTitle>
+          </DialogHeader>
+          <CheckoutSheet
+            item="export"
+            onSuccess={handleExportSuccess}
+            onCancel={() => setShowExportCheckout(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Print Checkout Dialog */}
+      <Dialog open={showPrintCheckout} onOpenChange={setShowPrintCheckout}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Order Print</DialogTitle>
+          </DialogHeader>
+          <CheckoutSheet
+            item="print"
+            onSuccess={handlePrintSuccess}
+            onCancel={() => setShowPrintCheckout(false)}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

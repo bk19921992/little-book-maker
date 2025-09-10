@@ -3,10 +3,11 @@ import { supabase } from '@/integrations/supabase/client';
 
 // API client for communicating with Supabase edge functions
 class APIClient {
-  private async invokeFunction<T>(functionName: string, body: any): Promise<T> {
+  private async invokeFunction<T>(functionName: string, body: any, headers: Record<string, string> = {}): Promise<T> {
     try {
       const { data, error } = await supabase.functions.invoke(functionName, {
         body,
+        headers,
       });
 
       if (error) {
@@ -45,25 +46,37 @@ class APIClient {
   async exportPDF(
     config: StoryConfig,
     pages: StoryPage[],
-    includeBleed: boolean = true
+    includeBleed: boolean = true,
+    authToken?: string
   ): Promise<ExportResponse> {
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['X-Billing-Token'] = authToken;
+    }
+    
     return this.invokeFunction<ExportResponse>('export-pdf', {
       config,
       pages,
       includeBleed,
-    });
+    }, headers);
   }
 
   async createPrintOrder(
     provider: 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO',
     pdfUrl: string,
-    pageSize: PageSizePreset
+    pageSize: PageSizePreset,
+    authToken?: string
   ): Promise<PrintOrderResponse> {
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['X-Billing-Token'] = authToken;
+    }
+    
     return this.invokeFunction<PrintOrderResponse>('create-print-order', {
       provider,
       pdfUrl,
       pageSize,
-    });
+    }, headers);
   }
 
   // Mock data for development
