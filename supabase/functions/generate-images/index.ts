@@ -73,28 +73,30 @@ Style: soft watercolor rendering, warm lighting, cozy magical mood, child-friend
 
         // Prefer Hugging Face if token available
         if (hfToken) {
-          const hfResp = await fetch('https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${hfToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              inputs: enhancedPrompt,
-              parameters: {
-                width: Math.min(dimensions.width, 1024),
-                height: Math.min(dimensions.height, 1024),
-              }
-            }),
-          })
+        const response = await fetch('https://router.huggingface.co/together/v1/images/generations', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${hfToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            prompt: enhancedPrompt,
+            model: 'black-forest-labs/FLUX.1-dev',
+            response_format: 'base64',
+            width: Math.min(dimensions.width, 1024),
+            height: Math.min(dimensions.height, 1024),
+            num_inference_steps: 4
+          }),
+        })
 
-          if (hfResp.ok) {
-            const blob = await hfResp.blob()
-            const buf = await blob.arrayBuffer()
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
-            dataUrl = `data:image/png;base64,${base64}`
+          if (response.ok) {
+            const result = await response.json()
+            const base64Data = result.data?.[0]?.b64_json || result.b64_json
+            if (base64Data) {
+              dataUrl = `data:image/png;base64,${base64Data}`
+            }
           } else {
-            console.error(`HF error for page ${promptData.page}:`, hfResp.status, await hfResp.text())
+            console.error(`HF router error for page ${promptData.page}:`, response.status, await response.text())
           }
         }
 

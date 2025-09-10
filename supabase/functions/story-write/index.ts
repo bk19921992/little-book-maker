@@ -111,7 +111,8 @@ Important Instructions:
       }
 
       const aiResponse = await response.json()
-      let pageText = aiResponse.choices[0].message.content.trim()
+      let pageText = (aiResponse.choices?.[0]?.message?.content || '').trim()
+      console.log(`Raw response for page ${pageOutline.page}:`, JSON.stringify(aiResponse, null, 2))
 
       // If model returned no text, regenerate directly with stricter instructions
       if (!pageText) {
@@ -134,15 +135,16 @@ Important Instructions:
       }
 
       // If still empty, do a simplified direct generation
-      if (!pageText) {
+      if (!pageText || pageText.length < 10) {
+        console.log(`Empty text for page ${pageOutline.page}, trying simplified approach`)
         const simple = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: 'gpt-5-2025-08-07',
             messages: [
-              { role: 'system', content: 'You write short UK English storybook pages. Return only the story text.' },
-              { role: 'user', content: `Write a standalone page for a children\'s picture book. Main human child: ${config.children.join(' & ') || 'the child'}. Pet dog: Ivy (dog). Setting: ${config.setting}. Reading level: ${config.readingLevel}. Narration style: ${config.narrationStyle}. Include personal touches: ${config.personal.town || ''} ${config.personal.favouriteToy || ''} ${config.personal.favouriteColour || ''}. Target ${pageOutline.wordCount || pageOutline.wordsTarget || 100} words and keep it between ${config.readingLevel === 'Toddler 2–3' ? '60-80' : config.readingLevel === 'Early 4–5' ? '80-120' : '120-150'} words.` }
+              { role: 'system', content: 'Write UK English children\'s story pages. Return ONLY story text, no quotes or extra text.' },
+              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children\'s story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
             ],
             max_completion_tokens: 600,
           })
@@ -150,8 +152,20 @@ Important Instructions:
         if (simple.ok) {
           const sj = await simple.json()
           pageText = (sj.choices?.[0]?.message?.content || '').trim()
+          console.log(`Simplified generation result for page ${pageOutline.page}:`, pageText.substring(0, 100))
         }
       }
+
+      // Final fallback with hard-coded text if all else fails
+      if (!pageText || pageText.length < 10) {
+        console.log(`All generation failed for page ${pageOutline.page}, using fallback`)
+        const childName = config.children[0] || 'William'
+        const petName = config.personal?.pets?.split(' ').pop() || 'Ivy'
+        pageText = `${childName} went to the ${config.setting.toLowerCase()}. ${childName} loves to play. ${petName} is a good dog. ${petName} runs fast. They play together. ${childName} is happy. ${petName} is happy too. Fun times!`
+      }
+
+      const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
+      const target = pageOutline.wordCount || pageOutline.wordsTarget || 100
       const [min, max] = (
         () => {
           switch (config.readingLevel) {
