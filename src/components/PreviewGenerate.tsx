@@ -31,21 +31,22 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const [startTime, setStartTime] = useState<number>(0);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<string>('');
 
-  const updateProgress = (newProgress: number, stepStartTime: number) => {
+  const updateProgress = (newProgress: number) => {
     setProgress(newProgress);
-    
+    // Simple estimation based on typical generation times
     if (newProgress > 0 && newProgress < 100) {
-      const elapsed = (Date.now() - startTime) / 1000; // seconds
-      const progressRatio = newProgress / 100;
-      const estimatedTotal = elapsed / progressRatio;
-      const remaining = Math.max(0, estimatedTotal - elapsed);
+      const estimates = {
+        5: '2-3 minutes', // planning
+        25: '1-2 minutes', // writing  
+        70: '30-60 seconds', // images
+        100: 'Complete!'
+      };
+      const currentEstimate = Object.entries(estimates)
+        .reverse()
+        .find(([threshold]) => newProgress >= parseInt(threshold));
       
-      if (remaining > 60) {
-        setEstimatedTimeRemaining(`${Math.round(remaining / 60)} min remaining`);
-      } else if (remaining > 0) {
-        setEstimatedTimeRemaining(`${Math.round(remaining)} sec remaining`);
-      } else {
-        setEstimatedTimeRemaining('Almost done!');
+      if (currentEstimate) {
+        setEstimatedTimeRemaining(currentEstimate[1]);
       }
     } else {
       setEstimatedTimeRemaining('');
@@ -66,11 +67,10 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       setError(null);
       setStartTime(Date.now());
       setCurrentStep('planning');
-      updateProgress(5, Date.now());
+      updateProgress(5);
 
       // Step 1: Plan the story
       toast.info('Planning your story...');
-      const planStart = Date.now();
       const planResponse = await api.planStory(config);
       
       onConfigChange({
@@ -78,12 +78,11 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         outline: planResponse.outline,
       });
 
-      updateProgress(25, planStart);
+      updateProgress(25);
       setCurrentStep('writing');
 
       // Step 2: Write the story (optimized for speed)
       toast.info(`Writing ${config.lengthPages} pages...`);
-      const writeStart = Date.now();
       
       // Update progress incrementally during writing
       const writeResponse = await api.writeStory(config, planResponse.outline);
@@ -92,12 +91,11 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         pages: writeResponse.pages,
       });
 
-      updateProgress(70, writeStart);
+      updateProgress(70);
       setCurrentStep('images');
 
       // Step 3: Generate images (AI-powered illustrations)
       toast.info('Creating AI illustrations...');
-      const imageStart = Date.now();
       // Build a quick lookup for outline data
       const outlineByPage = new Map(planResponse.outline.pages.map((p: any) => [p.page, p]));
       const imagePrompts = writeResponse.pages
@@ -129,9 +127,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         pages: pagesWithImages,
       });
 
-      updateProgress(100, imageStart);
+      updateProgress(100);
       setCurrentStep('complete');
-      setEstimatedTimeRemaining('');
+      setEstimatedTimeRemaining('Complete!');
       toast.success('Your story is ready!');
 
     } catch (err) {
@@ -173,32 +171,124 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           <CardTitle>Story Configuration</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="space-y-1">
-              <div className="text-sm font-medium">Children</div>
-              <div className="text-sm text-muted-foreground">
-                {config.children.length > 0 ? config.children.join(', ') : 'Generic hero'}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="space-y-4">
+              <h4 className="font-semibold text-primary">Basic Details</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Children:</span>
+                  <span className="text-sm text-muted-foreground">
+                    {config.children.length > 0 ? config.children.join(', ') : 'Generic hero'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Story Type:</span>
+                  <span className="text-sm text-muted-foreground">{config.storyType}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Setting:</span>
+                  <span className="text-sm text-muted-foreground">{config.setting}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Theme:</span>
+                  <span className="text-sm text-muted-foreground">{config.themePreset || config.themeCustom || 'Custom'}</span>
+                </div>
               </div>
             </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium">Story Type</div>
-              <div className="text-sm text-muted-foreground">{config.storyType}</div>
+
+            <div className="space-y-4">
+              <h4 className="font-semibold text-primary">Story Settings</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Length:</span>
+                  <span className="text-sm text-muted-foreground">{config.lengthPages} pages</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Reading Level:</span>
+                  <span className="text-sm text-muted-foreground">{config.readingLevel}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Narration Style:</span>
+                  <span className="text-sm text-muted-foreground">{config.narrationStyle}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Educational Focus:</span>
+                  <span className="text-sm text-muted-foreground">{config.educationalFocus || 'None'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Image Style:</span>
+                  <span className="text-sm text-muted-foreground">
+                    {typeof config.imageStyle === 'string' ? config.imageStyle : config.imageStyle?.other || 'Custom'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm font-medium">Page Size:</span>
+                  <span className="text-sm text-muted-foreground">{config.pageSize}</span>
+                </div>
+              </div>
             </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium">Setting</div>
-              <div className="text-sm text-muted-foreground">{config.setting}</div>
-            </div>
-            <div className="space-y-1">
-              <div className="text-sm font-medium">Length</div>
-              <div className="text-sm text-muted-foreground">
-                {config.lengthPages} pages • {config.readingLevel}
+
+            <div className="space-y-4">
+              <h4 className="font-semibold text-primary">Personal Details</h4>
+              <div className="space-y-2">
+                {config.personal.town && (
+                  <div className="flex justify-between">
+                    <span className="text-sm font-medium">Town:</span>
+                    <span className="text-sm text-muted-foreground">{config.personal.town}</span>
+                  </div>
+                )}
+                {config.personal.favouriteToy && (
+                  <div className="flex justify-between">
+                    <span className="text-sm font-medium">Favorite Toy:</span>
+                    <span className="text-sm text-muted-foreground">{config.personal.favouriteToy}</span>
+                  </div>
+                )}
+                {config.personal.favouriteColour && (
+                  <div className="flex justify-between">
+                    <span className="text-sm font-medium">Favorite Color:</span>
+                    <span className="text-sm text-muted-foreground">{config.personal.favouriteColour}</span>
+                  </div>
+                )}
+                {config.personal.pets && (
+                  <div className="flex justify-between">
+                    <span className="text-sm font-medium">Pets:</span>
+                    <span className="text-sm text-muted-foreground">{config.personal.pets}</span>
+                  </div>
+                )}
+                {config.personal.dedication && (
+                  <div className="flex justify-between">
+                    <span className="text-sm font-medium">Dedication:</span>
+                    <span className="text-sm text-muted-foreground italic">"{config.personal.dedication}"</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {config.characters.map((character, index) => (
-              <Badge key={index} variant="secondary">{character}</Badge>
-            ))}
+
+          <div className="mt-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="font-semibold text-primary">Characters & Color Palette</h4>
+            </div>
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <span className="text-sm font-medium">Characters:</span>
+                {config.characters.map((character, index) => (
+                  <Badge key={index} variant="secondary">{character}</Badge>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">Color Palette:</span>
+                {config.palette.map((color, index) => (
+                  <div key={index} className="flex items-center gap-1">
+                    <div 
+                      className="w-4 h-4 rounded border" 
+                      style={{ backgroundColor: color }}
+                    />
+                    <span className="text-xs text-muted-foreground">{color}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
