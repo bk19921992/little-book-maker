@@ -70,36 +70,64 @@ Style: soft watercolor rendering, warm lighting, cozy magical mood, child-friend
         
         let dataUrl: string | null = null
 
-        // Use Gemini for image generation
-        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:generateImage?key=${geminiKey}`, {
+        // Use Gemini 2.5 Flash for high-quality 3D rendered images
+        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${geminiKey}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            prompt: {
-              text: enhancedPrompt
-            },
+            contents: [{
+              parts: [{
+                text: `Create a high-quality 3D rendered children's book illustration in the style of "Zippy the Bee's Big Job". 
+
+Scene: ${enhancedPrompt}
+
+Style requirements:
+- Professional 3D rendering like Pixar/Disney animation
+- Vibrant, saturated colors with soft lighting
+- Detailed textures (fuzzy bee fur, smooth child skin, realistic flowers/grass)
+- Warm, cheerful garden atmosphere
+- Child-friendly, engaging character expressions
+- Similar quality to modern animated children's films
+- Soft shadows and natural lighting
+- Rich detail in background elements (flowers, trees, grass texture)
+- Characters should be appealing and expressive
+- Garden setting with lush greenery and colorful flowers
+
+Technical specs:
+- High resolution, print-quality
+- Portrait orientation (3:4 aspect ratio)
+- No text, letters, or watermarks
+- Professional children's book illustration standard`
+              }]
+            }],
             generationConfig: {
-              aspectRatio: "3:4", // Good for portrait children's books
-              negativePrompt: "text, letters, words, watermark, signature, logo, blurry, low quality, distorted faces",
-              numberOfImages: 1,
-              includeRaiFiltering: true,
-              enableSafetyFiltering: true
+              temperature: 0.8,
+              topK: 40,
+              topP: 0.95,
+              maxOutputTokens: 8192,
+              candidateCount: 1,
+              responseMimeType: "application/json"
             }
           }),
         })
 
         if (geminiResponse.ok) {
           const result = await geminiResponse.json()
-          const imageData = result.candidates?.[0]?.image?.imageBytes
-          if (imageData) {
-            dataUrl = `data:image/png;base64,${imageData}`
-            console.log(`Generated image for page ${promptData.page} using Gemini`)
+          const candidate = result.candidates?.[0]
+          if (candidate?.content?.parts) {
+            for (const part of candidate.content.parts) {
+              if (part.inlineData?.data) {
+                dataUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+                console.log(`Generated high-quality 3D image for page ${promptData.page} using Gemini 2.5 Flash`)
+                break
+              }
+            }
           }
         } else {
           const errorText = await geminiResponse.text()
-          console.error(`Gemini image error for page ${promptData.page}:`, geminiResponse.status, errorText)
+          console.error(`Gemini 2.5 Flash error for page ${promptData.page}:`, geminiResponse.status, errorText)
         }
 
         if (!dataUrl) {
