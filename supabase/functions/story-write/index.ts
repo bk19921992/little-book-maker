@@ -41,6 +41,9 @@ Story Details:
 - Theme: ${config.themePreset || config.themeCustom || 'Custom'}
 - Color Palette: ${config.palette.join(', ')}
 - Image Style: ${typeof config.imageStyle === 'string' ? config.imageStyle : config.imageStyle.other}
+- Main human child: ${config.children.length ? config.children.join(' and ') : 'a child protagonist'} (human child)
+- Pet companion: ${config.personal?.pets || 'a friendly pet dog named Ivy'} (animal, not human)
+
 
 Personal Touches to Include Naturally:
 - Town: ${config.personal.town || 'their hometown'}
@@ -68,8 +71,9 @@ Important Instructions:
 - STRICTLY follow the reading level requirements above
 - Use the specified narration style: ${config.narrationStyle}
 - Include the child's name(s) naturally in the story
+- Keep species consistent: the child is human; Ivy is a dog (animal). Do not depict the child as a dog or the dog as a human.
 - Incorporate ALL personal details where appropriate and natural
-- Keep within the target word count
+- Keep within the target word count (self-check)
 - Make the text engaging and age-appropriate
 - No page numbers, titles, or extra formatting
 - The text should flow naturally with the overall story arc
@@ -108,8 +112,26 @@ Important Instructions:
 
       const aiResponse = await response.json()
       let pageText = aiResponse.choices[0].message.content.trim()
-      
-      // Enforce strict word count by adjusting once if needed
+
+      // If model returned no text, regenerate directly with stricter instructions
+      if (!pageText) {
+        const regen = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-5-2025-08-07',
+            messages: [
+              { role: 'system', content: `You write page-level children stories in UK English. Return ONLY the story text and ensure word-count target is met exactly.` },
+              { role: 'user', content: `${writingPrompt}\n\nWrite between ${config.readingLevel === 'Toddler 2–3' ? '60 and 80' : config.readingLevel === 'Early 4–5' ? '80 and 120' : '120 and 150'} words (aim ${pageOutline.wordCount || pageOutline.wordsTarget || 100}).` }
+            ],
+            max_completion_tokens: 600,
+          })
+        })
+        if (regen.ok) {
+          const rj = await regen.json()
+          pageText = rj.choices[0].message.content.trim()
+        }
+      }
       const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
       const target = pageOutline.wordCount || pageOutline.wordsTarget || 100
       const [min, max] = (

@@ -43,24 +43,29 @@ serve(async (req) => {
         const basePrompt = promptData.prompt || 'children playing happily'
         const pageText = promptData.text || ''
         const visualBrief = promptData.visualBrief || ''
-        const characters = configData.characters ? configData.characters.join(' and ') : 'friendly characters'
+        const mainChild = (configData.children && configData.children.length) ? configData.children.join(' and ') : 'a young child protagonist'
+        const characters = configData.characters ? configData.characters.join(' and ') : 'friendly supporting characters'
         const setting = configData.setting || 'magical place'
         const colorPalette = configData.palette ? configData.palette.join(', ') : 'warm, bright colors'
         const personalColor = configData.personal?.favouriteColour || 'colorful'
         const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : 'children\'s book illustration'
+        const petLine = configData.personal?.pets ? `Pet companion: ${configData.personal.pets} (animal, not human).` : ''
         
         // Create comprehensive prompt for children's book illustration
         const enhancedPrompt = `Professional children's book illustration in ${imageStyle} style.
 Scene description: ${basePrompt}. ${visualBrief}
 Match this page text: ${pageText}
 Key elements:
-- Main characters (prominent in frame, friendly faces visible): ${characters}
-- Setting/background (supporting, not dominating): ${setting}
+- Main human child protagonist: ${mainChild}
+- Supporting characters: ${characters}
+- Pet: ${petLine || 'friendly animal companion if specified, otherwise none'}
+- Setting/background: ${setting}
 - Educational focus: ${configData.educationalFocus || 'gentle learning'}
 - Story type: ${configData.storyType || 'adventure'}
 - Palette: ${colorPalette} with emphasis on ${personalColor}
-- Personal details: ${configData.personal?.pets ? `pet: ${configData.personal.pets}.` : ''} ${configData.personal?.favouriteToy ? `toy: ${configData.personal.favouriteToy}.` : ''}
-Composition: medium to medium-close shot, eye-level, character-focused, Rule of Thirds, avoid wide empty landscapes, high detail on expressions, soft watercolor rendering, warm lighting, magical cozy mood. Child-friendly, safe content, print-quality.`
+Composition: medium or medium-close shot, eye-level, character-focused, Rule of Thirds; avoid wide empty landscapes.
+Constraints: Do NOT depict the child as an animal. Do NOT depict the pet as human. No text, letters, watermark, logos.
+Style: soft watercolor rendering, warm lighting, cozy magical mood, child-friendly, high quality, print-ready.`
         
         console.log('Enhanced prompt:', enhancedPrompt)
         
