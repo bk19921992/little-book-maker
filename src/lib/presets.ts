@@ -43,27 +43,27 @@ export const storyTypePresets: StoryTypePreset[] = [
   },
   {
     name: 'Bedtime',
-    description: 'Gentle, calming stories for sleep time',
+    description: 'Gentle, calming stories for sleep',
     tags: ['peaceful', 'dreamy', 'soothing'],
   },
   {
     name: 'Learning',
-    description: 'Educational stories that teach while entertaining',
+    description: 'Educational stories that teach',
     tags: ['educational', 'discovery', 'growth'],
   },
   {
     name: 'Friendship',
-    description: 'Stories about making friends and being kind',
+    description: 'Stories about making friends',
     tags: ['kindness', 'sharing', 'cooperation'],
   },
   {
     name: 'Fantasy',
-    description: 'Magical worlds with dragons, fairies, and wonder',
+    description: 'Magical worlds with dragons',
     tags: ['magical', 'imagination', 'wonder'],
   },
   {
     name: 'Problem solving',
-    description: 'Stories where characters overcome challenges',
+    description: 'Characters overcome challenges',
     tags: ['resilience', 'creativity', 'perseverance'],
   },
 ];
@@ -85,15 +85,15 @@ export const characterPresets: CharacterPreset[] = [
 // Setting presets
 export const settingPresets: SettingPreset[] = [
   { name: 'Enchanted forest', description: 'A magical woodland full of wonder' },
-  { name: 'Cozy bedroom', description: 'A safe, warm space perfect for dreams' },
-  { name: 'Sunny meadow', description: 'Open fields with flowers and butterflies' },
-  { name: 'Village playground', description: 'A fun place where children love to play' },
-  { name: 'Garden adventure', description: 'A backyard full of discoveries' },
-  { name: 'Castle tower', description: 'A fairy tale setting with royal adventures' },
-  { name: 'Beach treasure hunt', description: 'Sandy shores with hidden surprises' },
-  { name: 'Library corner', description: 'A quiet nook surrounded by books' },
-  { name: 'Treehouse hideout', description: 'A secret place high in the branches' },
-  { name: 'Magic shop', description: 'A mysterious store full of wonders' },
+  { name: 'Cozy bedroom', description: 'Warm space perfect for dreams' },
+  { name: 'Sunny meadow', description: 'Open fields with flowers' },
+  { name: 'Village playground', description: 'Fun place where children play' },
+  { name: 'Garden adventure', description: 'Backyard full of discoveries' },
+  { name: 'Castle tower', description: 'Fairy tale royal adventures' },
+  { name: 'Beach treasure hunt', description: 'Sandy shores with surprises' },
+  { name: 'Library corner', description: 'Quiet nook with books' },
+  { name: 'Treehouse hideout', description: 'Secret place in the trees' },
+  { name: 'Magic shop', description: 'Mysterious store of wonders' },
 ];
 
 // Helper functions
