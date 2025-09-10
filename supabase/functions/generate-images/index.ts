@@ -34,19 +34,22 @@ serve(async (req) => {
       try {
         console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
         
-        // Get config data passed with the prompt for enhanced image generation
+        // Get config data from the prompt for enhanced image generation
         const configData = promptData.config || {};
+        console.log('Config data for image generation:', configData)
         
-        // Build comprehensive image prompt using all setup inputs
-        const colorPalette = configData.palette ? configData.palette.join(', ') : 'warm, soft colors';
-        const characters = configData.characters ? configData.characters.join(', ') : 'friendly characters';
-        const setting = configData.setting || 'magical setting';
-        const theme = configData.themePreset || configData.themeCustom || 'enchanting';
-        const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : (configData.imageStyle?.other || 'children\'s book illustration');
-        const personalColor = configData.personal?.favouriteColour || 'bright colors';
+        // Build detailed children's book illustration prompt
+        const basePrompt = promptData.prompt || 'children playing happily'
+        const characters = configData.characters ? configData.characters.join(' and ') : 'friendly characters'
+        const setting = configData.setting || 'magical place'
+        const colorPalette = configData.palette ? configData.palette.join(', ') : 'warm, bright colors'
+        const personalColor = configData.personal?.favouriteColour || 'colorful'
+        const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : 'children\'s book illustration'
         
-        // Enhanced prompt that incorporates ALL setup details
-        const enhancedPrompt = `${imageStyle} style children's book illustration: ${promptData.prompt}. Setting: ${setting}. Characters: ${characters}. Color palette: ${colorPalette}, featuring ${personalColor}. Theme: ${theme}. Watercolor painting style, soft pastel colors, whimsical and magical, storybook art, hand-drawn illustration, warm lighting, child-friendly, detailed but gentle, fairy tale style, beautiful composition, high quality artwork`
+        // Create comprehensive prompt for children's book illustration
+        const enhancedPrompt = `${imageStyle}, children's book illustration: ${basePrompt}. Characters: ${characters}. Setting: ${setting}. Style: watercolor painting, soft and gentle, warm lighting, whimsical and magical. Color palette: ${colorPalette}, featuring ${personalColor} tones. Storybook art, hand-drawn style, child-friendly, detailed but not overwhelming, fairy tale atmosphere, beautiful composition, high quality children's book artwork`
+        
+        console.log('Enhanced prompt:', enhancedPrompt)
         
         const response = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
           method: 'POST',

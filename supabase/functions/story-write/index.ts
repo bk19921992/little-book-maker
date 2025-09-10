@@ -55,13 +55,13 @@ Page Requirements:
 - This is page ${pageOutline.page} of ${config.lengthPages}
 
 CRITICAL READING LEVEL REQUIREMENTS FOR ${config.readingLevel}:
-${config.readingLevel === 'Toddler 1–2' ? 
-  '- Use ONLY 1-3 words per sentence\n- Use simple, familiar words\n- Focus on basic concepts (colors, animals, sounds)\n- Very repetitive structure\n- Maximum 10-15 words total per page' :
+${config.readingLevel === 'Toddler 2–3' ? 
+  '- Write 60-80 words per page total\n- Use simple 2-4 word sentences\n- Repeat key phrases for comfort and learning\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words only\n- Be descriptive but simple\n- Example: "Big red ball. Ball is round. Ball bounces up and down. Up, up, up! Down, down, down! Fun ball!"' :
 config.readingLevel === 'Early 4–5' ?
-  '- Use simple 4-6 word sentences\n- Basic vocabulary only\n- Short, clear sentences\n- Focus on simple actions and familiar objects\n- Maximum 25-35 words per page' :
-config.readingLevel === 'Early Elementary 6–8' ?
-  '- Use 6-10 word sentences\n- Slightly more complex vocabulary\n- Can include basic adjectives\n- Simple story progression\n- Maximum 50-75 words per page' :
-  '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate'}
+  '- Write 80-120 words per page total\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language that toddlers love\n- Focus on everyday experiences and emotions\n- Use descriptive but simple words\n- Create engaging, flowing text\n- Example: "The little boy ran fast. He ran to the big tree. The tree had pretty green leaves. So many leaves! He touched the soft grass. Green, soft grass!"' :
+config.readingLevel === 'Primary 6–8' ?
+  '- Write 120-150 words per page total\n- Use 4-8 word sentences with varied structure\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression and character development\n- Use slightly more complex vocabulary but keep it accessible\n- Create engaging narratives with emotional connection\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with tiny black spots. She watched it dance from flower to flower."' :
+  '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate for the age group'}
 
 Important Instructions:
 - Write ONLY the story text for this page, nothing else
@@ -94,7 +94,7 @@ Important Instructions:
               content: writingPrompt
             }
           ],
-          max_completion_tokens: config.readingLevel === 'Toddler 1–2' ? 100 : config.readingLevel === 'Early 4–5' ? 200 : 400,
+          max_completion_tokens: config.readingLevel === 'Toddler 2–3' ? 300 : config.readingLevel === 'Early 4–5' ? 400 : 500,
         }),
       })
 

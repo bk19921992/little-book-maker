@@ -54,13 +54,13 @@ Personal Details to Include:
 ${config.personal.dedication ? `- Dedication: ${config.personal.dedication}` : ''}
 
 CRITICAL READING LEVEL REQUIREMENTS:
-${config.readingLevel === 'Toddler 1–2' ? 
-  '- Use ONLY 1-3 simple words per page (like "Big dog" or "Red ball")\n- Maximum 10-15 words total per page\n- Very basic vocabulary (colors, animals, sounds)\n- Extremely simple concepts' :
+${config.readingLevel === 'Toddler 2–3' ? 
+  '- Write 60-80 words per page\n- Use simple 2-4 word sentences\n- Repeat key phrases for comfort\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words\n- Example: "Big red ball. Ball is round. Ball bounces high. Fun, fun, fun!"' :
 config.readingLevel === 'Early 4–5' ?
-  '- Use simple 4-6 word sentences\n- Maximum 25-35 words per page\n- Basic vocabulary only\n- Simple actions and familiar objects' :
-config.readingLevel === 'Early Elementary 6–8' ?
-  '- Use 6-10 word sentences\n- Maximum 50-75 words per page\n- Slightly more complex vocabulary\n- Simple story progression' :
-  '- Adjust complexity to specified reading level'}
+  '- Write 80-120 words per page\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language\n- Focus on everyday experiences\n- Use descriptive but simple words\n- Example: "The little girl ran fast. She ran to the big tree. The tree had green leaves. Pretty, pretty leaves!"' :
+config.readingLevel === 'Primary 6–8' ?
+  '- Write 120-150 words per page\n- Use 4-8 word sentences\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression\n- Use slightly more complex vocabulary\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with black spots."' :
+  '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate'}
 
 Create exactly ${config.lengthPages} pages. Each page should have:
 - Page number (1 to ${config.lengthPages})
@@ -114,7 +114,7 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
       outlineData = {
         pages: Array.from({ length: config.lengthPages }, (_, i) => ({
           page: i + 1,
-          wordCount: config.readingLevel === 'Toddler 1–2' ? 12 : config.readingLevel === 'Early 4–5' ? 30 : config.readingLevel === 'Early Elementary 6–8' ? 60 : 100,
+          wordCount: config.readingLevel === 'Toddler 2–3' ? 70 : config.readingLevel === 'Early 4–5' ? 100 : config.readingLevel === 'Primary 6–8' ? 135 : 100,
           visualBrief: `Page ${i + 1} visual scene`,
           imagePrompt: `${styleBible.renderingStyle} illustration of page ${i + 1}, ${styleBible.heroDescription}, ${config.setting}`
         }))

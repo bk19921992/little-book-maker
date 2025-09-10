@@ -219,18 +219,27 @@ serve(async (req) => {
         );
       }
     } else {
-      // No billing token provided
-      console.log('Warning: No billing token provided');
-      return new Response(
-        JSON.stringify({ 
-          success: false,
-          error: 'Billing authorization required' 
-        }),
-        {
-          status: 402,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      // Check for first free export
+      console.log('No billing token - checking for free export eligibility')
+      
+      // Allow first export without billing for testing
+      // In production, you'd want to track this per user
+      const allowFreeExport = true; // Change this based on your business logic
+      
+      if (!allowFreeExport) {
+        return new Response(
+          JSON.stringify({ 
+            success: false,
+            error: 'Billing authorization required' 
+          }),
+          {
+            status: 402,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+      
+      console.log('Allowing free export for testing')
     }
 
     // Generate both web and print PDFs
