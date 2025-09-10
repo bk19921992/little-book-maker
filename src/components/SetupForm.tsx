@@ -142,10 +142,10 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                   key={preset.name}
                   variant={config.storyType === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('storyType', preset.name)}
-                  className="h-auto p-4 text-left flex-col items-start justify-start min-h-[90px] max-w-full"
+                  className="h-auto p-4 text-left flex-col items-start justify-start min-h-[100px] max-w-full whitespace-normal"
                 >
-                  <span className="font-medium text-sm leading-tight w-full text-left">{preset.name}</span>
-                  <span className="text-xs opacity-70 mt-2 line-clamp-2 leading-tight w-full text-left hyphens-auto">
+                  <span className="font-medium text-sm leading-tight w-full text-left break-words">{preset.name}</span>
+                  <span className="text-xs opacity-70 mt-2 leading-relaxed w-full text-left break-words hyphens-auto">
                     {preset.description}
                   </span>
                 </Button>
@@ -242,10 +242,10 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                   key={preset.name}
                   variant={config.setting === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('setting', preset.name)}
-                  className="h-auto p-4 text-left flex-col items-start justify-start min-h-[90px] max-w-full"
+                  className="h-auto p-4 text-left flex-col items-start justify-start min-h-[100px] max-w-full whitespace-normal"
                 >
-                  <span className="font-medium text-sm leading-tight w-full text-left">{preset.name}</span>
-                  <span className="text-xs opacity-70 mt-2 line-clamp-2 leading-tight w-full text-left hyphens-auto">
+                  <span className="font-medium text-sm leading-tight w-full text-left break-words">{preset.name}</span>
+                  <span className="text-xs opacity-70 mt-2 leading-relaxed w-full text-left break-words hyphens-auto">
                     {preset.description}
                   </span>
                 </Button>
@@ -283,11 +283,11 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 key={preset.name}
                 variant={config.characters.includes(preset.name) ? "default" : "outline"}
                 onClick={() => selectPreset('character', preset.name)}
-                className="h-auto p-3 text-left flex-col items-start justify-start min-h-[70px]"
+                className="h-auto p-3 text-left flex-col items-start justify-start min-h-[80px] whitespace-normal"
                 size="sm"
               >
-                <span className="font-medium text-sm leading-tight">{preset.name}</span>
-                <span className="text-xs opacity-70 mt-1 line-clamp-2 leading-tight break-words w-full text-left">
+                <span className="font-medium text-sm leading-tight break-words w-full text-left">{preset.name}</span>
+                <span className="text-xs opacity-70 mt-1 leading-relaxed break-words w-full text-left hyphens-auto">
                   {preset.description}
                 </span>
               </Button>
