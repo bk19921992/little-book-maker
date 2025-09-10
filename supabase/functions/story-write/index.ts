@@ -132,8 +132,26 @@ Important Instructions:
           pageText = rj.choices[0].message.content.trim()
         }
       }
-      const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
-      const target = pageOutline.wordCount || pageOutline.wordsTarget || 100
+
+      // If still empty, do a simplified direct generation
+      if (!pageText) {
+        const simple = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-5-2025-08-07',
+            messages: [
+              { role: 'system', content: 'You write short UK English storybook pages. Return only the story text.' },
+              { role: 'user', content: `Write a standalone page for a children\'s picture book. Main human child: ${config.children.join(' & ') || 'the child'}. Pet dog: Ivy (dog). Setting: ${config.setting}. Reading level: ${config.readingLevel}. Narration style: ${config.narrationStyle}. Include personal touches: ${config.personal.town || ''} ${config.personal.favouriteToy || ''} ${config.personal.favouriteColour || ''}. Target ${pageOutline.wordCount || pageOutline.wordsTarget || 100} words and keep it between ${config.readingLevel === 'Toddler 2–3' ? '60-80' : config.readingLevel === 'Early 4–5' ? '80-120' : '120-150'} words.` }
+            ],
+            max_completion_tokens: 600,
+          })
+        })
+        if (simple.ok) {
+          const sj = await simple.json()
+          pageText = (sj.choices?.[0]?.message?.content || '').trim()
+        }
+      }
       const [min, max] = (
         () => {
           switch (config.readingLevel) {
