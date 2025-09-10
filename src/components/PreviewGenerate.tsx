@@ -98,14 +98,21 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // Step 3: Generate images (AI-powered illustrations)
       toast.info('Creating AI illustrations...');
       const imageStart = Date.now();
-      const imagePrompts = planResponse.outline.pages
-        .filter(page => page && page.page !== undefined) // Filter out undefined pages
-        .map(page => ({
-          page: page.page,
-          prompt: page.imagePrompt,
-          seed: config.imageSeed || undefined,
-          config: config, // Pass full config to image generation
-        }));
+      // Build a quick lookup for outline data
+      const outlineByPage = new Map(planResponse.outline.pages.map((p: any) => [p.page, p]));
+      const imagePrompts = writeResponse.pages
+        .filter((p) => p && p.page !== undefined)
+        .map((p) => {
+          const outline = outlineByPage.get(p.page) || {} as any;
+          return {
+            page: p.page,
+            prompt: outline.imagePrompt || outline.visualBrief || 'storybook scene',
+            text: p.text,
+            visualBrief: outline.visualBrief,
+            seed: config.imageSeed || undefined,
+            config: config,
+          };
+        });
 
       const imageResponse = await api.generateImages(config.pageSize, imagePrompts);
       

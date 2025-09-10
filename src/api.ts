@@ -38,7 +38,7 @@ class APIClient {
 
   async generateImages(
     pageSize: PageSizePreset,
-    prompts: { page: number; prompt: string; config?: StoryConfig; seed?: number }[]
+    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[]
   ): Promise<ImageGenerateResponse> {
     return this.invokeFunction<ImageGenerateResponse>('generate-images', {
       pageSize,

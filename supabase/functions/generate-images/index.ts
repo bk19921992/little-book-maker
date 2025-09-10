@@ -15,8 +15,9 @@ serve(async (req) => {
     console.log('Generate images request received:', { pageSize, prompts })
     
     const hfToken = Deno.env.get('HF_TOKEN')
-    if (!hfToken) {
-      throw new Error('HF_TOKEN environment variable is required')
+    const openaiKey = Deno.env.get('OPENAI_API_KEY')
+    if (!hfToken && !openaiKey) {
+      throw new Error('HF_TOKEN or OPENAI_API_KEY is required')
     }
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
@@ -38,8 +39,10 @@ serve(async (req) => {
         const configData = promptData.config || {};
         console.log('Config data for image generation:', configData)
         
-        // Build detailed children's book illustration prompt
+        // Build detailed children's book illustration prompt using text + inputs
         const basePrompt = promptData.prompt || 'children playing happily'
+        const pageText = promptData.text || ''
+        const visualBrief = promptData.visualBrief || ''
         const characters = configData.characters ? configData.characters.join(' and ') : 'friendly characters'
         const setting = configData.setting || 'magical place'
         const colorPalette = configData.palette ? configData.palette.join(', ') : 'warm, bright colors'
@@ -47,55 +50,84 @@ serve(async (req) => {
         const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : 'children\'s book illustration'
         
         // Create comprehensive prompt for children's book illustration
-        const enhancedPrompt = `Professional children's book illustration in ${imageStyle} style: ${basePrompt}. 
-        
-Key elements to include:
-- Characters: ${characters}
-- Setting: ${setting}  
-- Educational focus: ${configData.educationalFocus || 'fun learning'}
+        const enhancedPrompt = `Professional children's book illustration in ${imageStyle} style.
+Scene description: ${basePrompt}. ${visualBrief}
+Match this page text: ${pageText}
+Key elements:
+- Main characters (prominent in frame, friendly faces visible): ${characters}
+- Setting/background (supporting, not dominating): ${setting}
+- Educational focus: ${configData.educationalFocus || 'gentle learning'}
 - Story type: ${configData.storyType || 'adventure'}
-- Child's favorite color: ${personalColor}
-- Personal details: ${configData.personal?.pets ? `pet ${configData.personal.pets}` : ''} ${configData.personal?.favouriteToy ? `favorite toy ${configData.personal.favouriteToy}` : ''}
-
-Art style: Soft watercolor painting, warm lighting, gentle and magical atmosphere, ${colorPalette} color palette, hand-drawn illustration style, child-friendly and engaging, storybook quality artwork, beautiful composition, age-appropriate for ${configData.readingLevel || 'young children'}`
+- Palette: ${colorPalette} with emphasis on ${personalColor}
+- Personal details: ${configData.personal?.pets ? `pet: ${configData.personal.pets}.` : ''} ${configData.personal?.favouriteToy ? `toy: ${configData.personal.favouriteToy}.` : ''}
+Composition: medium to medium-close shot, eye-level, character-focused, Rule of Thirds, avoid wide empty landscapes, high detail on expressions, soft watercolor rendering, warm lighting, magical cozy mood. Child-friendly, safe content, print-quality.`
         
         console.log('Enhanced prompt:', enhancedPrompt)
         
-        const response = await fetch('https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${hfToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            inputs: enhancedPrompt,
-            parameters: {
-              width: Math.min(dimensions.width, 1024),
-              height: Math.min(dimensions.height, 1024),
-            }
-          }),
-        })
+        let dataUrl: string | null = null
 
-        if (!response.ok) {
-          console.error(`Hugging Face API error for page ${promptData.page}:`, response.status, await response.text())
-          // Fallback to placeholder if API fails
-          images.push({
-            page: promptData.page,
-            url: `https://picsum.photos/${dimensions.width}/${dimensions.height}?random=${promptData.page}`
+        // Prefer Hugging Face if token available
+        if (hfToken) {
+          const hfResp = await fetch('https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${hfToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              inputs: enhancedPrompt,
+              parameters: {
+                width: Math.min(dimensions.width, 1024),
+                height: Math.min(dimensions.height, 1024),
+              }
+            }),
           })
-          continue
+
+          if (hfResp.ok) {
+            const blob = await hfResp.blob()
+            const buf = await blob.arrayBuffer()
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+            dataUrl = `data:image/png;base64,${base64}`
+          } else {
+            console.error(`HF error for page ${promptData.page}:`, hfResp.status, await hfResp.text())
+          }
         }
 
-        // Convert blob to base64
-        const imageBlob = await response.blob()
-        const arrayBuffer = await imageBlob.arrayBuffer()
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-        const dataUrl = `data:image/png;base64,${base64}`
-        
-        images.push({
-          page: promptData.page,
-          url: dataUrl
-        })
+        // Fallback to OpenAI Images if needed
+        if (!dataUrl && openaiKey) {
+          const size = (() => {
+            const w = Math.min(dimensions.width, 1024)
+            const h = Math.min(dimensions.height, 1024)
+            if (w === h) return '1024x1024'
+            return w > h ? '1536x1024' : '1024x1536'
+          })()
+
+          const oaResp = await fetch('https://api.openai.com/v1/images/generations', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'gpt-image-1',
+              prompt: enhancedPrompt + '\nNo text, no watermarks, safe for children.',
+              size,
+              response_format: 'b64_json'
+            }),
+          })
+
+          if (oaResp.ok) {
+            const json = await oaResp.json()
+            const b64 = json.data?.[0]?.b64_json
+            if (b64) dataUrl = `data:image/png;base64,${b64}`
+          } else {
+            console.error(`OpenAI image error for page ${promptData.page}:`, oaResp.status, await oaResp.text())
+          }
+        }
+
+        if (!dataUrl) {
+          // Final fallback to placeholder
+          dataUrl = `https://picsum.photos/${dimensions.width}/${dimensions.height}?random=${promptData.page}`
+        }
+
+        images.push({ page: promptData.page, url: dataUrl })
         
       } catch (error) {
         console.error(`Error generating image for page ${promptData.page}:`, error)

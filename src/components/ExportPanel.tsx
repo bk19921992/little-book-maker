@@ -81,7 +81,11 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   };
 
   const handleExportClick = () => {
-    setShowExportCheckout(true);
+    if (isFirstExport) {
+      exportPDF();
+    } else {
+      setShowExportCheckout(true);
+    }
   };
 
   const handleExportSuccess = (billingToken: string) => {

@@ -107,8 +107,42 @@ Important Instructions:
       }
 
       const aiResponse = await response.json()
-      const pageText = aiResponse.choices[0].message.content.trim()
-      console.log(`Generated text for page ${pageOutline.page}:`, pageText.substring(0, 100) + '...')
+      let pageText = aiResponse.choices[0].message.content.trim()
+      
+      // Enforce strict word count by adjusting once if needed
+      const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
+      const target = pageOutline.wordCount || pageOutline.wordsTarget || 100
+      const [min, max] = (
+        () => {
+          switch (config.readingLevel) {
+            case 'Toddler 2–3': return [60, 80]
+            case 'Early 4–5': return [80, 120]
+            case 'Primary 6–8': return [120, 150]
+            default: return [Math.round(target*0.9), Math.round(target*1.1)]
+          }
+        }
+      )()
+      let words = countWords(pageText)
+      if (words < min || words > max) {
+        console.log(`Adjusting page ${pageOutline.page} from ${words} words to within ${min}-${max}`)
+        const adjust = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-5-2025-08-07',
+            messages: [
+              { role: 'system', content: `Revise children\'s story text to meet word-count and level exactly while keeping meaning and ${config.narrationStyle} style.` },
+              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
+            ],
+            max_completion_tokens: 600,
+          })
+        })
+        if (adjust.ok) {
+          const adj = await adjust.json()
+          pageText = adj.choices[0].message.content.trim()
+        }
+      }
+      console.log(`Final text length for page ${pageOutline.page}:`, countWords(pageText))
 
       return {
         page: pageOutline.page,
