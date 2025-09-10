@@ -101,6 +101,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           page: page.page,
           prompt: page.imagePrompt,
           seed: config.imageSeed || undefined,
+          config: config, // Pass full config to image generation
         }));
 
       const imageResponse = await api.generateImages(config.pageSize, imagePrompts);

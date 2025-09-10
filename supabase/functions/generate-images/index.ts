@@ -34,8 +34,19 @@ serve(async (req) => {
       try {
         console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
         
-        // Enhance prompt for children's book illustration style
-        const enhancedPrompt = `children's book illustration, ${promptData.prompt}, watercolor painting style, soft pastel colors, whimsical and magical, storybook art, hand-drawn illustration, warm lighting, child-friendly, detailed but gentle, fairy tale style, beautiful composition`
+        // Get config data passed with the prompt for enhanced image generation
+        const configData = promptData.config || {};
+        
+        // Build comprehensive image prompt using all setup inputs
+        const colorPalette = configData.palette ? configData.palette.join(', ') : 'warm, soft colors';
+        const characters = configData.characters ? configData.characters.join(', ') : 'friendly characters';
+        const setting = configData.setting || 'magical setting';
+        const theme = configData.themePreset || configData.themeCustom || 'enchanting';
+        const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : (configData.imageStyle?.other || 'children\'s book illustration');
+        const personalColor = configData.personal?.favouriteColour || 'bright colors';
+        
+        // Enhanced prompt that incorporates ALL setup details
+        const enhancedPrompt = `${imageStyle} style children's book illustration: ${promptData.prompt}. Setting: ${setting}. Characters: ${characters}. Color palette: ${colorPalette}, featuring ${personalColor}. Theme: ${theme}. Watercolor painting style, soft pastel colors, whimsical and magical, storybook art, hand-drawn illustration, warm lighting, child-friendly, detailed but gentle, fairy tale style, beautiful composition, high quality artwork`
         
         const response = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
           method: 'POST',

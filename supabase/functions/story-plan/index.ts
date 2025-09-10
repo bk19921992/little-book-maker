@@ -36,12 +36,22 @@ serve(async (req) => {
     // Generate story outline
     const outlinePrompt = `Create a ${config.lengthPages}-page children's story outline for:
 - Theme: ${config.themePreset || config.themeCustom}
+- Color Palette: ${config.palette.join(', ')}
 - Setting: ${config.setting}
 - Characters: ${config.characters.join(', ')}
 - Story type: ${config.storyType}
 - Reading level: ${config.readingLevel}
+- Narration Style: ${config.narrationStyle}
 - Educational focus: ${config.educationalFocus || 'none'}
 - Children's names: ${config.children.join(', ') || 'generic hero'}
+- Image Style: ${typeof config.imageStyle === 'string' ? config.imageStyle : config.imageStyle.other}
+
+Personal Details to Include:
+- Town/City: ${config.personal.town || 'a lovely town'}
+- Favorite Toy: ${config.personal.favouriteToy || 'their favorite toy'}
+- Favorite Color: ${config.personal.favouriteColour || 'bright colors'}
+- Pets: ${config.personal.pets || 'friendly animals'}
+${config.personal.dedication ? `- Dedication: ${config.personal.dedication}` : ''}
 
 CRITICAL READING LEVEL REQUIREMENTS:
 ${config.readingLevel === 'Toddler 1–2' ? 
@@ -56,7 +66,9 @@ Create exactly ${config.lengthPages} pages. Each page should have:
 - Page number (1 to ${config.lengthPages})
 - Word target based on reading level above
 - Visual brief (what happens visually)
-- Detailed image prompt for ${styleBible.renderingStyle} illustration
+- Detailed image prompt for ${styleBible.renderingStyle} illustration that includes the specific characters, setting, and color palette
+
+Make sure to incorporate the personal details naturally throughout the story and use the specified narration style.
 
 Return as JSON with pages array containing page, wordCount, visualBrief, and imagePrompt fields.`
 

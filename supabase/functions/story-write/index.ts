@@ -38,13 +38,16 @@ Story Details:
 - Reading Level: ${config.readingLevel}
 - Length: ${config.lengthPages} pages total
 - Narration Style: ${config.narrationStyle}
-- Theme: ${config.themePreset || 'Custom'}
+- Theme: ${config.themePreset || config.themeCustom || 'Custom'}
+- Color Palette: ${config.palette.join(', ')}
+- Image Style: ${typeof config.imageStyle === 'string' ? config.imageStyle : config.imageStyle.other}
 
-Personal Touches:
-- Town: ${config.personal.town}
-- Favorite Toy: ${config.personal.favouriteToy}
-- Favorite Color: ${config.personal.favouriteColour}
-- Pets: ${config.personal.pets}
+Personal Touches to Include Naturally:
+- Town: ${config.personal.town || 'their hometown'}
+- Favorite Toy: ${config.personal.favouriteToy || 'their favorite toy'}
+- Favorite Color: ${config.personal.favouriteColour || 'their favorite color'}
+- Pets: ${config.personal.pets || 'friendly animals'}
+${config.personal.dedication ? `- Special Note: ${config.personal.dedication}` : ''}
 
 Page Requirements:
 - Target word count: ${pageOutline.wordCount || pageOutline.wordsTarget} words
@@ -63,12 +66,14 @@ config.readingLevel === 'Early Elementary 6–8' ?
 Important Instructions:
 - Write ONLY the story text for this page, nothing else
 - STRICTLY follow the reading level requirements above
+- Use the specified narration style: ${config.narrationStyle}
 - Include the child's name(s) naturally in the story
-- Incorporate personal details where appropriate
+- Incorporate ALL personal details where appropriate and natural
 - Keep within the target word count
 - Make the text engaging and age-appropriate
 - No page numbers, titles, or extra formatting
-- The text should flow naturally with the overall story arc`
+- The text should flow naturally with the overall story arc
+- Reflect the chosen theme and color palette in descriptions when natural`
 
       console.log(`Making OpenAI API call for page ${pageOutline.page}...`)
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
