@@ -47,7 +47,17 @@ serve(async (req) => {
         const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : 'children\'s book illustration'
         
         // Create comprehensive prompt for children's book illustration
-        const enhancedPrompt = `${imageStyle}, children's book illustration: ${basePrompt}. Characters: ${characters}. Setting: ${setting}. Style: watercolor painting, soft and gentle, warm lighting, whimsical and magical. Color palette: ${colorPalette}, featuring ${personalColor} tones. Storybook art, hand-drawn style, child-friendly, detailed but not overwhelming, fairy tale atmosphere, beautiful composition, high quality children's book artwork`
+        const enhancedPrompt = `Professional children's book illustration in ${imageStyle} style: ${basePrompt}. 
+        
+Key elements to include:
+- Characters: ${characters}
+- Setting: ${setting}  
+- Educational focus: ${configData.educationalFocus || 'fun learning'}
+- Story type: ${configData.storyType || 'adventure'}
+- Child's favorite color: ${personalColor}
+- Personal details: ${configData.personal?.pets ? `pet ${configData.personal.pets}` : ''} ${configData.personal?.favouriteToy ? `favorite toy ${configData.personal.favouriteToy}` : ''}
+
+Art style: Soft watercolor painting, warm lighting, gentle and magical atmosphere, ${colorPalette} color palette, hand-drawn illustration style, child-friendly and engaging, storybook quality artwork, beautiful composition, age-appropriate for ${configData.readingLevel || 'young children'}`
         
         console.log('Enhanced prompt:', enhancedPrompt)
         
