@@ -92,14 +92,16 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       updateProgress(70, writeStart);
       setCurrentStep('images');
 
-      // Step 3: Generate images (fast placeholder generation)
-      toast.info('Creating illustrations...');
+      // Step 3: Generate images (AI-powered illustrations)
+      toast.info('Creating AI illustrations...');
       const imageStart = Date.now();
-      const imagePrompts = planResponse.outline.pages.map(page => ({
-        page: page.page,
-        prompt: page.imagePrompt,
-        seed: config.imageSeed || undefined,
-      }));
+      const imagePrompts = planResponse.outline.pages
+        .filter(page => page && page.page !== undefined) // Filter out undefined pages
+        .map(page => ({
+          page: page.page,
+          prompt: page.imagePrompt,
+          seed: config.imageSeed || undefined,
+        }));
 
       const imageResponse = await api.generateImages(config.pageSize, imagePrompts);
       

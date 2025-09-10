@@ -43,13 +43,22 @@ serve(async (req) => {
 - Educational focus: ${config.educationalFocus || 'none'}
 - Children's names: ${config.children.join(', ') || 'generic hero'}
 
+CRITICAL READING LEVEL REQUIREMENTS:
+${config.readingLevel === 'Toddler 1–2' ? 
+  '- Use ONLY 1-3 simple words per page (like "Big dog" or "Red ball")\n- Maximum 10-15 words total per page\n- Very basic vocabulary (colors, animals, sounds)\n- Extremely simple concepts' :
+config.readingLevel === 'Early 4–5' ?
+  '- Use simple 4-6 word sentences\n- Maximum 25-35 words per page\n- Basic vocabulary only\n- Simple actions and familiar objects' :
+config.readingLevel === 'Early Elementary 6–8' ?
+  '- Use 6-10 word sentences\n- Maximum 50-75 words per page\n- Slightly more complex vocabulary\n- Simple story progression' :
+  '- Adjust complexity to specified reading level'}
+
 Create exactly ${config.lengthPages} pages. Each page should have:
-- Page number
-- Word target based on reading level (${config.readingLevel === 'Toddler 2–3' ? '60-80' : config.readingLevel === 'Early 4–5' ? '80-120' : '120-150'} words)
+- Page number (1 to ${config.lengthPages})
+- Word target based on reading level above
 - Visual brief (what happens visually)
 - Detailed image prompt for ${styleBible.renderingStyle} illustration
 
-Return as JSON with pages array.`
+Return as JSON with pages array containing page, wordCount, visualBrief, and imagePrompt fields.`
 
     console.log('Making OpenAI API call...')
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -93,7 +102,7 @@ Return as JSON with pages array.`
       outlineData = {
         pages: Array.from({ length: config.lengthPages }, (_, i) => ({
           page: i + 1,
-          wordsTarget: config.readingLevel === 'Toddler 2–3' ? 70 : config.readingLevel === 'Early 4–5' ? 100 : 135,
+          wordCount: config.readingLevel === 'Toddler 1–2' ? 12 : config.readingLevel === 'Early 4–5' ? 30 : config.readingLevel === 'Early Elementary 6–8' ? 60 : 100,
           visualBrief: `Page ${i + 1} visual scene`,
           imagePrompt: `${styleBible.renderingStyle} illustration of page ${i + 1}, ${styleBible.heroDescription}, ${config.setting}`
         }))

@@ -14,7 +14,10 @@ serve(async (req) => {
     const { pageSize, prompts } = await req.json()
     console.log('Generate images request received:', { pageSize, prompts })
     
-    // Note: Using placeholder images for now, no API key required
+    const hfToken = Deno.env.get('HF_TOKEN')
+    if (!hfToken) {
+      throw new Error('HF_TOKEN environment variable is required')
+    }
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
     const pageSizes = {
@@ -26,19 +29,58 @@ serve(async (req) => {
     const dimensions = pageSizes[pageSize] || pageSizes['A5 portrait']
     const images = []
 
-    // Note: Gemini doesn't generate images directly, so we'll use a placeholder approach
-    // In a real implementation, you'd use DALL-E, Midjourney API, or Stable Diffusion
-    
+    // Generate real AI images using Hugging Face
     for (const promptData of prompts) {
-      // For now, create placeholder images
-      // You could integrate with DALL-E, Stable Diffusion, or other image generation APIs
-      
-      const placeholderUrl = `https://picsum.photos/${dimensions.width}/${dimensions.height}?random=${promptData.page}`
-      
-      images.push({
-        page: promptData.page,
-        url: placeholderUrl
-      })
+      try {
+        console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
+        
+        // Enhance prompt for children's book illustration style
+        const enhancedPrompt = `${promptData.prompt}, children's book illustration, watercolor style, warm and friendly, detailed, high quality, storybook art`
+        
+        const response = await fetch('https://api-inference.huggingface.co/models/Qwen/Qwen-Image', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${hfToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            inputs: enhancedPrompt,
+            parameters: {
+              width: dimensions.width,
+              height: dimensions.height,
+            }
+          }),
+        })
+
+        if (!response.ok) {
+          console.error(`Hugging Face API error for page ${promptData.page}:`, response.status, await response.text())
+          // Fallback to placeholder if API fails
+          images.push({
+            page: promptData.page,
+            url: `https://picsum.photos/${dimensions.width}/${dimensions.height}?random=${promptData.page}`
+          })
+          continue
+        }
+
+        // Convert blob to base64
+        const imageBlob = await response.blob()
+        const arrayBuffer = await imageBlob.arrayBuffer()
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+        const dataUrl = `data:image/png;base64,${base64}`
+        
+        images.push({
+          page: promptData.page,
+          url: dataUrl
+        })
+        
+      } catch (error) {
+        console.error(`Error generating image for page ${promptData.page}:`, error)
+        // Fallback to placeholder if generation fails
+        images.push({
+          page: promptData.page,
+          url: `https://picsum.photos/${dimensions.width}/${dimensions.height}?random=${promptData.page}`
+        })
+      }
     }
 
     return new Response(

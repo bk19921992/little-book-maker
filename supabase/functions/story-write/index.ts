@@ -30,20 +30,45 @@ serve(async (req) => {
       const writingPrompt = `Write page ${pageOutline.page} of a children's story:
 
 Story Details:
-- Children: ${config.children.join(', ') || 'friendly child hero'}
-- Setting: ${config.setting}
+- Children: ${config.children.join(', ')}
+- Story Type: ${config.storyType}
 - Characters: ${config.characters.join(', ')}
-- Theme: ${config.themePreset || config.themeCustom}
-- Reading level: ${config.readingLevel}
-- Narration style: ${config.narrationStyle}
-- Educational focus: ${config.educationalFocus || 'none'}
+- Setting: ${config.setting}
+- Educational Focus: ${config.educationalFocus}
+- Reading Level: ${config.readingLevel}
+- Length: ${config.lengthPages} pages total
+- Narration Style: ${config.narrationStyle}
+- Theme: ${config.themePreset || 'Custom'}
+
+Personal Touches:
+- Town: ${config.personal.town}
+- Favorite Toy: ${config.personal.favouriteToy}
+- Favorite Color: ${config.personal.favouriteColour}
+- Pets: ${config.personal.pets}
 
 Page Requirements:
-- Target words: ${pageOutline.wordsTarget}
+- Target word count: ${pageOutline.wordCount || pageOutline.wordsTarget} words
 - Visual brief: ${pageOutline.visualBrief}
-- Personal touches: ${config.personal.town ? `Town: ${config.personal.town}` : ''} ${config.personal.favouriteToy ? `Favourite toy: ${config.personal.favouriteToy}` : ''} ${config.personal.pets ? `Pets: ${config.personal.pets}` : ''}
+- This is page ${pageOutline.page} of ${config.lengthPages}
 
-Write ONLY the story text for this page. Use UK English. Keep it gentle, safe, and engaging. No violence or scary elements.`
+CRITICAL READING LEVEL REQUIREMENTS FOR ${config.readingLevel}:
+${config.readingLevel === 'Toddler 1–2' ? 
+  '- Use ONLY 1-3 words per sentence\n- Use simple, familiar words\n- Focus on basic concepts (colors, animals, sounds)\n- Very repetitive structure\n- Maximum 10-15 words total per page' :
+config.readingLevel === 'Early 4–5' ?
+  '- Use simple 4-6 word sentences\n- Basic vocabulary only\n- Short, clear sentences\n- Focus on simple actions and familiar objects\n- Maximum 25-35 words per page' :
+config.readingLevel === 'Early Elementary 6–8' ?
+  '- Use 6-10 word sentences\n- Slightly more complex vocabulary\n- Can include basic adjectives\n- Simple story progression\n- Maximum 50-75 words per page' :
+  '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate'}
+
+Important Instructions:
+- Write ONLY the story text for this page, nothing else
+- STRICTLY follow the reading level requirements above
+- Include the child's name(s) naturally in the story
+- Incorporate personal details where appropriate
+- Keep within the target word count
+- Make the text engaging and age-appropriate
+- No page numbers, titles, or extra formatting
+- The text should flow naturally with the overall story arc`
 
       console.log(`Making OpenAI API call for page ${pageOutline.page}...`)
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -57,15 +82,15 @@ Write ONLY the story text for this page. Use UK English. Keep it gentle, safe, a
           messages: [
             {
               role: 'system',
-              content: 'You are a children\'s book writer. Create gentle, engaging, and age-appropriate stories in UK English. Focus on kindness, friendship, and wonder.'
+              content: `You are a children's book writer specializing in ${config.readingLevel} level stories. Create gentle, engaging, and age-appropriate stories in UK English. STRICTLY follow reading level requirements - this is critical for child development.`
             },
             {
               role: 'user',
               content: writingPrompt
             }
           ],
-          temperature: 0.8,
-          max_tokens: 300,
+          temperature: 0.7,
+          max_tokens: config.readingLevel === 'Toddler 1–2' ? 50 : config.readingLevel === 'Early 4–5' ? 100 : 200,
         }),
       })
 
