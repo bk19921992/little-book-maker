@@ -51,7 +51,7 @@ serve(async (req) => {
         
         console.log('Enhanced prompt:', enhancedPrompt)
         
-        const response = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
+        const response = await fetch('https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${hfToken}`,
@@ -60,8 +60,8 @@ serve(async (req) => {
           body: JSON.stringify({
             inputs: enhancedPrompt,
             parameters: {
-              width: dimensions.width,
-              height: dimensions.height,
+              width: Math.min(dimensions.width, 1024),
+              height: Math.min(dimensions.height, 1024),
             }
           }),
         })
