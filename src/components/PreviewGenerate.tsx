@@ -34,9 +34,10 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const updateProgress = (newProgress: number, stepStartTime: number) => {
     setProgress(newProgress);
     
-    if (newProgress > 0) {
+    if (newProgress > 0 && newProgress < 100) {
       const elapsed = (Date.now() - startTime) / 1000; // seconds
-      const estimatedTotal = (elapsed / newProgress) * 100;
+      const progressRatio = newProgress / 100;
+      const estimatedTotal = elapsed / progressRatio;
       const remaining = Math.max(0, estimatedTotal - elapsed);
       
       if (remaining > 60) {
@@ -46,6 +47,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       } else {
         setEstimatedTimeRemaining('Almost done!');
       }
+    } else {
+      setEstimatedTimeRemaining('');
     }
   };
 
@@ -292,38 +295,41 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4">
+            <div className="grid gap-6">
               {config.pages.slice(0, 3).map((page, index) => (
-                <div key={page.page} className="border rounded-lg p-4 space-y-3">
+                <div key={page.page} className="border rounded-xl p-6 space-y-4 bg-gradient-to-br from-background to-muted/30 shadow-sm">
                   <div className="flex items-center justify-between">
-                    <Badge variant="outline">Page {page.page}</Badge>
+                    <Badge variant="outline" className="text-sm font-medium">Page {page.page}</Badge>
                     <div className="flex items-center gap-2">
                       {page.imageUrl && (
                         <Badge variant="secondary" className="flex items-center gap-1">
                           <Image className="w-3 h-3" />
-                          Image ready
+                          Illustration ready
                         </Badge>
                       )}
                     </div>
                   </div>
-                  <div className="text-sm leading-relaxed">
-                    {page.text.substring(0, 200)}
-                    {page.text.length > 200 && '...'}
-                  </div>
+                  
                   {page.imageUrl && (
-                    <div className="rounded-lg overflow-hidden">
+                    <div className="rounded-lg overflow-hidden shadow-md border bg-white">
                       <img
                         src={page.imageUrl}
                         alt={`Illustration for page ${page.page}`}
-                        className="w-full h-32 object-cover"
+                        className="w-full h-56 object-contain"
                       />
                     </div>
                   )}
+                  
+                  <div className="text-sm leading-relaxed text-foreground bg-background/80 p-4 rounded-lg border">
+                    <div className="font-medium mb-2 text-primary">Page {page.page} Text:</div>
+                    {page.text.substring(0, 300)}
+                    {page.text.length > 300 && '...'}
+                  </div>
                 </div>
               ))}
               {config.pages.length > 3 && (
-                <div className="text-center text-muted-foreground">
-                  ... and {config.pages.length - 3} more pages
+                <div className="text-center text-muted-foreground bg-muted/50 p-4 rounded-lg">
+                  ... and {config.pages.length - 3} more pages ready for editing
                 </div>
               )}
             </div>

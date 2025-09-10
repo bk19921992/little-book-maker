@@ -14,11 +14,11 @@ serve(async (req) => {
     const { config, outline } = await req.json()
     console.log('Story write request received:', { config, outline })
     
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')
+    const openaiKey = Deno.env.get('OPENAI_API_KEY')
 
-    if (!geminiKey) {
-      console.error('Gemini API key not configured')
-      throw new Error('Gemini API key not configured')
+    if (!openaiKey) {
+      console.error('OpenAI API key not configured')
+      throw new Error('OpenAI API key not configured')
     }
 
     const pages = []
@@ -75,39 +75,39 @@ Important Instructions:
 - The text should flow naturally with the overall story arc
 - Reflect the chosen theme and color palette in descriptions when natural`
 
-      console.log(`Making Gemini API call for page ${pageOutline.page}...`)
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+      console.log(`Making OpenAI API call for page ${pageOutline.page}...`)
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${openaiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `You are a children's book writer specializing in ${config.readingLevel} level stories. Create gentle, engaging, and age-appropriate stories in UK English. STRICTLY follow reading level requirements - this is critical for child development.
-
-${writingPrompt}
-
-Write ONLY the story text for this page, nothing else. Make it exactly ${pageOutline.wordCount || pageOutline.wordsTarget} words.`
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.8,
-            maxOutputTokens: config.readingLevel === 'Toddler 2–3' ? 300 : config.readingLevel === 'Early 4–5' ? 400 : 500,
-          }
+          model: 'gpt-5-2025-08-07',
+          messages: [
+            {
+              role: 'system',
+              content: `You are a children's book writer specializing in ${config.readingLevel} level stories. Create gentle, engaging, and age-appropriate stories in UK English. STRICTLY follow reading level requirements - this is critical for child development.`
+            },
+            {
+              role: 'user',
+              content: writingPrompt
+            }
+          ],
+          max_completion_tokens: config.readingLevel === 'Toddler 2–3' ? 300 : config.readingLevel === 'Early 4–5' ? 400 : 500,
         }),
       })
 
-      console.log(`Gemini response status for page ${pageOutline.page}:`, response.status)
+      console.log(`OpenAI response status for page ${pageOutline.page}:`, response.status)
       
       if (!response.ok) {
         const errorText = await response.text()
-        console.error(`Gemini API error for page ${pageOutline.page}:`, errorText)
-        throw new Error(`Gemini API error for page ${pageOutline.page}: ${response.status} ${errorText}`)
+        console.error(`OpenAI API error for page ${pageOutline.page}:`, errorText)
+        throw new Error(`OpenAI API error for page ${pageOutline.page}: ${response.status} ${errorText}`)
       }
 
       const aiResponse = await response.json()
-      const pageText = aiResponse.candidates[0].content.parts[0].text.trim()
+      const pageText = aiResponse.choices[0].message.content.trim()
       console.log(`Generated text for page ${pageOutline.page}:`, pageText.substring(0, 100) + '...')
 
       return {

@@ -14,11 +14,11 @@ serve(async (req) => {
     const { config } = await req.json()
     console.log('Story plan request received:', config)
     
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')
+    const openaiKey = Deno.env.get('OPENAI_API_KEY')
 
-    if (!geminiKey) {
-      console.error('Gemini API key not configured')
-      throw new Error('Gemini API key not configured')
+    if (!openaiKey) {
+      console.error('OpenAI API key not configured')
+      throw new Error('OpenAI API key not configured')
     }
 
     // Generate style bible
@@ -72,59 +72,43 @@ Make sure to incorporate the personal details naturally throughout the story and
 
 Return as JSON with pages array containing page, wordCount, visualBrief, and imagePrompt fields.`
 
-    console.log('Making Gemini API call...')
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`, {
+    console.log('Making OpenAI API call...')
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
+        'Authorization': `Bearer ${openaiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `You are a children's book planning expert. Create engaging, safe, and age-appropriate story outlines with detailed, vivid image prompts. Always respond with valid JSON only.
-
-${outlinePrompt}
-
-Return ONLY a JSON object in this format:
-{
-  "pages": [
-    {
-      "page": 1,
-      "wordCount": 70,
-      "visualBrief": "Description of what happens visually",
-      "imagePrompt": "Detailed image prompt for illustration"
-    }
-  ]
-}`
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 2000,
-        }
+        model: 'gpt-5-2025-08-07',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a children\'s book planning expert. Create engaging, safe, and age-appropriate story outlines with detailed, vivid image prompts. Always respond with valid JSON.'
+          },
+          {
+            role: 'user',
+            content: outlinePrompt
+          }
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2000,
       }),
     })
 
-    console.log('Gemini response status:', response.status)
+    console.log('OpenAI response status:', response.status)
     
     if (!response.ok) {
       const errorText = await response.text()
-      console.error('Gemini API error:', errorText)
-      throw new Error(`Gemini API error: ${response.status} ${errorText}`)
+      console.error('OpenAI API error:', errorText)
+      throw new Error(`OpenAI API error: ${response.status} ${errorText}`)
     }
 
     const aiResponse = await response.json()
     let outlineData
 
     try {
-      const content = aiResponse.candidates[0].content.parts[0].text
-      console.log('Raw Gemini response:', content)
-      
-      // Extract JSON from response (in case there's extra text)
-      const jsonMatch = content.match(/\{[\s\S]*\}/)
-      const jsonText = jsonMatch ? jsonMatch[0] : content
-      
-      outlineData = JSON.parse(jsonText)
+      outlineData = JSON.parse(aiResponse.choices[0].message.content)
     } catch (parseError) {
       // Fallback if AI doesn't return proper JSON
       outlineData = {
