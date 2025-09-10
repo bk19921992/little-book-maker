@@ -14,9 +14,9 @@ serve(async (req) => {
     const { pageSize, prompts } = await req.json()
     console.log('Generate images request received:', { pageSize, prompts })
     
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!geminiKey) {
-      throw new Error('GEMINI_API_KEY is required')
+    const runwayKey = Deno.env.get('RUNWAY_API_KEY')
+    if (!runwayKey) {
+      throw new Error('RUNWAY_API_KEY is required')
     }
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
@@ -29,7 +29,7 @@ serve(async (req) => {
     const dimensions = pageSizes[pageSize] || pageSizes['A5 portrait']
     const images = []
 
-    // Generate AI images using Gemini
+    // Generate AI images using Runway
     for (const promptData of prompts) {
       try {
         console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
@@ -51,83 +51,59 @@ serve(async (req) => {
         const petLine = configData.personal?.pets ? `Pet companion: ${configData.personal.pets} (animal, not human).` : ''
         
         // Create comprehensive prompt for children's book illustration
-        const enhancedPrompt = `Professional children's book illustration in ${imageStyle} style.
-Scene description: ${basePrompt}. ${visualBrief}
-Match this page text: ${pageText}
-Key elements:
-- Main human child protagonist: ${mainChild}
-- Supporting characters: ${characters}
-- Pet: ${petLine || 'friendly animal companion if specified, otherwise none'}
-- Setting/background: ${setting}
-- Educational focus: ${configData.educationalFocus || 'gentle learning'}
-- Story type: ${configData.storyType || 'adventure'}
-- Palette: ${colorPalette} with emphasis on ${personalColor}
-Composition: medium or medium-close shot, eye-level, character-focused, Rule of Thirds; avoid wide empty landscapes.
-Constraints: Do NOT depict the child as an animal. Do NOT depict the pet as human. No text, letters, watermark, logos.
-Style: soft watercolor rendering, warm lighting, cozy magical mood, child-friendly, high quality, print-ready.`
+        const enhancedPrompt = `High-quality children's book illustration in ${imageStyle} style. Scene: ${basePrompt}. ${visualBrief}. Page text: ${pageText}. Main child: ${mainChild}. Characters: ${characters}. ${petLine}. Setting: ${setting}. Educational focus: ${configData.educationalFocus || 'gentle learning'}. Story: ${configData.storyType || 'adventure'}. Colors: ${colorPalette} with ${personalColor}. Style: 3D rendered like Pixar/Disney, vibrant colors, soft lighting, detailed textures, warm atmosphere, child-friendly expressions, professional quality, portrait orientation, no text/letters/watermarks.`
         
         console.log('Enhanced prompt:', enhancedPrompt)
         
         let dataUrl: string | null = null
 
-        // Use Gemini 2.5 Flash for high-quality 3D rendered images
-        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${geminiKey}`, {
+        // Use Runway API for image generation
+        const taskUUID = crypto.randomUUID()
+        const runwayPayload = {
+          taskType: "imageInference",
+          model: "google:4@1",
+          positivePrompt: enhancedPrompt,
+          numberResults: 1,
+          outputType: ["dataURI", "URL"],
+          outputFormat: "JPEG",
+          seed: Math.floor(Math.random() * 1000000000),
+          includeCost: true,
+          outputQuality: 85,
+          taskUUID: taskUUID
+        }
+
+        const runwayResponse = await fetch('https://api.runware.ai/v1', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Authorization': `Bearer ${runwayKey}`,
           },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: `Create a high-quality 3D rendered children's book illustration in the style of "Zippy the Bee's Big Job". 
-
-Scene: ${enhancedPrompt}
-
-Style requirements:
-- Professional 3D rendering like Pixar/Disney animation
-- Vibrant, saturated colors with soft lighting
-- Detailed textures (fuzzy bee fur, smooth child skin, realistic flowers/grass)
-- Warm, cheerful garden atmosphere
-- Child-friendly, engaging character expressions
-- Similar quality to modern animated children's films
-- Soft shadows and natural lighting
-- Rich detail in background elements (flowers, trees, grass texture)
-- Characters should be appealing and expressive
-- Garden setting with lush greenery and colorful flowers
-
-Technical specs:
-- High resolution, print-quality
-- Portrait orientation (3:4 aspect ratio)
-- No text, letters, or watermarks
-- Professional children's book illustration standard`
-              }]
-            }],
-            generationConfig: {
-              temperature: 0.8,
-              topK: 40,
-              topP: 0.95,
-              maxOutputTokens: 8192,
-              candidateCount: 1,
-              responseMimeType: "application/json"
-            }
-          }),
+          body: JSON.stringify([
+            {
+              taskType: "authentication",
+              apiKey: runwayKey
+            },
+            runwayPayload
+          ]),
         })
 
-        if (geminiResponse.ok) {
-          const result = await geminiResponse.json()
-          const candidate = result.candidates?.[0]
-          if (candidate?.content?.parts) {
-            for (const part of candidate.content.parts) {
-              if (part.inlineData?.data) {
-                dataUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
-                console.log(`Generated high-quality 3D image for page ${promptData.page} using Gemini 2.5 Flash`)
-                break
-              }
+        if (runwayResponse.ok) {
+          const result = await runwayResponse.json()
+          console.log('Runway API response:', result)
+          
+          if (result.data && result.data.length > 0) {
+            const imageData = result.data.find(item => item.taskType === 'imageInference')
+            if (imageData && imageData.imageURL) {
+              dataUrl = imageData.imageURL
+              console.log(`Generated high-quality image for page ${promptData.page} using Runway`)
+            } else if (imageData && imageData.dataURI) {
+              dataUrl = imageData.dataURI
+              console.log(`Generated high-quality image for page ${promptData.page} using Runway (dataURI)`)
             }
           }
         } else {
-          const errorText = await geminiResponse.text()
-          console.error(`Gemini 2.5 Flash error for page ${promptData.page}:`, geminiResponse.status, errorText)
+          const errorText = await runwayResponse.text()
+          console.error(`Runway API error for page ${promptData.page}:`, runwayResponse.status, errorText)
         }
 
         if (!dataUrl) {
