@@ -56,6 +56,21 @@ export default {
           magical: "hsl(var(--story-magical))",
           nature: "hsl(var(--story-nature))",
         },
+        sidebar: {
+          DEFAULT: "hsl(var(--sidebar-background))",
+          foreground: "hsl(var(--sidebar-foreground))",
+          primary: "hsl(var(--sidebar-primary))",
+          "primary-foreground": "hsl(var(--sidebar-primary-foreground))",
+          accent: "hsl(var(--sidebar-accent))",
+          "accent-foreground": "hsl(var(--sidebar-accent-foreground))",
+          border: "hsl(var(--sidebar-border))",
+          ring: "hsl(var(--sidebar-ring))",
+        },
+      },
+      backgroundImage: {
+        'gradient-soft': 'var(--bg-gradient-soft)',
+        'gradient-warm': 'var(--gradient-warm)',
+        'gradient-story': 'var(--gradient-story)',
       },
       fontFamily: {
         sans: ['Nunito', 'system-ui', 'sans-serif'],

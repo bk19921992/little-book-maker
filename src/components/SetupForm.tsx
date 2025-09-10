@@ -80,17 +80,17 @@ export const SetupForm: React.FC<SetupFormProps> = ({
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-8 animate-fade-in">
-      <div className="text-center space-y-4">
-        <h1 className="text-4xl font-display font-bold text-gradient">
+    <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6 sm:space-y-8 animate-fade-in">
+      <div className="text-center space-y-3 sm:space-y-4">
+        <h1 className="text-3xl sm:text-4xl font-display font-bold text-gradient">
           Create Your Story
         </h1>
-        <p className="text-lg text-muted-foreground">
+        <p className="text-base sm:text-lg text-muted-foreground">
           Let's build a magical storybook just for you
         </p>
       </div>
 
-      <div className="grid gap-8 md:grid-cols-2">
+      <div className="grid gap-6 sm:gap-8 lg:grid-cols-2">
         {/* Children Names */}
         <Card className="story-card">
           <CardHeader>
@@ -312,7 +312,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
       </Card>
 
       {/* Settings Grid */}
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
         {/* Reading Level & Length */}
         <Card className="story-card">
           <CardHeader>
