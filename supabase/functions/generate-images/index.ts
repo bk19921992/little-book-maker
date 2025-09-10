@@ -14,9 +14,9 @@ serve(async (req) => {
     const { pageSize, prompts } = await req.json()
     console.log('Generate images request received:', { pageSize, prompts })
     
-    const runwayKey = Deno.env.get('RUNWAY_API_KEY')
-    if (!runwayKey) {
-      throw new Error('RUNWAY_API_KEY is required')
+    const geminiKey = Deno.env.get('GEMINI_API_KEY')
+    if (!geminiKey) {
+      throw new Error('GEMINI_API_KEY is required')
     }
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
@@ -29,7 +29,7 @@ serve(async (req) => {
     const dimensions = pageSizes[pageSize] || pageSizes['A5 portrait']
     const images = []
 
-    // Generate AI images using Runway
+    // Generate AI images using Gemini Flash 2.5
     for (const promptData of prompts) {
       try {
         console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
@@ -57,53 +57,45 @@ serve(async (req) => {
         
         let dataUrl: string | null = null
 
-        // Use Runway API for image generation
-        const taskUUID = crypto.randomUUID()
-        const runwayPayload = {
-          taskType: "imageInference",
-          model: "google:4@1",
-          positivePrompt: enhancedPrompt,
-          numberResults: 1,
-          outputType: ["dataURI", "URL"],
-          outputFormat: "JPEG",
-          seed: Math.floor(Math.random() * 1000000000),
-          includeCost: true,
-          outputQuality: 85,
-          taskUUID: taskUUID
+        // Use Google Gemini 2.5 Flash Image Preview for image generation
+        const geminiPayload = {
+          contents: [{
+            parts: [{
+              text: enhancedPrompt
+            }]
+          }]
         }
 
-        const runwayResponse = await fetch('https://api.runware.ai/v1', {
+        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${geminiKey}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${runwayKey}`,
           },
-          body: JSON.stringify([
-            {
-              taskType: "authentication",
-              apiKey: runwayKey
-            },
-            runwayPayload
-          ]),
+          body: JSON.stringify(geminiPayload),
         })
 
-        if (runwayResponse.ok) {
-          const result = await runwayResponse.json()
-          console.log('Runway API response:', result)
+        if (geminiResponse.ok) {
+          const result = await geminiResponse.json()
+          console.log('Gemini API response:', JSON.stringify(result, null, 2))
           
-          if (result.data && result.data.length > 0) {
-            const imageData = result.data.find(item => item.taskType === 'imageInference')
-            if (imageData && imageData.imageURL) {
-              dataUrl = imageData.imageURL
-              console.log(`Generated high-quality image for page ${promptData.page} using Runway`)
-            } else if (imageData && imageData.dataURI) {
-              dataUrl = imageData.dataURI
-              console.log(`Generated high-quality image for page ${promptData.page} using Runway (dataURI)`)
+          if (result.candidates && result.candidates.length > 0) {
+            const candidate = result.candidates[0]
+            if (candidate.content && candidate.content.parts) {
+              // Look for image data in the response
+              for (const part of candidate.content.parts) {
+                if (part.inlineData && part.inlineData.data) {
+                  // Convert base64 to data URL
+                  const mimeType = part.inlineData.mimeType || 'image/jpeg'
+                  dataUrl = `data:${mimeType};base64,${part.inlineData.data}`
+                  console.log(`Generated high-quality image for page ${promptData.page} using Gemini Flash 2.5`)
+                  break
+                }
+              }
             }
           }
         } else {
-          const errorText = await runwayResponse.text()
-          console.error(`Runway API error for page ${promptData.page}:`, runwayResponse.status, errorText)
+          const errorText = await geminiResponse.text()
+          console.error(`Gemini API error for page ${promptData.page}:`, geminiResponse.status, errorText)
         }
 
         if (!dataUrl) {
