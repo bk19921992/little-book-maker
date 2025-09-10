@@ -51,6 +51,7 @@ Create exactly ${config.lengthPages} pages. Each page should have:
 
 Return as JSON with pages array.`
 
+    console.log('Making OpenAI API call...')
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -73,6 +74,14 @@ Return as JSON with pages array.`
         temperature: 0.7,
       }),
     })
+
+    console.log('OpenAI response status:', response.status)
+    
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('OpenAI API error:', errorText)
+      throw new Error(`OpenAI API error: ${response.status} ${errorText}`)
+    }
 
     const aiResponse = await response.json()
     let outlineData

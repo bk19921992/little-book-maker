@@ -5,10 +5,13 @@ import { supabase } from '@/integrations/supabase/client';
 class APIClient {
   private async invokeFunction<T>(functionName: string, body: any, headers: Record<string, string> = {}): Promise<T> {
     try {
+      console.log(`Calling ${functionName} with:`, body)
       const { data, error } = await supabase.functions.invoke(functionName, {
         body,
         headers,
       });
+
+      console.log(`${functionName} response:`, { data, error })
 
       if (error) {
         console.error(`Error calling ${functionName}:`, error);

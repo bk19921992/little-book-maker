@@ -43,6 +43,7 @@ Page Requirements:
 
 Write ONLY the story text for this page. Use UK English. Keep it gentle, safe, and engaging. No violence or scary elements.`
 
+      console.log(`Making OpenAI API call for page ${pageOutline.page}...`)
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -65,6 +66,14 @@ Write ONLY the story text for this page. Use UK English. Keep it gentle, safe, a
           max_tokens: 300,
         }),
       })
+
+      console.log(`OpenAI response status for page ${pageOutline.page}:`, response.status)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error(`OpenAI API error for page ${pageOutline.page}:`, errorText)
+        throw new Error(`OpenAI API error for page ${pageOutline.page}: ${response.status} ${errorText}`)
+      }
 
       const aiResponse = await response.json()
       const pageText = aiResponse.choices[0].message.content.trim()
