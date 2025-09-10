@@ -236,16 +236,16 @@ export const SetupForm: React.FC<SetupFormProps> = ({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2">
               {settingPresets.map((preset) => (
                 <Button
                   key={preset.name}
                   variant={config.setting === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('setting', preset.name)}
-                  className="h-auto p-4 text-left flex-col items-start justify-start min-h-[100px] max-w-full whitespace-normal"
+                  className="h-auto p-3 text-left flex-col items-start justify-start min-h-[80px] max-w-full whitespace-normal text-xs"
                 >
-                  <span className="font-medium text-sm leading-tight w-full text-left break-words">{preset.name}</span>
-                  <span className="text-xs opacity-70 mt-2 leading-relaxed w-full text-left break-words hyphens-auto">
+                  <span className="font-medium text-xs leading-tight w-full text-left break-words">{preset.name}</span>
+                  <span className="text-[10px] opacity-70 mt-1 leading-relaxed w-full text-left break-words hyphens-auto">
                     {preset.description}
                   </span>
                 </Button>

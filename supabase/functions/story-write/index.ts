@@ -78,7 +78,7 @@ Important Instructions:
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-2025-08-07',
           messages: [
             {
               role: 'system',
@@ -89,8 +89,7 @@ Important Instructions:
               content: writingPrompt
             }
           ],
-          temperature: 0.7,
-          max_tokens: config.readingLevel === 'Toddler 1–2' ? 50 : config.readingLevel === 'Early 4–5' ? 100 : 200,
+          max_completion_tokens: config.readingLevel === 'Toddler 1–2' ? 100 : config.readingLevel === 'Early 4–5' ? 200 : 400,
         }),
       })
 

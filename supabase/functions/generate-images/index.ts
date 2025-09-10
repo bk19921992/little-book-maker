@@ -35,9 +35,9 @@ serve(async (req) => {
         console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
         
         // Enhance prompt for children's book illustration style
-        const enhancedPrompt = `${promptData.prompt}, children's book illustration, watercolor style, warm and friendly, detailed, high quality, storybook art`
+        const enhancedPrompt = `children's book illustration, ${promptData.prompt}, watercolor painting style, soft pastel colors, whimsical and magical, storybook art, hand-drawn illustration, warm lighting, child-friendly, detailed but gentle, fairy tale style, beautiful composition`
         
-        const response = await fetch('https://api-inference.huggingface.co/models/Qwen/Qwen-Image', {
+        const response = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${hfToken}`,

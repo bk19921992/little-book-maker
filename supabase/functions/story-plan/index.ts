@@ -67,21 +67,21 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
         'Authorization': `Bearer ${openaiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a children\'s book planning expert. Create engaging, safe, and age-appropriate story outlines. Always respond with valid JSON.'
-          },
-          {
-            role: 'user',
-            content: outlinePrompt
-          }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.7,
-      }),
+        body: JSON.stringify({
+          model: 'gpt-5-2025-08-07',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a children\'s book planning expert. Create engaging, safe, and age-appropriate story outlines with detailed, vivid image prompts. Always respond with valid JSON.'
+            },
+            {
+              role: 'user',
+              content: outlinePrompt
+            }
+          ],
+          response_format: { type: "json_object" },
+          max_completion_tokens: 2000,
+        }),
     })
 
     console.log('OpenAI response status:', response.status)
