@@ -12,9 +12,12 @@ serve(async (req) => {
 
   try {
     const { config, outline } = await req.json()
+    console.log('Story write request received:', { config, outline })
+    
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
 
     if (!openaiKey) {
+      console.error('OpenAI API key not configured')
       throw new Error('OpenAI API key not configured')
     }
 
@@ -80,10 +83,11 @@ Write ONLY the story text for this page. Use UK English. Keep it gentle, safe, a
     )
 
   } catch (error) {
+    console.error('Story write error:', error)
     return new Response(
       JSON.stringify({ error: error.message }),
       {
-        status: 400,
+        status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     )

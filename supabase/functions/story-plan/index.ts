@@ -12,9 +12,12 @@ serve(async (req) => {
 
   try {
     const { config } = await req.json()
+    console.log('Story plan request received:', config)
+    
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
 
     if (!openaiKey) {
+      console.error('OpenAI API key not configured')
       throw new Error('OpenAI API key not configured')
     }
 
@@ -99,10 +102,11 @@ Return as JSON with pages array.`
     )
 
   } catch (error) {
+    console.error('Story plan error:', error)
     return new Response(
       JSON.stringify({ error: error.message }),
       {
-        status: 400,
+        status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     )

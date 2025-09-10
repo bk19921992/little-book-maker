@@ -12,11 +12,9 @@ serve(async (req) => {
 
   try {
     const { pageSize, prompts } = await req.json()
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')
-
-    if (!geminiKey) {
-      throw new Error('Gemini API key not configured')
-    }
+    console.log('Generate images request received:', { pageSize, prompts })
+    
+    // Note: Using placeholder images for now, no API key required
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
     const pageSizes = {
@@ -51,10 +49,11 @@ serve(async (req) => {
     )
 
   } catch (error) {
+    console.error('Generate images error:', error)
     return new Response(
       JSON.stringify({ error: error.message }),
       {
-        status: 400,
+        status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     )
