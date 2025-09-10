@@ -15,7 +15,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { getSession } from '@/lib/session';
 import { PRICES } from '@/lib/pricing';
 
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 'pk_test_placeholder');
+const stripePromise = loadStripe(
+  import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
+  'pk_test_51QdAAA2O5vKBkgBMAAAAA' // Placeholder test key
+);
 
 interface CheckoutSheetProps {
   item: 'export' | 'print' | 'subscription';

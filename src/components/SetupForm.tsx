@@ -136,16 +136,18 @@ export const SetupForm: React.FC<SetupFormProps> = ({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-3">
               {storyTypePresets.map((preset) => (
                 <Button
                   key={preset.name}
                   variant={config.storyType === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('storyType', preset.name)}
-                  className="h-auto p-3 text-left flex-col items-start"
+                  className="h-auto p-3 text-left flex-col items-start justify-start min-h-[80px]"
                 >
-                  <span className="font-medium">{preset.name}</span>
-                  <span className="text-xs opacity-70">{preset.description}</span>
+                  <span className="font-medium text-sm leading-tight">{preset.name}</span>
+                  <span className="text-xs opacity-70 mt-1 line-clamp-2 leading-tight break-words w-full text-left">
+                    {preset.description}
+                  </span>
                 </Button>
               ))}
             </div>
@@ -234,16 +236,18 @@ export const SetupForm: React.FC<SetupFormProps> = ({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-3">
               {settingPresets.map((preset) => (
                 <Button
                   key={preset.name}
                   variant={config.setting === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('setting', preset.name)}
-                  className="h-auto p-3 text-left flex-col items-start"
+                  className="h-auto p-3 text-left flex-col items-start justify-start min-h-[80px]"
                 >
-                  <span className="font-medium text-sm">{preset.name}</span>
-                  <span className="text-xs opacity-70">{preset.description}</span>
+                  <span className="font-medium text-sm leading-tight">{preset.name}</span>
+                  <span className="text-xs opacity-70 mt-1 line-clamp-2 leading-tight break-words w-full text-left">
+                    {preset.description}
+                  </span>
                 </Button>
               ))}
             </div>
@@ -273,17 +277,19 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           <CardTitle>Characters</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {characterPresets.map((preset) => (
               <Button
                 key={preset.name}
                 variant={config.characters.includes(preset.name) ? "default" : "outline"}
                 onClick={() => selectPreset('character', preset.name)}
-                className="h-auto p-3 text-left flex-col items-start"
+                className="h-auto p-3 text-left flex-col items-start justify-start min-h-[70px]"
                 size="sm"
               >
-                <span className="font-medium text-sm">{preset.name}</span>
-                <span className="text-xs opacity-70">{preset.description}</span>
+                <span className="font-medium text-sm leading-tight">{preset.name}</span>
+                <span className="text-xs opacity-70 mt-1 line-clamp-2 leading-tight break-words w-full text-left">
+                  {preset.description}
+                </span>
               </Button>
             ))}
           </div>
