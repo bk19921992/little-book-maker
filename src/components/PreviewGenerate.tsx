@@ -28,6 +28,26 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const [currentStep, setCurrentStep] = useState<GenerationStep>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [startTime, setStartTime] = useState<number>(0);
+  const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<string>('');
+
+  const updateProgress = (newProgress: number, stepStartTime: number) => {
+    setProgress(newProgress);
+    
+    if (newProgress > 0) {
+      const elapsed = (Date.now() - startTime) / 1000; // seconds
+      const estimatedTotal = (elapsed / newProgress) * 100;
+      const remaining = Math.max(0, estimatedTotal - elapsed);
+      
+      if (remaining > 60) {
+        setEstimatedTimeRemaining(`${Math.round(remaining / 60)} min remaining`);
+      } else if (remaining > 0) {
+        setEstimatedTimeRemaining(`${Math.round(remaining)} sec remaining`);
+      } else {
+        setEstimatedTimeRemaining('Almost done!');
+      }
+    }
+  };
 
   const generateStory = async () => {
     try {
@@ -41,11 +61,13 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       }
 
       setError(null);
+      setStartTime(Date.now());
       setCurrentStep('planning');
-      setProgress(10);
+      updateProgress(5, Date.now());
 
       // Step 1: Plan the story
       toast.info('Planning your story...');
+      const planStart = Date.now();
       const planResponse = await api.planStory(config);
       
       onConfigChange({
@@ -53,22 +75,26 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         outline: planResponse.outline,
       });
 
-      setProgress(30);
+      updateProgress(25, planStart);
       setCurrentStep('writing');
 
-      // Step 2: Write the story
-      toast.info('Writing your story...');
+      // Step 2: Write the story (optimized for speed)
+      toast.info(`Writing ${config.lengthPages} pages...`);
+      const writeStart = Date.now();
+      
+      // Update progress incrementally during writing
       const writeResponse = await api.writeStory(config, planResponse.outline);
       
       onConfigChange({
         pages: writeResponse.pages,
       });
 
-      setProgress(60);
+      updateProgress(70, writeStart);
       setCurrentStep('images');
 
-      // Step 3: Generate images
-      toast.info('Creating beautiful illustrations...');
+      // Step 3: Generate images (fast placeholder generation)
+      toast.info('Creating illustrations...');
+      const imageStart = Date.now();
       const imagePrompts = planResponse.outline.pages.map(page => ({
         page: page.page,
         prompt: page.imagePrompt,
@@ -90,8 +116,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         pages: pagesWithImages,
       });
 
-      setProgress(100);
+      updateProgress(100, imageStart);
       setCurrentStep('complete');
+      setEstimatedTimeRemaining('');
       toast.success('Your story is ready!');
 
     } catch (err) {
@@ -100,6 +127,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       toast.error(errorMessage);
       setCurrentStep('idle');
       setProgress(0);
+      setEstimatedTimeRemaining('');
     }
   };
 
@@ -175,9 +203,16 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Progress</span>
-                <span>{progress}%</span>
+                <div className="text-right">
+                  <span>{progress}%</span>
+                  {estimatedTimeRemaining && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {estimatedTimeRemaining}
+                    </div>
+                  )}
+                </div>
               </div>
-              <Progress value={progress} className="h-2" />
+              <Progress value={progress} className="h-3" />
             </div>
 
             <div className="grid gap-4">

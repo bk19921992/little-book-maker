@@ -23,8 +23,10 @@ serve(async (req) => {
 
     const pages = []
 
-    // Generate story text for each page
-    for (const pageOutline of outline.pages) {
+    // Generate story text for all pages in parallel for speed
+    console.log(`Generating ${outline.pages.length} pages in parallel...`)
+    
+    const pagePromises = outline.pages.map(async (pageOutline) => {
       const writingPrompt = `Write page ${pageOutline.page} of a children's story:
 
 Story Details:
@@ -78,11 +80,17 @@ Write ONLY the story text for this page. Use UK English. Keep it gentle, safe, a
       const aiResponse = await response.json()
       const pageText = aiResponse.choices[0].message.content.trim()
 
-      pages.push({
+      return {
         page: pageOutline.page,
         text: pageText
-      })
-    }
+      }
+    })
+
+    // Wait for all pages to complete
+    const completedPages = await Promise.all(pagePromises)
+    
+    // Sort pages by page number to ensure correct order
+    pages.push(...completedPages.sort((a, b) => a.page - b.page))
 
     return new Response(
       JSON.stringify({ pages }),
