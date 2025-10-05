@@ -87,7 +87,7 @@ Important Instructions:
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-2025-08-07',
           messages: [
             {
               role: 'system',
@@ -98,8 +98,7 @@ Important Instructions:
               content: writingPrompt
             }
           ],
-          max_tokens: config.readingLevel === 'Toddler 2–3' ? 300 : config.readingLevel === 'Early 4–5' ? 400 : 500,
-          temperature: 0.7
+          max_completion_tokens: config.readingLevel === 'Toddler 2–3' ? 300 : config.readingLevel === 'Early 4–5' ? 400 : 500
         }),
       })
 
@@ -121,13 +120,12 @@ Important Instructions:
           method: 'POST',
           headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5-2025-08-07',
             messages: [
               { role: 'system', content: `You write professional children's book pages in UK English with the quality of published books. Return ONLY the story text and ensure word-count target is met exactly.` },
               { role: 'user', content: `${writingPrompt}\n\nWrite between ${config.readingLevel === 'Toddler 2–3' ? '60 and 80' : config.readingLevel === 'Early 4–5' ? '80 and 120' : '120 and 150'} words (aim ${pageOutline.wordCount || pageOutline.wordsTarget || 100}).` }
             ],
-            max_tokens: 600,
-            temperature: 0.7
+            max_completion_tokens: 600
           })
         })
         if (regen.ok) {
@@ -143,13 +141,12 @@ Important Instructions:
           method: 'POST',
           headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5-2025-08-07',
             messages: [
               { role: 'system', content: 'Write professional UK English children\'s story pages with published book quality. Return ONLY story text, no quotes or extra text.' },
               { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children\'s story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
             ],
-            max_tokens: 600,
-            temperature: 0.7
+            max_completion_tokens: 600
           })
         })
         if (simple.ok) {
@@ -186,13 +183,12 @@ Important Instructions:
           method: 'POST',
           headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5-2025-08-07',
             messages: [
               { role: 'system', content: `Revise children\'s story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
               { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
-            max_tokens: 600,
-            temperature: 0.7
+            max_completion_tokens: 600
           })
         })
         if (adjust.ok) {

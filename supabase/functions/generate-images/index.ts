@@ -14,9 +14,9 @@ serve(async (req) => {
     const { pageSize, prompts } = await req.json()
     console.log('Generate images request received:', { pageSize, prompts })
     
-    const openaiKey = Deno.env.get('OPENAI_API_KEY')
-    if (!openaiKey) {
-      throw new Error('OPENAI_API_KEY is required for image generation')
+    const geminiKey = Deno.env.get('GEMINI_API_KEY')
+    if (!geminiKey) {
+      throw new Error('GEMINI_API_KEY is required')
     }
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
@@ -50,55 +50,61 @@ serve(async (req) => {
         const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : 'children\'s book illustration'
         const petLine = configData.personal?.pets ? `Pet companion: ${configData.personal.pets} (animal, not human).` : ''
         
-        // Create comprehensive prompt for children's book illustration with theme integration
-        const enhancedPrompt = `High-quality children's book illustration in ${imageStyle} style. Scene: ${basePrompt}. ${visualBrief}. Page text: ${pageText}. Main child: ${mainChild}. Characters: ${characters}. ${petLine}. Setting: ${setting}. Educational focus: ${configData.educationalFocus || 'gentle learning'}. Story: ${configData.storyType || 'adventure'}. 
-
-THEME & COLORS: ${configData.themePreset || 'Custom theme'} with palette: ${colorPalette} featuring ${personalColor}. Use these specific theme colors throughout the illustration to create visual consistency.
-
-Style: Children's book illustration like Beatrix Potter or modern picture books, warm and inviting atmosphere, ${imageStyle} rendering, soft natural lighting, detailed textures, child-friendly expressions, professional quality, portrait orientation, no text/letters/watermarks, vibrant but gentle colors matching the theme palette.`
+        // Create comprehensive prompt for children's book illustration
+        const enhancedPrompt = `High-quality children's book illustration in ${imageStyle} style. Scene: ${basePrompt}. ${visualBrief}. Page text: ${pageText}. Main child: ${mainChild}. Characters: ${characters}. ${petLine}. Setting: ${setting}. Educational focus: ${configData.educationalFocus || 'gentle learning'}. Story: ${configData.storyType || 'adventure'}. Colors: ${colorPalette} with ${personalColor}. Style: 3D rendered like Pixar/Disney, vibrant colors, soft lighting, detailed textures, warm atmosphere, child-friendly expressions, professional quality, portrait orientation, no text/letters/watermarks.`
         
         console.log('Enhanced prompt:', enhancedPrompt)
         
         let dataUrl: string | null = null
 
-        // Use OpenAI DALL-E for image generation since Gemini 2.5 Flash doesn't support images
+        // Use Gemini 2.5 Flash for image generation
         try {
-          console.log(`Generating image for page ${promptData.page} with OpenAI DALL-E`)
+          console.log(`Generating image for page ${promptData.page} with Gemini 2.5 Flash`)
           
-          const openaiKey = Deno.env.get('OPENAI_API_KEY')
-          if (!openaiKey) {
-            throw new Error('OPENAI_API_KEY required for image generation')
+          const geminiPayload = {
+            contents: [{
+              parts: [{
+                text: `Generate an image: ${enhancedPrompt}`
+              }]
+            }],
+            generationConfig: {
+              responseMimeType: "image/jpeg"
+            }
           }
 
-          const imageResponse = await fetch('https://api.openai.com/v1/images/generations', {
+          const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${openaiKey}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-              model: 'dall-e-3',
-              prompt: enhancedPrompt,
-              size: '1024x1024',
-              quality: 'standard',
-              n: 1,
-            }),
+            body: JSON.stringify(geminiPayload),
           })
 
-          if (imageResponse.ok) {
-            const result = await imageResponse.json()
-            console.log(`OpenAI image response for page ${promptData.page}:`, result)
+          if (geminiResponse.ok) {
+            const result = await geminiResponse.json()
+            console.log(`Gemini API response for page ${promptData.page}:`, JSON.stringify(result, null, 2))
             
-            if (result.data && result.data.length > 0) {
-              dataUrl = result.data[0].url
-              console.log(`Generated high-quality image for page ${promptData.page} using OpenAI DALL-E`)
+            if (result.candidates && result.candidates.length > 0) {
+              const candidate = result.candidates[0]
+              if (candidate.content && candidate.content.parts) {
+                // Look for image data in the response
+                for (const part of candidate.content.parts) {
+                  if (part.inlineData && part.inlineData.data) {
+                    // Convert base64 to data URL
+                    const mimeType = part.inlineData.mimeType || 'image/jpeg'
+                    dataUrl = `data:${mimeType};base64,${part.inlineData.data}`
+                    console.log(`Generated high-quality image for page ${promptData.page} using Gemini 2.5 Flash`)
+                    break
+                  }
+                }
+              }
             }
           } else {
-            const errorText = await imageResponse.text()
-            console.error(`OpenAI image API error for page ${promptData.page}:`, imageResponse.status, errorText)
+            const errorText = await geminiResponse.text()
+            console.error(`Gemini API error for page ${promptData.page}:`, geminiResponse.status, errorText)
           }
-        } catch (imageError) {
-          console.error(`OpenAI image API error for page ${promptData.page}:`, imageError)
+        } catch (geminiError) {
+          console.error(`Gemini API error for page ${promptData.page}:`, geminiError)
         }
 
         if (!dataUrl) {
