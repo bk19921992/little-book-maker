@@ -22,10 +22,10 @@ export const StoryGenerator: React.FC = () => {
         setStep('preview');
         break;
       case 'preview':
-        setStep('export');
+        setStep('edit');
         break;
-      case 'export':
-        setStep('print');
+      case 'edit':
+        setStep('export');
         break;
     }
   };
@@ -35,11 +35,11 @@ export const StoryGenerator: React.FC = () => {
       case 'preview':
         setStep('setup');
         break;
-      case 'export':
+      case 'edit':
         setStep('preview');
         break;
-      case 'print':
-        setStep('export');
+      case 'export':
+        setStep('edit');
         break;
     }
   };
@@ -73,7 +73,7 @@ export const StoryGenerator: React.FC = () => {
       {/* Header */}
       <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-center gap-2 sm:gap-3">
               <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-warm flex items-center justify-center">
                 <span className="text-white font-bold text-base sm:text-lg">S</span>
@@ -82,9 +82,9 @@ export const StoryGenerator: React.FC = () => {
             </div>
             
             {/* Step indicator */}
-            <div className="flex items-center gap-1 sm:gap-2">
-              {['Setup', 'Preview', 'Export'].map((step, index) => {
-                const stepNames = ['setup', 'preview', 'export'];
+            <div className="flex flex-wrap items-center gap-1 sm:gap-2 w-full sm:w-auto">
+              {['Setup', 'Preview', 'Edit', 'Export'].map((step, index) => {
+                const stepNames = ['setup', 'preview', 'edit', 'export'];
                 const isActive = stepNames[index] === currentStep;
                 const isComplete = stepNames.indexOf(currentStep) > index;
                 
@@ -131,11 +131,19 @@ export const StoryGenerator: React.FC = () => {
           />
         )}
         
-        {currentStep === 'export' && (
+        {currentStep === 'edit' && (
           <PageEditor
             config={config}
             onConfigChange={updateConfig}
             onNext={handleNext}
+            onBack={handleBack}
+          />
+        )}
+
+        {currentStep === 'export' && (
+          <ExportPanel
+            config={config}
+            onConfigChange={updateConfig}
             onBack={handleBack}
           />
         )}
