@@ -22,10 +22,10 @@ export const StoryGenerator: React.FC = () => {
         setStep('preview');
         break;
       case 'preview':
-        setStep('export');
+        setStep('edit');
         break;
-      case 'export':
-        setStep('print');
+      case 'edit':
+        setStep('export');
         break;
     }
   };
@@ -35,11 +35,11 @@ export const StoryGenerator: React.FC = () => {
       case 'preview':
         setStep('setup');
         break;
-      case 'export':
+      case 'edit':
         setStep('preview');
         break;
-      case 'print':
-        setStep('export');
+      case 'export':
+        setStep('edit');
         break;
     }
   };
@@ -83,8 +83,8 @@ export const StoryGenerator: React.FC = () => {
             
             {/* Step indicator */}
             <div className="flex items-center gap-1 sm:gap-2">
-              {['Setup', 'Preview', 'Export'].map((step, index) => {
-                const stepNames = ['setup', 'preview', 'export'];
+              {['Setup', 'Preview', 'Edit', 'Export'].map((step, index) => {
+                const stepNames = ['setup', 'preview', 'edit', 'export'];
                 const isActive = stepNames[index] === currentStep;
                 const isComplete = stepNames.indexOf(currentStep) > index;
                 
@@ -131,11 +131,19 @@ export const StoryGenerator: React.FC = () => {
           />
         )}
         
-        {currentStep === 'export' && (
+        {currentStep === 'edit' && (
           <PageEditor
             config={config}
             onConfigChange={updateConfig}
             onNext={handleNext}
+            onBack={handleBack}
+          />
+        )}
+
+        {currentStep === 'export' && (
+          <ExportPanel
+            config={config}
+            onConfigChange={updateConfig}
             onBack={handleBack}
           />
         )}
