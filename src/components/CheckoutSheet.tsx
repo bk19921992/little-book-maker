@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
 import { getSession } from '@/lib/session';
+import { useAuth } from '@/context/AuthContext';
 import { PRICES } from '@/lib/pricing';
 
 const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
@@ -57,7 +58,8 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
   const [error, setError] = useState<string | null>(null);
   const [paymentIntent, setPaymentIntent] = useState<BillingIntentResponse | null>(null);
 
-  const session = getSession();
+  const { user } = useAuth();
+  const session = getSession(user?.id);
   const isFirstExport = item === 'export' && !session.firstExportUsed;
   
   const getItemPrice = () => {

@@ -50,6 +50,37 @@ function mmToPdfPoints(mm: number): number {
   return mm * 2.834645669; // 1mm = 2.834645669 PDF points
 }
 
+async function fetchImageBytes(imageUrl: string): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
+  try {
+    if (!imageUrl) return null;
+
+    if (imageUrl.startsWith('data:')) {
+      const [meta, data] = imageUrl.split(',', 2);
+      if (!meta || !data) return null;
+      const mimeMatch = /data:(.*?);base64/.exec(meta);
+      const mimeType = mimeMatch?.[1] || 'image/jpeg';
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return { bytes, mimeType };
+    }
+
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      console.warn('Failed to fetch image for PDF', imageUrl, response.status);
+      return null;
+    }
+    const buffer = await response.arrayBuffer();
+    const mimeType = response.headers.get('content-type') || 'image/jpeg';
+    return { bytes: new Uint8Array(buffer), mimeType };
+  } catch (error) {
+    console.error('Error fetching image bytes', error);
+    return null;
+  }
+}
+
 async function createPDF(config: any, pages: any[], includeBleed: boolean): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   
@@ -115,11 +146,72 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
       color: rgb(0.5, 0.5, 0.5),
     });
     
+    const imageAreaWidth = pageWidth * 0.8;
+    const imageAreaHeight = includeBleed ? pageHeight * 0.4 : pageHeight * 0.35;
+    const imageAreaX = pageWidth * 0.1;
+    const imageAreaY = pageHeight - imageAreaHeight - pageHeight * 0.15;
+
+    let imagePlaced = false;
+
+    if (!page.imageLocked && page.imageUrl) {
+      const imageData = await fetchImageBytes(page.imageUrl);
+      if (imageData) {
+        try {
+          let embeddedImage;
+          if (imageData.mimeType.includes('png')) {
+            embeddedImage = await pdfDoc.embedPng(imageData.bytes);
+          } else {
+            embeddedImage = await pdfDoc.embedJpg(imageData.bytes);
+          }
+
+          const fitted = embeddedImage.scaleToFit(imageAreaWidth, imageAreaHeight);
+          const imageX = imageAreaX + (imageAreaWidth - fitted.width) / 2;
+          const imageY = imageAreaY + (imageAreaHeight - fitted.height) / 2;
+          storyPage.drawImage(embeddedImage, {
+            x: imageX,
+            y: imageY,
+            width: fitted.width,
+            height: fitted.height,
+          });
+          imagePlaced = true;
+        } catch (imageError) {
+          console.error('Failed to embed image in PDF:', imageError);
+        }
+      }
+    }
+
+    if (!imagePlaced) {
+      storyPage.drawRectangle({
+        x: imageAreaX,
+        y: imageAreaY,
+        width: imageAreaWidth,
+        height: imageAreaHeight,
+        borderColor: rgb(0.8, 0.8, 0.8),
+        borderWidth: 1,
+      });
+
+      const placeholderText = page.imageLocked
+        ? 'Illustration intentionally omitted'
+        : 'Illustration pending';
+
+      const textWidth = font.widthOfTextAtSize(placeholderText, 12);
+      const textX = imageAreaX + (imageAreaWidth - textWidth) / 2;
+      const textY = imageAreaY + imageAreaHeight / 2 - 6;
+
+      storyPage.drawText(placeholderText, {
+        x: textX,
+        y: textY,
+        size: 12,
+        font,
+        color: rgb(0.6, 0.6, 0.6),
+      });
+    }
+
     // Story text
     if (page.text) {
       const textLines = wrapText(page.text, font, includeBleed ? 16 : 14, pageWidth * 0.8);
-      let yPos = pageHeight * 0.6;
-      
+      let yPos = pageHeight * 0.35;
+
       for (const line of textLines) {
         storyPage.drawText(line, {
           x: pageWidth * 0.1,
@@ -130,26 +222,6 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
         });
         yPos -= includeBleed ? 20 : 18;
       }
-    }
-    
-    // Image placeholder area
-    if (includeBleed) {
-      storyPage.drawRectangle({
-        x: pageWidth * 0.1,
-        y: pageHeight * 0.65,
-        width: pageWidth * 0.8,
-        height: pageHeight * 0.25,
-        borderColor: rgb(0.8, 0.8, 0.8),
-        borderWidth: 1,
-      });
-      
-      storyPage.drawText('[Image Area]', {
-        x: pageWidth * 0.45,
-        y: pageHeight * 0.75,
-        size: 12,
-        font,
-        color: rgb(0.6, 0.6, 0.6),
-      });
     }
   }
   

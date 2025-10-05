@@ -1,16 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { 
-  Download, 
-  FileText, 
-  Printer, 
-  ExternalLink, 
-  CheckCircle, 
+import {
+  Download,
+  FileText,
+  Printer,
+  ExternalLink,
+  CheckCircle,
   Loader2,
   Package,
   CreditCard,
@@ -21,11 +21,13 @@ import { api } from '../api';
 import { toast } from 'sonner';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
 import { getSession, markFirstExportUsed } from '@/lib/session';
+import { useAuth } from '@/context/AuthContext';
 
 interface ExportPanelProps {
   config: StoryConfig;
   onConfigChange: (updates: Partial<StoryConfig>) => void;
   onBack: () => void;
+  onReset: () => void;
 }
 
 type PrintProvider = 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO';
@@ -34,6 +36,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   config,
   onConfigChange,
   onBack,
+  onReset,
 }) => {
   const [isExporting, setIsExporting] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
@@ -43,9 +46,18 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     provider: string;
     orderId?: string;
     checkoutUrl?: string;
+    error?: string;
   } | null>(null);
   const [showExportCheckout, setShowExportCheckout] = useState(false);
   const [showPrintCheckout, setShowPrintCheckout] = useState(false);
+
+  const { user } = useAuth();
+  const session = useMemo(() => getSession(user?.id), [user?.id]);
+  const [firstExportUsed, setFirstExportUsed] = useState(session.firstExportUsed);
+
+  useEffect(() => {
+    setFirstExportUsed(session.firstExportUsed);
+  }, [session.sessionId]);
 
   const exportPDF = async (billingToken?: string) => {
     if (!config.pages || config.pages.length === 0) {
@@ -56,7 +68,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     setIsExporting(true);
     try {
       const response = await api.exportPDF(config, config.pages, true, billingToken);
-      
+
       onConfigChange({
         exports: {
           webPdfUrl: response.webPdfUrl,
@@ -64,10 +76,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         },
       });
 
-      // Mark first export as used if this was a free export
-      const session = getSession();
-      if (!session.firstExportUsed) {
-        markFirstExportUsed();
+      if (!firstExportUsed) {
+        markFirstExportUsed(user?.id);
+        setFirstExportUsed(true);
       }
 
       toast.success('PDFs generated successfully!');
@@ -109,11 +120,11 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       );
 
       setPrintResult(response);
-      
+
       if (response.ok) {
         toast.success(`Print order created with ${response.provider}`);
       } else {
-        toast.error('Failed to create print order');
+        toast.error(response.error ?? 'Failed to create print order');
       }
     } catch (error) {
       toast.error('Failed to create print order');
@@ -142,22 +153,32 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     document.body.removeChild(link);
   };
 
-  const storyTitle = config.children.length > 0 
+  const storyTitle = config.children.length > 0
     ? `${config.children.join(' and ')}'s ${config.storyType} Story`
     : `A ${config.storyType} Story`;
 
-  const session = getSession();
-  const isFirstExport = !session.firstExportUsed;
+  const isFirstExport = !firstExportUsed;
+
+  const handleCreateAnother = () => {
+    onReset();
+    toast.success('Start a fresh story whenever you are ready!');
+  };
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8 animate-fade-in">
-      <div className="text-center space-y-4">
-        <h1 className="text-4xl font-display font-bold text-gradient">
-          Export Your Story
-        </h1>
-        <p className="text-lg text-muted-foreground">
-          Download your storybook or order professional prints
-        </p>
+      <div className="flex flex-col gap-4 text-center sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-2">
+          <h1 className="text-4xl font-display font-bold text-gradient">
+            Export Your Story
+          </h1>
+          <p className="text-lg text-muted-foreground">
+            Download your storybook or order professional prints
+          </p>
+        </div>
+        <Button variant="ghost" onClick={handleCreateAnother} className="self-center sm:self-auto">
+          <Package className="w-4 h-4 mr-2" />
+          Create Another Story
+        </Button>
       </div>
 
       {/* Story Summary */}
@@ -200,248 +221,155 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="w-5 h-5 text-primary" />
-            PDF Export
+            Export PDFs
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-3">
-              <h4 className="font-medium">Web PDF</h4>
-              <p className="text-sm text-muted-foreground">
-                Perfect for reading on screen and sharing digitally
-              </p>
-              {config.exports?.webPdfUrl ? (
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-story-nature" />
-                  <span className="text-sm">Ready for download</span>
-                </div>
-              ) : (
-                <Badge variant="outline">Not generated</Badge>
+        <CardContent className="space-y-6">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary">Includes print-ready & web PDF</Badge>
+              {isFirstExport && (
+                <Badge variant="outline" className="text-story-nature border-story-nature">
+                  First export is free
+                </Badge>
               )}
             </div>
-            
-            <div className="space-y-3">
-              <h4 className="font-medium">Print PDF</h4>
-              <p className="text-sm text-muted-foreground">
-                High-resolution with 3mm bleed for professional printing
-              </p>
-              {config.exports?.printPdfUrl ? (
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-story-nature" />
-                  <span className="text-sm">Ready for printing</span>
-                </div>
-              ) : (
-                <Badge variant="outline">Not generated</Badge>
-              )}
-            </div>
+            <p className="text-sm text-muted-foreground">
+              Generate professionally typeset PDFs that include all text, illustrations, bleed and trim marks.
+            </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            {isFirstExport && (
-              <div className="w-full mb-2 p-2 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-sm text-green-700 font-medium">
-                  🎉 Your first export is free!
-                </p>
-              </div>
-            )}
-            
-            <Button
-              onClick={handleExportClick}
-              disabled={isExporting}
-              size="lg"
-              className="flex-1 min-w-[200px]"
-            >
-              {isExporting ? (
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-              ) : (
-                <Download className="w-5 h-5 mr-2" />
-              )}
-              {isExporting ? 'Generating...' : (isFirstExport ? 'Generate PDFs (Free)' : 'Generate PDFs (£2)')}
+          {config.exports?.webPdfUrl && (
+            <Alert>
+              <CheckCircle className="h-4 w-4" />
+              <AlertDescription>
+                PDFs generated. Download them or head to print.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Button variant="outline" onClick={onBack}>
+              Back to Editor
             </Button>
 
-            {config.exports?.webPdfUrl && (
+            <div className="flex gap-3">
               <Button
-                variant="outline"
-                onClick={() => downloadFile(config.exports!.webPdfUrl!, `${storyTitle} - Web.pdf`)}
+                variant="ghost"
+                onClick={() => {
+                  if (config.exports?.webPdfUrl) {
+                    downloadFile(config.exports.webPdfUrl, `${storyTitle}-web.pdf`);
+                  }
+                }}
+                disabled={!config.exports?.webPdfUrl}
               >
                 <Download className="w-4 h-4 mr-2" />
                 Download Web PDF
               </Button>
-            )}
-
-            {config.exports?.printPdfUrl && (
               <Button
-                variant="outline"
-                onClick={() => downloadFile(config.exports!.printPdfUrl!, `${storyTitle} - Print.pdf`)}
+                onClick={handleExportClick}
+                disabled={isExporting}
               >
-                <Download className="w-4 h-4 mr-2" />
-                Download Print PDF
+                {isExporting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Preparing PDFs...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-4 h-4 mr-2" />
+                    Generate PDFs
+                  </>
+                )}
               </Button>
-            )}
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Print Services */}
+      {/* Print Order */}
       <Card className="story-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Printer className="w-5 h-5 text-primary" />
-            Professional Printing
+            Order Printed Books
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <h4 className="font-medium">Print Provider</h4>
-              <Select
-                value={selectedProvider}
-                onValueChange={(value: PrintProvider) => setSelectedProvider(value)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
+          <p className="text-sm text-muted-foreground">
+            Choose a print partner and we'll pass your print-ready PDF straight to their ordering system.
+          </p>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Printer className="w-5 h-5 text-primary/70" />
+              <span className="font-semibold">Professional Print Order</span>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Select value={selectedProvider} onValueChange={(value: PrintProvider) => setSelectedProvider(value)}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Choose provider" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PEECHO">
-                    <div className="flex items-center gap-2">
-                      <Package className="w-4 h-4" />
-                      <div>
-                        <div className="font-medium">Peecho</div>
-                        <div className="text-xs text-muted-foreground">UK & EU printing</div>
-                      </div>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="BOOKVAULT">
-                    <div className="flex items-center gap-2">
-                      <Package className="w-4 h-4" />
-                      <div>
-                        <div className="font-medium">BookVault</div>
-                        <div className="text-xs text-muted-foreground">UK book printing</div>
-                      </div>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="LULU">
-                    <div className="flex items-center gap-2">
-                      <Package className="w-4 h-4" />
-                      <div>
-                        <div className="font-medium">Lulu</div>
-                        <div className="text-xs text-muted-foreground">Global printing</div>
-                      </div>
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="GELATO">
-                    <div className="flex items-center gap-2">
-                      <Package className="w-4 h-4" />
-                      <div>
-                        <div className="font-medium">Gelato</div>
-                        <div className="text-xs text-muted-foreground">Global POD network</div>
-                      </div>
-                    </div>
-                  </SelectItem>
+                  <SelectItem value="PEECHO">Peecho</SelectItem>
+                  <SelectItem value="BOOKVAULT">BookVault</SelectItem>
+                  <SelectItem value="LULU">Lulu</SelectItem>
+                  <SelectItem value="GELATO">Gelato</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="space-y-4">
-              <h4 className="font-medium">Book Details</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span>Format:</span>
-                  <span>{config.pageSize}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Pages:</span>
-                  <span>{config.lengthPages} full-color pages</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Binding:</span>
-                  <span>Softcover</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Paper:</span>
-                  <span>Premium matte</span>
-                </div>
-              </div>
+              <Button
+                onClick={handlePrintClick}
+                disabled={!config.exports?.printPdfUrl || isPrinting}
+              >
+                {isPrinting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Creating order...
+                  </>
+                ) : (
+                  <>
+                    <Printer className="w-4 h-4 mr-2" />
+                    Checkout
+                  </>
+                )}
+              </Button>
             </div>
           </div>
 
-          {!config.exports?.printPdfUrl && (
-            <Alert>
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                Please generate PDFs first before ordering prints.
-              </AlertDescription>
-            </Alert>
-          )}
-
           {printResult && (
-            <Alert className={printResult.ok ? "border-story-nature" : "border-destructive"}>
-              <CheckCircle className="h-4 w-4" />
+            <Alert variant={printResult.ok ? 'default' : 'destructive'}>
+              {printResult.ok ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
               <AlertDescription>
                 {printResult.ok ? (
                   <div className="space-y-2">
-                    <p>Print order created successfully with {printResult.provider}!</p>
-                    {printResult.orderId && (
-                      <p className="font-medium">Order ID: {printResult.orderId}</p>
-                    )}
+                    <p>
+                      Order created with <strong>{printResult.provider}</strong>.
+                      {printResult.orderId && ` Reference: ${printResult.orderId}.`}
+                    </p>
                     {printResult.checkoutUrl && (
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => window.open(printResult.checkoutUrl, '_blank')}
-                      >
-                        <ExternalLink className="w-4 h-4 mr-2" />
-                        Complete Order
+                      <Button variant="link" asChild className="px-0">
+                        <a href={printResult.checkoutUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1">
+                          <ExternalLink className="w-4 h-4" /> Complete checkout
+                        </a>
                       </Button>
                     )}
                   </div>
                 ) : (
-                  <p>Failed to create print order. Please try again.</p>
+                  <p>{printResult.error || 'We couldn’t create the order. Please try again or choose a different provider.'}</p>
                 )}
               </AlertDescription>
             </Alert>
           )}
-
-          <Button
-            onClick={handlePrintClick}
-            disabled={!config.exports?.printPdfUrl || isPrinting}
-            size="lg"
-            variant="secondary"
-            className="w-full"
-          >
-            {isPrinting ? (
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-            ) : (
-              <CreditCard className="w-5 h-5 mr-2" />
-            )}
-            {isPrinting ? 'Creating Order...' : `Order Print with ${selectedProvider} (£5 fee)`}
-          </Button>
         </CardContent>
       </Card>
 
-      {/* Action Buttons */}
-      <div className="flex justify-between">
-        <Button variant="outline" onClick={onBack}>
-          Back to Editor
-        </Button>
-        
-        <div className="text-center">
-          <p className="text-sm text-muted-foreground mb-2">
-            Your magical storybook is ready!
-          </p>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => window.location.reload()}>
-              Create Another Story
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Export Checkout Dialog */}
       <Dialog open={showExportCheckout} onOpenChange={setShowExportCheckout}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Export Story</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <CreditCard className="w-4 h-4" />
+              Complete export purchase
+            </DialogTitle>
           </DialogHeader>
           <CheckoutSheet
             item="export"
@@ -451,11 +379,13 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </DialogContent>
       </Dialog>
 
-      {/* Print Checkout Dialog */}
       <Dialog open={showPrintCheckout} onOpenChange={setShowPrintCheckout}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Order Print</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="w-4 h-4" />
+              Print handling checkout
+            </DialogTitle>
           </DialogHeader>
           <CheckoutSheet
             item="print"

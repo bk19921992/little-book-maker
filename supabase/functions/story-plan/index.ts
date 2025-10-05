@@ -18,7 +18,7 @@ serve(async (req) => {
 
     if (!openaiKey) {
       console.error('OpenAI API key not configured')
-      throw new Error('OpenAI API key not configured')
+      throw new Error('OpenAI API key not configured. Add OPENAI_API_KEY to your environment variables.')
     }
 
     // Generate style bible
@@ -80,7 +80,7 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-5-2025-08-07',
+        model: 'gpt-4.1',
         messages: [
           {
             role: 'system',
@@ -105,20 +105,24 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
     }
 
     const aiResponse = await response.json()
+    const rawContent = aiResponse?.choices?.[0]?.message?.content
+
+    if (!rawContent) {
+      console.error('Story plan model returned no content', aiResponse)
+      throw new Error('Story planner returned no outline. Please try again.')
+    }
+
     let outlineData
 
     try {
-      outlineData = JSON.parse(aiResponse.choices[0].message.content)
+      outlineData = JSON.parse(rawContent)
     } catch (parseError) {
-      // Fallback if AI doesn't return proper JSON
-      outlineData = {
-        pages: Array.from({ length: config.lengthPages }, (_, i) => ({
-          page: i + 1,
-          wordCount: config.readingLevel === 'Toddler 2–3' ? 70 : config.readingLevel === 'Early 4–5' ? 100 : config.readingLevel === 'Primary 6–8' ? 135 : 100,
-          visualBrief: `Page ${i + 1} visual scene`,
-          imagePrompt: `${styleBible.renderingStyle} illustration of page ${i + 1}, ${styleBible.heroDescription}, ${config.setting}`
-        }))
-      }
+      console.error('Failed to parse outline JSON', parseError, rawContent)
+      throw new Error('Failed to parse outline from the language model. Review the prompt formatting or try again.')
+    }
+
+    if (!outlineData?.pages || !Array.isArray(outlineData.pages)) {
+      throw new Error('Story planner returned an unexpected shape.');
     }
 
     return new Response(

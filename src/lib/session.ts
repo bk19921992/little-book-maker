@@ -5,13 +5,18 @@ export interface SessionData {
   sessionId: string;
   firstExportUsed: boolean;
   createdAt: number;
+  userId?: string;
 }
 
-const SESSION_KEY = 'storybook_session';
+const SESSION_KEY_PREFIX = 'storybook_session';
 
-export function getSession(): SessionData {
-  const stored = localStorage.getItem(SESSION_KEY);
-  
+const getStorageKey = (userId?: string) =>
+  userId ? `${SESSION_KEY_PREFIX}_${userId}` : SESSION_KEY_PREFIX;
+
+export function getSession(userId?: string): SessionData {
+  const storageKey = getStorageKey(userId);
+  const stored = localStorage.getItem(storageKey);
+
   if (stored) {
     try {
       return JSON.parse(stored);
@@ -19,28 +24,29 @@ export function getSession(): SessionData {
       // Invalid data, create new session
     }
   }
-  
+
   // Create new session
   const newSession: SessionData = {
     sessionId: generateSessionId(),
     firstExportUsed: false,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    userId,
   };
-  
-  localStorage.setItem(SESSION_KEY, JSON.stringify(newSession));
+
+  localStorage.setItem(storageKey, JSON.stringify(newSession));
   return newSession;
 }
 
-export function updateSession(updates: Partial<SessionData>): SessionData {
-  const session = getSession();
-  const updatedSession = { ...session, ...updates };
-  
-  localStorage.setItem(SESSION_KEY, JSON.stringify(updatedSession));
+export function updateSession(updates: Partial<SessionData>, userId?: string): SessionData {
+  const session = getSession(userId);
+  const updatedSession = { ...session, ...updates, userId: userId ?? session.userId };
+
+  localStorage.setItem(getStorageKey(userId ?? session.userId), JSON.stringify(updatedSession));
   return updatedSession;
 }
 
-export function markFirstExportUsed(): void {
-  updateSession({ firstExportUsed: true });
+export function markFirstExportUsed(userId?: string): void {
+  updateSession({ firstExportUsed: true }, userId);
 }
 
 function generateSessionId(): string {
