@@ -3,38 +3,48 @@ import { supabase } from '@/integrations/supabase/client';
 
 // API client for communicating with Supabase edge functions
 class APIClient {
-  private async invokeFunction<T>(functionName: string, body: any, headers: Record<string, string> = {}): Promise<T> {
+  private async invokeFunction<
+    TResponse,
+    TBody extends Record<string, unknown> = Record<string, unknown>
+  >(functionName: string, body: TBody, headers: Record<string, string> = {}): Promise<TResponse> {
     try {
-      console.log(`Calling ${functionName} with:`, body)
+      console.log(`Calling ${functionName} with:`, body);
       const { data, error } = await supabase.functions.invoke(functionName, {
         body,
         headers,
       });
 
-      console.log(`${functionName} response:`, { data, error })
+      console.log(`${functionName} response:`, { data, error });
 
       if (error) {
         console.error(`Error calling ${functionName}:`, error);
-        const msg = (error as any)?.message || 'Edge Function error';
+        const message =
+          typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message?: string }).message)
+            : 'Edge Function error';
         // Retry once if the request failed to send (common transient issue)
-        if (msg.includes('Failed to send a request to the Edge Function')) {
+        if (message.includes('Failed to send a request to the Edge Function')) {
           console.warn(`[${functionName}] Retry after transient send failure...`);
           await new Promise((r) => setTimeout(r, 600));
           const retry = await supabase.functions.invoke(functionName, { body, headers });
           if (retry.error) {
-            throw new Error(`[${functionName}] ${retry.error.message || 'Edge Function request failed again'}`);
+            const retryMessage =
+              typeof retry.error === 'object' && retry.error !== null && 'message' in retry.error
+                ? String((retry.error as { message?: string }).message)
+                : 'Edge Function request failed again';
+            throw new Error(`[${functionName}] ${retryMessage}`);
           }
-          return retry.data as T;
+          return retry.data as TResponse;
         }
-        throw new Error(`[${functionName}] ${msg}`);
+        throw new Error(`[${functionName}] ${message}`);
       }
 
-      return data as T;
-    } catch (error) {
-      console.error(`Error invoking function ${functionName}:`, error);
-      if (error instanceof Error) {
+      return data as TResponse;
+    } catch (caught) {
+      console.error(`Error invoking function ${functionName}:`, caught);
+      if (caught instanceof Error) {
         // Surface a clearer message including the function name
-        throw new Error(`[${functionName}] ${error.message}`);
+        throw new Error(`[${functionName}] ${caught.message}`);
       }
       throw new Error(`[${functionName}] Failed to invoke`);
     }

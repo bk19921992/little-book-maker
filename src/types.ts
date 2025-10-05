@@ -66,7 +66,7 @@ export interface StoryPage {
 }
 
 // UI State Types
-export type AppStep = 'setup' | 'preview' | 'export' | 'print';
+export type AppStep = 'setup' | 'preview' | 'edit' | 'export';
 
 export interface AppState {
   currentStep: AppStep;
@@ -135,5 +135,7 @@ export interface PrintOrderResponse {
   provider: string;
   orderId?: string;
   checkoutUrl?: string;
-  raw?: any;
+  message?: string;
+  error?: string;
+  raw?: unknown;
 }
