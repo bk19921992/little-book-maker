@@ -66,7 +66,7 @@ export interface StoryPage {
 }
 
 // UI State Types
-export type AppStep = 'setup' | 'preview' | 'export' | 'print';
+export type AppStep = 'setup' | 'preview' | 'edit' | 'export';
 
 export interface AppState {
   currentStep: AppStep;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
+import { loadStripe, Stripe } from '@stripe/stripe-js';
 import {
   Elements,
   CardElement,
@@ -15,15 +15,38 @@ import { supabase } from '@/integrations/supabase/client';
 import { getSession } from '@/lib/session';
 import { PRICES } from '@/lib/pricing';
 
-const stripePromise = loadStripe(
-  import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || 
-  'pk_test_51QdAAA2O5vKBkgBMAAAAA' // Placeholder test key
-);
+const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+
+let stripePromise: Promise<Stripe | null> | null = null;
+
+if (publishableKey) {
+  stripePromise = loadStripe(publishableKey);
+} else {
+  if (import.meta.env.DEV) {
+    // Surface a clear warning during development so missing configuration
+    // doesn't silently break checkout flows.
+    console.warn(
+      '[CheckoutSheet] Missing VITE_STRIPE_PUBLISHABLE_KEY. Stripe checkout will be disabled.'
+    );
+  }
+}
 
 interface CheckoutSheetProps {
   item: 'export' | 'print' | 'subscription';
   onSuccess: (billingToken: string) => void;
   onCancel: () => void;
+}
+
+interface BillingIntentResponse {
+  clientSecret: string;
+  amount: number;
+  currency: string;
+  testBypass?: boolean;
+  free?: boolean;
+}
+
+interface BillingConfirmResponse {
+  billingToken: string;
 }
 
 const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
@@ -32,7 +55,7 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
   const [loading, setLoading] = useState(false);
   const [discountCode, setDiscountCode] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [paymentIntent, setPaymentIntent] = useState<any>(null);
+  const [paymentIntent, setPaymentIntent] = useState<BillingIntentResponse | null>(null);
 
   const session = getSession();
   const isFirstExport = item === 'export' && !session.firstExportUsed;
@@ -59,7 +82,7 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
     setError(null);
 
     try {
-      const { data, error } = await supabase.functions.invoke('billing-intent', {
+      const { data, error } = await supabase.functions.invoke<BillingIntentResponse>('billing-intent', {
         body: { item, discountCode: discountCode || undefined, sessionData: session }
       });
 
@@ -67,19 +90,20 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
 
       if (data.testBypass || data.free) {
         // Skip payment, confirm directly
-        const confirmResult = await supabase.functions.invoke('billing-confirm', {
+        const confirmResult = await supabase.functions.invoke<BillingConfirmResponse>('billing-confirm', {
           body: { item, discountCode, sessionData: session }
         });
 
         if (confirmResult.error) throw confirmResult.error;
-        
+
         onSuccess(confirmResult.data.billingToken);
         return;
       }
 
       setPaymentIntent(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to create payment intent');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create payment intent';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -110,20 +134,21 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
 
       if (confirmedPayment.status === 'succeeded') {
         // Confirm with backend
-        const confirmResult = await supabase.functions.invoke('billing-confirm', {
-          body: { 
-            item, 
+        const confirmResult = await supabase.functions.invoke<BillingConfirmResponse>('billing-confirm', {
+          body: {
+            item,
             paymentRef: confirmedPayment.id,
-            sessionData: session 
+            sessionData: session
           }
         });
 
         if (confirmResult.error) throw confirmResult.error;
-        
+
         onSuccess(confirmResult.data.billingToken);
       }
-    } catch (err: any) {
-      setError(err.message || 'Payment failed');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Payment failed';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -233,7 +258,29 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
   );
 };
 
+const MissingStripeConfiguration: React.FC<{ onCancel: () => void }> = ({ onCancel }) => (
+  <Card className="w-full max-w-md">
+    <CardHeader>
+      <CardTitle>Payment Temporarily Unavailable</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-4 text-sm text-muted-foreground">
+      <p>
+        We couldn&apos;t initialise Stripe because the publishable key is not configured.
+        Please set the <code>VITE_STRIPE_PUBLISHABLE_KEY</code> environment variable and
+        reload the page.
+      </p>
+      <Button className="w-full" onClick={onCancel}>
+        Close
+      </Button>
+    </CardContent>
+  </Card>
+);
+
 export const CheckoutSheet = (props: CheckoutSheetProps) => {
+  if (!stripePromise) {
+    return <MissingStripeConfiguration onCancel={props.onCancel} />;
+  }
+
   return (
     <Elements stripe={stripePromise}>
       <CheckoutForm {...props} />
