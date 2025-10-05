@@ -90,13 +90,17 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
 
       if (data.testBypass || data.free) {
         // Skip payment, confirm directly
-        const confirmResult = await supabase.functions.invoke<BillingConfirmResponse>('billing-confirm', {
+        const { data: confirmData, error: confirmError } = await supabase.functions.invoke<BillingConfirmResponse>('billing-confirm', {
           body: { item, discountCode, sessionData: session }
         });
 
-        if (confirmResult.error) throw confirmResult.error;
+        if (confirmError) throw confirmError;
 
-        onSuccess(confirmResult.data.billingToken);
+        if (!confirmData?.billingToken) {
+          throw new Error('Billing confirmation returned no billing token');
+        }
+
+        onSuccess(confirmData.billingToken);
         return;
       }
 
@@ -134,7 +138,7 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
 
       if (confirmedPayment.status === 'succeeded') {
         // Confirm with backend
-        const confirmResult = await supabase.functions.invoke<BillingConfirmResponse>('billing-confirm', {
+        const { data: confirmData, error: confirmError } = await supabase.functions.invoke<BillingConfirmResponse>('billing-confirm', {
           body: {
             item,
             paymentRef: confirmedPayment.id,
@@ -142,9 +146,13 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
           }
         });
 
-        if (confirmResult.error) throw confirmResult.error;
+        if (confirmError) throw confirmError;
 
-        onSuccess(confirmResult.data.billingToken);
+        if (!confirmData?.billingToken) {
+          throw new Error('Billing confirmation returned no billing token');
+        }
+
+        onSuccess(confirmData.billingToken);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Payment failed';
