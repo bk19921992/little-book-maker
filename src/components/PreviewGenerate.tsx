@@ -30,6 +30,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [startTime, setStartTime] = useState<number>(0);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<string>('');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const updateProgress = (newProgress: number) => {
     setProgress(newProgress);
@@ -67,6 +68,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       setError(null);
       setStartTime(Date.now());
       setCurrentStep('planning');
+      setIsGenerating(true);
       updateProgress(5);
 
       // Step 1: Plan the story
@@ -140,6 +142,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       setProgress(0);
       setEstimatedTimeRemaining('');
     }
+    setIsGenerating(false);
   };
 
   const getStepStatus = (step: GenerationStep) => {
@@ -446,6 +449,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
               onClick={generateStory}
               size="lg"
               className="px-8 py-3 text-lg font-medium animate-gentle-bounce"
+              disabled={isGenerating}
             >
               <Sparkles className="w-5 h-5 mr-2" />
               Generate Story

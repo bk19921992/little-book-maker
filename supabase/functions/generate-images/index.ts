@@ -16,8 +16,11 @@ serve(async (req) => {
     
     const geminiKey = Deno.env.get('GEMINI_API_KEY')
     if (!geminiKey) {
-      throw new Error('GEMINI_API_KEY is required')
+      throw new Error('GEMINI_API_KEY is required. Please add it to your environment variables.')
     }
+
+    const geminiModel = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-nano-banana-storybooks';
+    const encodedModel = encodeURIComponent(geminiModel);
 
     // Calculate dimensions based on page size (300 DPI with 3mm bleed)
     const pageSizes = {
@@ -57,9 +60,9 @@ serve(async (req) => {
         
         let dataUrl: string | null = null
 
-        // Use Gemini 2.5 Flash for image generation
+        // Use fine-tuned Gemini Nano Banana model for image generation
         try {
-          console.log(`Generating image for page ${promptData.page} with Gemini 2.5 Flash`)
+          console.log(`Generating image for page ${promptData.page} with model ${geminiModel}`)
           
           const geminiPayload = {
             contents: [{
@@ -72,7 +75,7 @@ serve(async (req) => {
             }
           }
 
-          const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`, {
+          const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodedModel}:generateContent?key=${geminiKey}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

@@ -1,5 +1,8 @@
 import React from 'react';
+import { LogOut } from 'lucide-react';
 import { useAppState } from '../state';
+import { useAuth } from '@/context/AuthContext';
+import { Button } from '@/components/ui/button';
 import { SetupForm } from './SetupForm';
 import { PreviewGenerate } from './PreviewGenerate';
 import { PageEditor } from './PageEditor';
@@ -12,7 +15,9 @@ export const StoryGenerator: React.FC = () => {
     updateConfig,
     setStep,
     canProceedToNext,
+    resetState,
   } = useAppState();
+  const { user, signOut } = useAuth();
 
   const { currentStep, config } = state;
 
@@ -80,7 +85,25 @@ export const StoryGenerator: React.FC = () => {
               </div>
               <h1 className="text-lg sm:text-xl font-display font-bold">Storybook Generator</h1>
             </div>
-            
+
+            {user && (
+              <div className="flex items-center gap-3">
+                <div className="text-xs sm:text-sm text-muted-foreground text-right">
+                  <div className="font-medium text-foreground">{user.email}</div>
+                  <div>Signed in</div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => signOut().catch((err) => console.error('Failed to sign out', err))}
+                  className="flex items-center gap-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign out
+                </Button>
+              </div>
+            )}
+
             {/* Step indicator */}
             <div className="flex flex-wrap items-center gap-1 sm:gap-2 w-full sm:w-auto">
               {['Setup', 'Preview', 'Edit', 'Export'].map((step, index) => {
@@ -144,6 +167,7 @@ export const StoryGenerator: React.FC = () => {
           <ExportPanel
             config={config}
             onConfigChange={updateConfig}
+            onReset={resetState}
             onBack={handleBack}
           />
         )}
