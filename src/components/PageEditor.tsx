@@ -20,6 +20,7 @@ import {
 import { StoryConfig, StoryPage } from '../types';
 import { countWords, getWordCountStatus, wordCountTargets } from '../lib/validation';
 import { toast } from 'sonner';
+import { api } from '../api';
 
 interface PageEditorProps {
   config: StoryConfig;
@@ -58,19 +59,44 @@ export const PageEditor: React.FC<PageEditorProps> = ({
   };
 
   const regenerateImage = async (pageNumber: number) => {
-    if (!config.outline) return;
-    
+    if (!config.outline) {
+      toast.error('Generate a plan before regenerating images.');
+      return;
+    }
+
+    const outlinePage = config.outline.pages.find(p => p.page === pageNumber);
+    const storyPage = pages.find(p => p.page === pageNumber);
+    if (!outlinePage || !storyPage) {
+      toast.error('Unable to find story data for this page.');
+      return;
+    }
+
     setIsRegeneratingImage(true);
     try {
-      // Find the image prompt for this page
-      const outlinePage = config.outline.pages.find(p => p.page === pageNumber);
-      if (!outlinePage) throw new Error('Page outline not found');
+      const prompt = outlinePage.imagePrompt || outlinePage.visualBrief || 'storybook illustration';
+      const response = await api.generateImages(config.pageSize, [
+        {
+          page: pageNumber,
+          prompt,
+          text: storyPage.text,
+          visualBrief: outlinePage.visualBrief,
+          config,
+          seed: config.imageSeed ? config.imageSeed + pageNumber : undefined,
+        },
+      ]);
 
-      // In a real implementation, this would call the API
-      // For now, we'll just show a success message
-      toast.success(`Image regenerated for page ${pageNumber}`);
-      
+      const generated = response.images?.[0];
+      if (generated?.url) {
+        const updatedPages = pages.map(page =>
+          page.page === pageNumber ? { ...page, imageUrl: generated.url } : page
+        );
+        onConfigChange({ pages: updatedPages });
+        toast.success(`Illustration updated for page ${pageNumber}`);
+      } else {
+        toast.error('The image service returned no artwork. Please try again.');
+      }
     } catch (error) {
+      console.error('Image regeneration failed', error);
       toast.error('Failed to regenerate image');
     } finally {
       setIsRegeneratingImage(false);

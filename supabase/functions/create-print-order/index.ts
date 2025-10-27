@@ -24,19 +24,22 @@ function verifyBillingToken(token: string): any {
 // Peecho API integration based on official documentation
 async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?: any): Promise<any> {
   const peechoApiKey = Deno.env.get('PEECHO_API_KEY');
-  
+
   if (!peechoApiKey) {
-    throw new Error('Peecho API key not configured');
+    throw new Error('Peecho API key not configured. Please set PEECHO_API_KEY in your project settings.');
   }
 
-  // Map our page sizes to Peecho offering IDs (these would need to be your actual offering IDs from Peecho dashboard)
-  const peechoOfferingIds = {
-    'A5 portrait': 'YOUR_A5_OFFERING_ID', // Replace with actual offering ID from your Peecho dashboard
-    'A4 portrait': 'YOUR_A4_OFFERING_ID', // Replace with actual offering ID from your Peecho dashboard
-    '210×210 mm square': 'YOUR_SQUARE_OFFERING_ID' // Replace with actual offering ID from your Peecho dashboard
+  const peechoOfferingIds: Record<string, string | undefined> = {
+    'A5 portrait': Deno.env.get('PEECHO_OFFERING_ID_A5'),
+    'A4 portrait': Deno.env.get('PEECHO_OFFERING_ID_A4'),
+    '210×210 mm square': Deno.env.get('PEECHO_OFFERING_ID_SQUARE')
   };
 
-  const offeringId = peechoOfferingIds[pageSize] || peechoOfferingIds['A5 portrait'];
+  const offeringId = peechoOfferingIds[pageSize] ?? peechoOfferingIds['A5 portrait'];
+
+  if (!offeringId) {
+    throw new Error(`Peecho offering ID not configured for ${pageSize}. Set PEECHO_OFFERING_ID_A5 / PEECHO_OFFERING_ID_A4 / PEECHO_OFFERING_ID_SQUARE in the environment.`);
+  }
 
   // Get dimensions for the page size
   const pageDimensions = {
@@ -124,20 +127,17 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
     console.log('Peecho order created successfully:', result);
 
     return {
+      ok: true,
       provider: 'PEECHO',
-      status: 'created',
       orderId: result.id,
-      orderReference: result.purchase_order,
-      message: 'Order created successfully. Payment required to proceed to production.',
+      checkoutUrl: result.payment_url || undefined,
       estimatedCost: result.total_price || 'Quote available after order creation',
       estimatedDelivery: '5-10 business days',
-      paymentRequired: true,
-      paymentUrl: result.payment_url || null,
       raw: result
     };
   } catch (error) {
     console.error('Peecho order creation failed:', error);
-    throw new Error(`Failed to create Peecho order: ${error.message}`);
+    throw new Error(`Failed to create Peecho order: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -145,9 +145,9 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
 async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<any> {
   // BookVault integration - stubbed for now
   return {
+    ok: false,
     provider: 'BOOKVAULT',
-    status: 'stubbed',
-    message: 'BookVault integration coming soon',
+    error: 'BookVault integration coming soon',
     estimatedCost: '$12.99',
     estimatedDelivery: '7-10 business days'
   };
@@ -156,9 +156,9 @@ async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<a
 async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<any> {
   // Lulu integration - stubbed for now
   return {
+    ok: false,
     provider: 'LULU',
-    status: 'stubbed', 
-    message: 'Lulu integration coming soon',
+    error: 'Lulu integration coming soon',
     estimatedCost: '$9.99',
     estimatedDelivery: '5-7 business days'
   };
@@ -167,9 +167,9 @@ async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<any> {
 async function createGelatoOrder(pdfUrl: string, pageSize: string): Promise<any> {
   // Gelato integration - stubbed for now
   return {
+    ok: false,
     provider: 'GELATO',
-    status: 'stubbed',
-    message: 'Gelato integration coming soon', 
+    error: 'Gelato integration coming soon',
     estimatedCost: '$11.99',
     estimatedDelivery: '3-5 business days'
   };
@@ -199,9 +199,9 @@ serve(async (req) => {
       } catch (error) {
         console.error('Billing verification failed:', error);
         return new Response(
-          JSON.stringify({ 
-            success: false,
-            error: 'Payment required. Please complete billing process.' 
+          JSON.stringify({
+            ok: false,
+            error: 'Payment required. Please complete billing process.'
           }),
           {
             status: 402,
@@ -248,13 +248,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        provider,
-        order: orderResult,
-        pdfUrl,
-        pageSize
-      }),
+      JSON.stringify(orderResult),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
@@ -263,9 +257,9 @@ serve(async (req) => {
   } catch (error) {
     console.error('Error creating print order:', error);
     return new Response(
-      JSON.stringify({ 
-        success: false,
-        error: error.message 
+      JSON.stringify({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
       }),
       {
         status: 500,

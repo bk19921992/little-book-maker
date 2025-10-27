@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { AppState, StoryConfig, AppStep, ValidationError } from './types';
 
 // Initial state for the app
-const initialConfig: StoryConfig = {
+const createInitialConfig = (): StoryConfig => ({
   children: [],
   storyType: '',
   themePreset: null,
@@ -19,12 +19,12 @@ const initialConfig: StoryConfig = {
   imageStyle: 'Picture-book',
   pageSize: 'A5 portrait',
   imageSeed: null,
-};
+});
 
 export const useAppState = () => {
   const [state, setState] = useState<AppState>({
     currentStep: 'setup',
-    config: initialConfig,
+    config: createInitialConfig(),
     isGenerating: false,
     errors: [],
   });
@@ -55,6 +55,15 @@ export const useAppState = () => {
 
   const clearErrors = useCallback(() => {
     setState(prev => ({ ...prev, errors: [] }));
+  }, []);
+
+  const resetState = useCallback(() => {
+    setState({
+      currentStep: 'setup',
+      config: createInitialConfig(),
+      isGenerating: false,
+      errors: [],
+    });
   }, []);
 
   // Validation helpers
@@ -99,5 +108,6 @@ export const useAppState = () => {
     clearErrors,
     validateConfig,
     canProceedToNext,
+    resetState,
   };
 };
