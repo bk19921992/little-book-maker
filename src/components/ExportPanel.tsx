@@ -16,7 +16,7 @@ import {
   CreditCard,
   AlertCircle
 } from 'lucide-react';
-import { StoryConfig } from '../types';
+import { StoryConfig, PrintOrderResponse } from '../types';
 import { api } from '../api';
 import { toast } from 'sonner';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
@@ -38,12 +38,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<PrintProvider>('PEECHO');
-  const [printResult, setPrintResult] = useState<{
-    ok: boolean;
-    provider: string;
-    orderId?: string;
-    checkoutUrl?: string;
-  } | null>(null);
+  const [printResult, setPrintResult] = useState<PrintOrderResponse | null>(null);
   const [showExportCheckout, setShowExportCheckout] = useState(false);
   const [showPrintCheckout, setShowPrintCheckout] = useState(false);
 
@@ -109,15 +104,25 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       );
 
       setPrintResult(response);
-      
+
       if (response.ok) {
-        toast.success(`Print order created with ${response.provider}`);
+        toast.success(response.message || `Print order created with ${response.provider}`);
       } else {
-        toast.error('Failed to create print order');
+        toast.error(response.error || 'Failed to create print order');
       }
     } catch (error) {
-      toast.error('Failed to create print order');
+      const message =
+        error instanceof Error
+          ? error.message.replace('[create-print-order] ', '')
+          : 'Failed to create print order';
+
+      toast.error(message);
       console.error('Print error:', error);
+      setPrintResult({
+        ok: false,
+        provider: selectedProvider,
+        error: message,
+      });
     } finally {
       setIsPrinting(false);
       setShowPrintCheckout(false);
@@ -380,13 +385,13 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               <AlertDescription>
                 {printResult.ok ? (
                   <div className="space-y-2">
-                    <p>Print order created successfully with {printResult.provider}!</p>
+                    <p>{printResult.message || `Print order created successfully with ${printResult.provider}!`}</p>
                     {printResult.orderId && (
                       <p className="font-medium">Order ID: {printResult.orderId}</p>
                     )}
                     {printResult.checkoutUrl && (
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         size="sm"
                         onClick={() => window.open(printResult.checkoutUrl, '_blank')}
                       >
@@ -396,7 +401,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     )}
                   </div>
                 ) : (
-                  <p>Failed to create print order. Please try again.</p>
+                  <p>{printResult.error || 'Failed to create print order. Please try again.'}</p>
                 )}
               </AlertDescription>
             </Alert>

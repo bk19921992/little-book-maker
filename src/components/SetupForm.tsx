@@ -19,6 +19,10 @@ interface SetupFormProps {
   canProceed: boolean;
 }
 
+type NarrationStyleOption = StoryConfig['narrationStyle'];
+type EducationalFocusOption = NonNullable<StoryConfig['educationalFocus']>;
+type ImageStyleOption = Extract<StoryConfig['imageStyle'], string>;
+
 export const SetupForm: React.FC<SetupFormProps> = ({
   config,
   onConfigChange,
@@ -430,9 +434,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>Narration Style</Label>
-              <Select
+                <Select
                 value={config.narrationStyle}
-                onValueChange={(value: any) => onConfigChange({ narrationStyle: value })}
+                onValueChange={(value: NarrationStyleOption) => onConfigChange({ narrationStyle: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -449,7 +453,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               <Label>Educational Focus</Label>
               <Select
                 value={config.educationalFocus}
-                onValueChange={(value: any) => onConfigChange({ educationalFocus: value })}
+                onValueChange={(value: EducationalFocusOption) =>
+                  onConfigChange({ educationalFocus: value })
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -470,7 +476,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               <Label>Image Style</Label>
               <Select
                 value={typeof config.imageStyle === 'string' ? config.imageStyle : 'Picture-book'}
-                onValueChange={(value: any) => onConfigChange({ imageStyle: value })}
+                onValueChange={(value: ImageStyleOption) => onConfigChange({ imageStyle: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
