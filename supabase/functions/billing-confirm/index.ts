@@ -9,7 +9,7 @@ const corsHeaders = {
 const TEST_DISCOUNT_CODE = 'BEN-TEST-0';
 
 // Simple token generation for billing authorization
-function generateBillingToken(data: any): string {
+function generateBillingToken(data: Record<string, unknown>): string {
   const payload = {
     ...data,
     timestamp: Date.now(),
@@ -101,10 +101,11 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error confirming billing:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         success: false,
-        error: error.message 
+        error: message
       }),
       {
         status: 500,

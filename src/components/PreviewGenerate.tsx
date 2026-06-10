@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, BookOpen, Image, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
-import { StoryConfig, StoryPage, StoryOutline, StyleBible } from '../types';
+import { StoryConfig } from '../types';
 import { api } from '../api';
 import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
@@ -28,7 +28,6 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const [currentStep, setCurrentStep] = useState<GenerationStep>('idle');
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [startTime, setStartTime] = useState<number>(0);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<string>('');
 
   const updateProgress = (newProgress: number) => {
@@ -65,7 +64,6 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       }
 
       setError(null);
-      setStartTime(Date.now());
       setCurrentStep('planning');
       updateProgress(5);
 
@@ -97,16 +95,18 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // Step 3: Generate images (AI-powered illustrations)
       toast.info('Creating AI illustrations...');
       // Build a quick lookup for outline data
-      const outlineByPage = new Map(planResponse.outline.pages.map((p: any) => [p.page, p]));
+      const outlineByPage = new Map(
+        planResponse.outline.pages.map((outlinePage) => [outlinePage.page, outlinePage] as const)
+      );
       const imagePrompts = writeResponse.pages
         .filter((p) => p && p.page !== undefined)
         .map((p) => {
-          const outline = outlineByPage.get(p.page) || {} as any;
+          const outline = outlineByPage.get(p.page);
           return {
             page: p.page,
-            prompt: outline.imagePrompt || outline.visualBrief || 'storybook scene',
+            prompt: outline?.imagePrompt || outline?.visualBrief || 'storybook scene',
             text: p.text,
-            visualBrief: outline.visualBrief,
+            visualBrief: outline?.visualBrief,
             seed: config.imageSeed || undefined,
             config: config,
           };

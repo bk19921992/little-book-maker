@@ -135,5 +135,5 @@ export interface PrintOrderResponse {
   provider: string;
   orderId?: string;
   checkoutUrl?: string;
-  raw?: any;
+  raw?: unknown;
 }

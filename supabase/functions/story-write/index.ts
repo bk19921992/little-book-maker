@@ -143,8 +143,8 @@ Important Instructions:
           body: JSON.stringify({
             model: 'gpt-5-2025-08-07',
             messages: [
-              { role: 'system', content: 'Write professional UK English children\'s story pages with published book quality. Return ONLY story text, no quotes or extra text.' },
-              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children\'s story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
+              { role: 'system', content: "Write professional UK English children's story pages with published book quality. Return ONLY story text, no quotes or extra text." },
+              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
             ],
             max_completion_tokens: 600
           })
@@ -176,7 +176,7 @@ Important Instructions:
           }
         }
       )()
-      let words = countWords(pageText)
+      const words = countWords(pageText)
       if (words < min || words > max) {
         console.log(`Adjusting page ${pageOutline.page} from ${words} words to within ${min}-${max}`)
         const adjust = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -185,7 +185,7 @@ Important Instructions:
           body: JSON.stringify({
             model: 'gpt-5-2025-08-07',
             messages: [
-              { role: 'system', content: `Revise children\'s story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
+              { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
               { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
