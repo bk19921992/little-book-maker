@@ -1,15 +1,41 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
+import type { PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-billing-token',
 };
 
+interface BillingTokenPayload {
+  item?: string;
+  approved?: boolean;
+  expires?: number;
+  [key: string]: unknown;
+}
+
+interface ExportConfig {
+  children?: string[];
+  storyType?: string;
+  personal?: { dedication?: string };
+  pageSize: keyof typeof PAGE_SIZES | string;
+}
+
+interface ExportPage {
+  page: number;
+  text: string;
+}
+
+interface ExportRequest {
+  config: ExportConfig;
+  pages: ExportPage[];
+  includeBleed?: boolean;
+}
+
 // Simple token verification function
-function verifyBillingToken(token: string): any {
+function verifyBillingToken(token: string): BillingTokenPayload {
   try {
-    const decoded = JSON.parse(atob(token));
+    const decoded = JSON.parse(atob(token)) as BillingTokenPayload;
     
     // Check if token is expired (10 minutes)
     if (decoded.expires && Date.now() > decoded.expires) {
@@ -50,28 +76,31 @@ function mmToPdfPoints(mm: number): number {
   return mm * 2.834645669; // 1mm = 2.834645669 PDF points
 }
 
-async function createPDF(config: any, pages: any[], includeBleed: boolean): Promise<Uint8Array> {
+async function createPDF(config: ExportConfig, pages: ExportPage[], includeBleed: boolean): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
-  
+
   // Embed Nunito font (fallback to Helvetica if not available)
-  let font;
+  let font: PDFFont;
   try {
     font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   } catch {
     font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   }
-  
-  const pageSize = PAGE_SIZES[config.pageSize] || PAGE_SIZES['A5 portrait'];
+
+  const pageSize = PAGE_SIZES[config.pageSize as keyof typeof PAGE_SIZES] || PAGE_SIZES['A5 portrait'];
   const dimensions = includeBleed ? pageSize.withBleed : pageSize.content;
-  
+
   const pageWidth = mmToPdfPoints(dimensions.width);
   const pageHeight = mmToPdfPoints(dimensions.height);
-  
+
   // Create cover page
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
-  
+
   // Title
-  const titleText = `${config.children.join(' & ')}'s Story` || 'Magical Story';
+  const childNames = config.children && config.children.length > 0
+    ? config.children.join(' & ')
+    : undefined;
+  const titleText = childNames ? `${childNames}'s Story` : 'Magical Story';
   coverPage.drawText(titleText, {
     x: pageWidth * 0.1,
     y: pageHeight * 0.8,
@@ -156,7 +185,7 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
   return await pdfDoc.save();
 }
 
-function wrapText(text: string, font: any, fontSize: number, maxWidth: number): string[] {
+function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
   const words = text.split(' ');
   const lines: string[] = [];
   let currentLine = '';
@@ -190,7 +219,7 @@ serve(async (req) => {
   }
 
   try {
-    const { config, pages, includeBleed = true } = await req.json();
+    const { config, pages, includeBleed = true } = await req.json() as ExportRequest;
 
     console.log(`Generating ${includeBleed ? 'print' : 'web'} PDF for ${pages.length} pages`);
 
@@ -220,7 +249,7 @@ serve(async (req) => {
       }
     } else {
       // Check for first free export
-      console.log('No billing token - checking for free export eligibility')
+      console.log('No billing token - checking for free export eligibility');
       
       // Allow first export without billing for testing
       // In production, you'd want to track this per user
@@ -239,7 +268,7 @@ serve(async (req) => {
         );
       }
       
-      console.log('Allowing free export for testing')
+      console.log('Allowing free export for testing');
     }
 
     // Generate both web and print PDFs
@@ -258,7 +287,7 @@ serve(async (req) => {
         webFilename: `${config.children?.join('-') || 'story'}-web.pdf`,
         printFilename: `${config.children?.join('-') || 'story'}-print.pdf`,
         pageCount: pages.length + 1, // +1 for cover
-        dimensions: PAGE_SIZES[config.pageSize] || PAGE_SIZES['A5 portrait']
+        dimensions: PAGE_SIZES[config.pageSize as keyof typeof PAGE_SIZES] || PAGE_SIZES['A5 portrait']
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -267,10 +296,11 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error generating PDF:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         success: false,
-        error: error.message 
+        error: message
       }),
       {
         status: 500,

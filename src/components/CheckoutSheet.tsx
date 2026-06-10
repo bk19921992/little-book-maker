@@ -38,11 +38,12 @@ interface CheckoutSheetProps {
 }
 
 interface BillingIntentResponse {
-  clientSecret: string;
+  clientSecret: string | null;
   amount: number;
   currency: string;
   testBypass?: boolean;
   free?: boolean;
+  paymentIntentId?: string | null;
 }
 
 interface BillingConfirmResponse {
@@ -115,6 +116,11 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
 
   const handlePayment = async () => {
     if (!stripe || !elements || !paymentIntent) return;
+    if (!paymentIntent.clientSecret) {
+      setError('Missing payment intent details. Please start checkout again.');
+      setPaymentIntent(null);
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -209,13 +215,23 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
         )}
 
         {!paymentIntent ? (
-          <Button 
-            onClick={handleCreateIntent} 
-            disabled={loading}
-            className="w-full"
-          >
-            {loading ? 'Processing...' : (isFirstExport ? 'Continue (Free)' : 'Proceed to Payment')}
-          </Button>
+          <div className="space-y-2">
+            <Button
+              onClick={handleCreateIntent}
+              disabled={loading}
+              className="w-full"
+            >
+              {loading ? 'Processing...' : (isFirstExport ? 'Continue (Free)' : 'Proceed to Payment')}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={onCancel}
+              className="w-full"
+              disabled={loading}
+            >
+              Cancel
+            </Button>
+          </div>
         ) : (
           <div className="space-y-4">
             <div className="p-3 border rounded">
@@ -254,13 +270,6 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
           </div>
         )}
 
-        <Button 
-          variant="ghost" 
-          onClick={onCancel}
-          className="w-full"
-        >
-          Cancel
-        </Button>
       </CardContent>
     </Card>
   );

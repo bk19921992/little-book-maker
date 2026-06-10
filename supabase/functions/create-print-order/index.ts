@@ -5,16 +5,58 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-billing-token',
 };
 
+interface BillingTokenPayload {
+  item?: string;
+  approved?: boolean;
+  expires?: number;
+  [key: string]: unknown;
+}
+
+interface CustomerInfo {
+  email: string;
+  firstName: string;
+  lastName: string;
+  address1: string;
+  address2?: string;
+  city: string;
+  zipCode: string;
+  country: string;
+  state?: string | null;
+}
+
+interface PeechoOrderResult {
+  provider: 'PEECHO';
+  status: string;
+  orderId?: string;
+  orderReference?: string;
+  message: string;
+  estimatedCost?: string;
+  estimatedDelivery?: string;
+  paymentRequired?: boolean;
+  paymentUrl?: string | null;
+  raw: unknown;
+}
+
+interface StubbedOrderResult {
+  provider: 'BOOKVAULT' | 'LULU' | 'GELATO';
+  status: 'stubbed';
+  message: string;
+  estimatedCost?: string;
+  estimatedDelivery?: string;
+}
+
+type PrintOrderResult = PeechoOrderResult | StubbedOrderResult;
+
 // Simple token verification function
-function verifyBillingToken(token: string): any {
+function verifyBillingToken(token: string): BillingTokenPayload {
   try {
-    const decoded = JSON.parse(atob(token));
-    
+    const decoded = JSON.parse(atob(token)) as BillingTokenPayload;
+
     // Check if token is expired (10 minutes)
     if (decoded.expires && Date.now() > decoded.expires) {
       throw new Error('Billing token expired');
     }
-    
+
     return decoded;
   } catch (error) {
     throw new Error('Invalid billing token');
@@ -22,7 +64,11 @@ function verifyBillingToken(token: string): any {
 }
 
 // Peecho API integration based on official documentation
-async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?: any): Promise<any> {
+async function createPeechoOrder(
+  pdfUrl: string,
+  pageSize: string,
+  customerInfo?: CustomerInfo
+): Promise<PeechoOrderResult> {
   const peechoApiKey = Deno.env.get('PEECHO_API_KEY');
   
   if (!peechoApiKey) {
@@ -48,7 +94,7 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
   const dimensions = pageDimensions[pageSize] || pageDimensions['A5 portrait'];
 
   // Default customer info if not provided
-  const defaultCustomerInfo = {
+  const defaultCustomerInfo: CustomerInfo = {
     email: 'customer@example.com',
     firstName: 'Customer',
     lastName: 'Name',
@@ -137,12 +183,13 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
     };
   } catch (error) {
     console.error('Peecho order creation failed:', error);
-    throw new Error(`Failed to create Peecho order: ${error.message}`);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`Failed to create Peecho order: ${message}`);
   }
 }
 
 // Stub implementations for other providers
-async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<any> {
+async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<StubbedOrderResult> {
   // BookVault integration - stubbed for now
   return {
     provider: 'BOOKVAULT',
@@ -153,7 +200,7 @@ async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<a
   };
 }
 
-async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<any> {
+async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<StubbedOrderResult> {
   // Lulu integration - stubbed for now
   return {
     provider: 'LULU',
@@ -164,7 +211,7 @@ async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<any> {
   };
 }
 
-async function createGelatoOrder(pdfUrl: string, pageSize: string): Promise<any> {
+async function createGelatoOrder(pdfUrl: string, pageSize: string): Promise<StubbedOrderResult> {
   // Gelato integration - stubbed for now
   return {
     provider: 'GELATO',
@@ -180,8 +227,11 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  let currentProvider: string | undefined;
+
   try {
     const { provider, pdfUrl, pageSize } = await req.json();
+    currentProvider = provider;
 
     console.log(`Creating print order with ${provider} for ${pageSize}`);
 
@@ -199,9 +249,10 @@ serve(async (req) => {
       } catch (error) {
         console.error('Billing verification failed:', error);
         return new Response(
-          JSON.stringify({ 
-            success: false,
-            error: 'Payment required. Please complete billing process.' 
+          JSON.stringify({
+            ok: false,
+            provider,
+            error: 'Payment required. Please complete billing process.'
           }),
           {
             status: 402,
@@ -224,7 +275,7 @@ serve(async (req) => {
       throw new Error('Page size is required');
     }
 
-    let orderResult;
+    let orderResult: PrintOrderResult;
 
     switch (provider) {
       case 'PEECHO':
@@ -247,14 +298,25 @@ serve(async (req) => {
         throw new Error(`Unsupported print provider: ${provider}`);
     }
 
+    const orderId =
+      'orderId' in orderResult
+        ? orderResult.orderId
+        : 'orderReference' in orderResult
+          ? orderResult.orderReference
+          : null;
+    const checkoutUrl = 'paymentUrl' in orderResult ? orderResult.paymentUrl : null;
+
+    const responsePayload = {
+      ok: true,
+      provider,
+      orderId,
+      checkoutUrl,
+      message: orderResult.message || `Print order created successfully with ${provider}.`,
+      raw: orderResult,
+    };
+
     return new Response(
-      JSON.stringify({
-        success: true,
-        provider,
-        order: orderResult,
-        pdfUrl,
-        pageSize
-      }),
+      JSON.stringify(responsePayload),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
@@ -262,10 +324,12 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error creating print order:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
     return new Response(
-      JSON.stringify({ 
-        success: false,
-        error: error.message 
+      JSON.stringify({
+        ok: false,
+        provider: currentProvider,
+        error: message
       }),
       {
         status: 500,
