@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
 type AuthMode = 'sign-in' | 'sign-up';
 
@@ -29,12 +29,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     const initialise = async () => {
       try {
+        if (supabaseConfigError) {
+          throw new Error(supabaseConfigError);
+        }
+
         const { data } = await supabase.auth.getUser();
         if (isMounted) {
           setUser(data.user ?? null);
         }
       } catch (err) {
         console.error('[AuthProvider] Failed to load user', err);
+        if (isMounted) {
+          setError(formatSupabaseConnectionError(err));
+        }
       } finally {
         if (isMounted) {
           setLoading(false);
@@ -59,12 +66,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signIn = useCallback(async (email: string, password: string) => {
     setError(null);
     try {
+      if (supabaseConfigError) {
+        throw new Error(supabaseConfigError);
+      }
+
       const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError) {
         throw signInError;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to sign in';
+      const message = formatSupabaseConnectionError(err) || 'Unable to sign in';
       setError(message);
       throw err;
     }
@@ -73,6 +84,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signUp = useCallback(async (email: string, password: string) => {
     setError(null);
     try {
+      if (supabaseConfigError) {
+        throw new Error(supabaseConfigError);
+      }
+
       const { error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -82,7 +97,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         throw signUpError;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to sign up';
+      const message = formatSupabaseConnectionError(err) || 'Unable to sign up';
       setError(message);
       throw err;
     }
@@ -95,7 +110,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         throw signOutError;
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to sign out';
+      const message = formatSupabaseConnectionError(err) || 'Unable to sign out';
       setError(message);
       throw err;
     }
