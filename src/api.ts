@@ -1,10 +1,14 @@
 import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
-import { supabase } from '@/integrations/supabase/client';
+import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
 // API client for communicating with Supabase edge functions
 class APIClient {
-  private async invokeFunction<T>(functionName: string, body: any, headers: Record<string, string> = {}): Promise<T> {
+  private async invokeFunction<T>(functionName: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
     try {
+      if (supabaseConfigError) {
+        throw new Error(supabaseConfigError);
+      }
+
       console.log(`Calling ${functionName} with:`, body)
       const { data, error } = await supabase.functions.invoke(functionName, {
         body,
@@ -15,7 +19,7 @@ class APIClient {
 
       if (error) {
         console.error(`Error calling ${functionName}:`, error);
-        const msg = (error as any)?.message || 'Edge Function error';
+        const msg = error.message || 'Edge Function error';
         // Retry once if the request failed to send (common transient issue)
         if (msg.includes('Failed to send a request to the Edge Function')) {
           console.warn(`[${functionName}] Retry after transient send failure...`);
@@ -34,7 +38,7 @@ class APIClient {
       console.error(`Error invoking function ${functionName}:`, error);
       if (error instanceof Error) {
         // Surface a clearer message including the function name
-        throw new Error(`[${functionName}] ${error.message}`);
+        throw new Error(`[${functionName}] ${formatSupabaseConnectionError(error)}`);
       }
       throw new Error(`[${functionName}] Failed to invoke`);
     }
