@@ -64,6 +64,34 @@ This project is built with:
 
 Simply open [Lovable](https://lovable.dev/projects/fbc11367-7025-4101-8a27-f3ba81f72244) and click on Share -> Publish.
 
+### Vercel + Supabase deployment checklist
+
+The frontend calls Supabase Edge Functions for auth, story writing, image generation,
+PDF export, and billing. If the Supabase project URL is wrong or the project is not
+active, the browser will show `Failed to fetch`.
+
+Set these Vercel environment variables before deploying:
+
+```sh
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_PROJECT_ID=your-project-ref
+VITE_SUPABASE_PUBLISHABLE_KEY=your-supabase-anon-key
+VITE_STRIPE_PUBLISHABLE_KEY=pk_test_or_live_value
+```
+
+Deploy the Supabase functions in `supabase/functions` to the same project ref and
+set the required Supabase secrets:
+
+```sh
+OPENAI_API_KEY=...
+GEMINI_API_KEY=...
+STRIPE_SECRET_KEY=...
+```
+
+The currently generated frontend must point at an active Supabase project. A stale
+or deleted project ref such as `https://<missing-ref>.supabase.co` will fail before
+any function code runs.
+
 ## Can I connect a custom domain to my Lovable project?
 
 Yes, you can!
