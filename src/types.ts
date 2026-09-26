@@ -48,238 +48,94 @@ export interface StyleBible {
 }
 
 export interface StoryOutline {
-  
   pages: OutlineItem[];
-  
 }
-
-
 
 export interface OutlineItem {
-  
   page: number;
-  
   wordsTarget: number;
-  
   visualBrief: string;
-  
   imagePrompt: string;      // includes styleBible anchors
-  
 }
-
-
 
 export interface StoryPage {
-  
   page: number;
-  
   text: string;
-  
   imageUrl?: string;
-  
   imageLocked?: boolean;
-  
 }
-
-
 
 // UI State Types
-
 export type AppStep = 'setup' | 'preview' | 'edit' | 'export';
 
-
-
 export interface AppState {
-  
   currentStep: AppStep;
-  
   config: StoryConfig;
-  
   isGenerating: boolean;
-  
   errors: string[];
-  
 }
-
-
 
 // Preset data types
-
 export interface ThemePreset {
-  
   name: string;
-  
   description: string;
-  
   palette: string[];
-  
   mood: string[];
-  
 }
-
-
 
 export interface StoryTypePreset {
-  
   name: string;
-  
   description: string;
-  
   tags: string[];
-  
 }
-
-
 
 export interface CharacterPreset {
-  
   name: string;
-  
   description: string;
-  
 }
-
-
 
 export interface SettingPreset {
-  
   name: string;
-  
   description: string;
-  
 }
-
-
 
 // Validation types
-
 export interface ValidationError {
-  
   field: string;
-  
   message: string;
-  
 }
 
-
-
-export  interface WordCountTargets {
-  
+export interface WordCountTargets {
   'Toddler 2–3': { min: 60; max: 80 };
-
   'Early 4–5': { min: 80; max: 120 };
-
   'Primary 6–8': { min: 120; max: 150 };
-
 }
-
-
 
 // API Response types
-
 export interface PlanResponse {
-  
   outline: StoryOutline;
-  
   styleBible: StyleBible;
-  
 }
-
-
 
 export interface WriteResponse {
-  
   pages: StoryPage[];
-  
 }
-
-
 
 export interface ImageGenerateResponse {
-  
   images: { page: number; url: string }[];
-  
   errors?: { page: number; error: string }[];
-  
 }
-
-
 
 export interface ExportResponse {
-  
   webPdfUrl: string;
-  
   printPdfUrl: string;
-  
 }
-
-
 
 export interface PrintOrderResponse {
-  
   ok: boolean;
-  
   provider: string;
-  
   orderId?: string;
-  
   checkoutUrl?: string;
-  
   raw?: any;
-  
   error?: string;
-  
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
