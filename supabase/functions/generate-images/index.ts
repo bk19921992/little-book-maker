@@ -5,6 +5,111 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+type StoryConfig = {
+  children?: string[]
+  characters?: string[]
+  setting?: string
+  palette?: string[]
+  imageStyle?: string | { other?: string }
+  storyType?: string
+  educationalFocus?: string
+  personal?: {
+    favouriteColour?: string
+    pets?: string
+    favouriteToy?: string
+    town?: string
+  }
+}
+
+type ImagePrompt = {
+  page: number
+  prompt?: string
+  text?: string
+  visualBrief?: string
+  config?: StoryConfig
+  seed?: number
+}
+
+// gpt-image-1 only supports these sizes; map each page preset onto the closest one.
+const OPENAI_SIZES: Record<string, '1024x1536' | '1024x1024'> = {
+  'A5 portrait': '1024x1536',
+  'A4 portrait': '1024x1536',
+  '210×210 mm square': '1024x1024',
+}
+
+function resolveImageStyle(imageStyle: StoryConfig['imageStyle']): string {
+  if (!imageStyle) return "children's book illustration"
+  if (typeof imageStyle === 'string') return imageStyle
+  return imageStyle.other || "children's book illustration"
+}
+
+// One style bible per request, reused verbatim for every page so the child,
+// characters, palette and rendering style stay consistent across the book.
+function buildStyleBible(config: StoryConfig | undefined): string {
+  const c = config || {}
+  const mainChild = c.children && c.children.length
+    ? c.children.join(' and ')
+    : 'the child protagonist'
+  const characters = c.characters && c.characters.length
+    ? c.characters.join(', ')
+    : 'the supporting characters from the story'
+  const setting = c.setting || 'the story setting'
+  const palette = c.palette && c.palette.length
+    ? c.palette.join(', ')
+    : 'warm, gentle colors'
+  const favouriteColour = c.personal?.favouriteColour
+  const pets = c.personal?.pets
+
+  const lines = [
+    `Rendering style: ${resolveImageStyle(c.imageStyle)}, consistent across every page of this book.`,
+    `Main child: ${mainChild} (human child). The same child, with the same face, hair, clothing and proportions, must appear on every page they feature in.`,
+    `Supporting characters: ${characters}. Keep each character's appearance identical on every page.`,
+    pets ? `Pet companion: ${pets} (animal, not human). Keep the pet the same species, breed and coloring on every page.` : '',
+    `Setting: ${setting}.`,
+    `Colour palette: ${palette}${favouriteColour ? `, featuring the child's favourite colour ${favouriteColour}` : ''}.`,
+    `Mood: gentle, warm, cozy and child-friendly, with soft lighting.`,
+    `Composition: portrait storybook composition with important elements away from the edges (safe for print trim), no text, letters, numbers, captions or watermarks anywhere in the image.`,
+    `Species rule: the child is always human; pets and animal characters are always animals. Never blend the two.`,
+  ]
+
+  return lines.filter(Boolean).join('\n')
+}
+
+async function generateOneImage(
+  openaiKey: string,
+  model: string,
+  size: string,
+  quality: string,
+  fullPrompt: string,
+): Promise<string> {
+  const response = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${openaiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      prompt: fullPrompt,
+      n: 1,
+      size,
+      quality,
+    }),
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`OpenAI image API error ${response.status}: ${errorText}`)
+  }
+
+  const result = await response.json()
+  const b64 = result?.data?.[0]?.b64_json
+  if (!b64) {
+    throw new Error('OpenAI image API returned no image data')
+  }
+  return `data:image/png;base64,${b64}`
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -12,136 +117,79 @@ serve(async (req) => {
 
   try {
     const { pageSize, prompts } = await req.json()
-    console.log('Generate images request received:', { pageSize, prompts })
-    
-    const geminiKey = Deno.env.get('GEMINI_API_KEY')
-    if (!geminiKey) {
-      throw new Error('GEMINI_API_KEY is required. Please add it to your environment variables.')
+    console.log('Generate images request received:', { pageSize, pageCount: prompts?.length })
+
+    const openaiKey = Deno.env.get('OPENAI_API_KEY')
+    if (!openaiKey) {
+      throw new Error('OPENAI_API_KEY is required. Add it to your Supabase function secrets.')
     }
 
-    const geminiModel = Deno.env.get('GEMINI_IMAGE_MODEL') || 'gemini-nano-banana-storybooks';
-    const encodedModel = encodeURIComponent(geminiModel);
-
-    // Calculate dimensions based on page size (300 DPI with 3mm bleed)
-    const pageSizes = {
-      'A5 portrait': { width: 933, height: 1280 }, // 154x216mm at 300dpi
-      'A4 portrait': { width: 1280, height: 1794 }, // 216x303mm at 300dpi  
-      '210×210 mm square': { width: 1280, height: 1280 } // 216x216mm at 300dpi
+    if (!Array.isArray(prompts) || prompts.length === 0) {
+      throw new Error('prompts must be a non-empty array')
     }
 
-    const dimensions = pageSizes[pageSize] || pageSizes['A5 portrait']
-    const images = []
+    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
+    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
+    const size = Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536'
 
-    // Generate AI images using Gemini 2.5 Flash
-    for (const promptData of prompts) {
+    // All pages in one request share the same config, so build the style bible once.
+    const styleBible = buildStyleBible(prompts[0]?.config)
+    console.log('Style bible:', styleBible)
+
+    const images: { page: number; url: string }[] = []
+    const errors: { page: number; error: string }[] = []
+
+    for (const promptData of prompts as ImagePrompt[]) {
       try {
-        console.log(`Generating image for page ${promptData.page} with prompt: ${promptData.prompt}`)
-        
-        // Get config data from the prompt for enhanced image generation
-        const configData = promptData.config || {};
-        console.log('Config data for image generation:', configData)
-        
-        // Build detailed children's book illustration prompt using text + inputs
-        const basePrompt = promptData.prompt || 'children playing happily'
-        const pageText = promptData.text || ''
-        const visualBrief = promptData.visualBrief || ''
-        const mainChild = (configData.children && configData.children.length) ? configData.children.join(' and ') : 'a young child protagonist'
-        const characters = configData.characters ? configData.characters.join(' and ') : 'friendly supporting characters'
-        const setting = configData.setting || 'magical place'
-        const colorPalette = configData.palette ? configData.palette.join(', ') : 'warm, bright colors'
-        const personalColor = configData.personal?.favouriteColour || 'colorful'
-        const imageStyle = typeof configData.imageStyle === 'string' ? configData.imageStyle : 'children\'s book illustration'
-        const petLine = configData.personal?.pets ? `Pet companion: ${configData.personal.pets} (animal, not human).` : ''
-        
-        // Create comprehensive prompt for children's book illustration
-        const enhancedPrompt = `High-quality children's book illustration in ${imageStyle} style. Scene: ${basePrompt}. ${visualBrief}. Page text: ${pageText}. Main child: ${mainChild}. Characters: ${characters}. ${petLine}. Setting: ${setting}. Educational focus: ${configData.educationalFocus || 'gentle learning'}. Story: ${configData.storyType || 'adventure'}. Colors: ${colorPalette} with ${personalColor}. Style: 3D rendered like Pixar/Disney, vibrant colors, soft lighting, detailed textures, warm atmosphere, child-friendly expressions, professional quality, portrait orientation, no text/letters/watermarks.`
-        
-        console.log('Enhanced prompt:', enhancedPrompt)
-        
-        let dataUrl: string | null = null
+        const scene = promptData.prompt || promptData.visualBrief || 'a warm storybook scene'
+        const fullPrompt = [
+          'High-quality children\'s book illustration for one page of a personalised bedtime story.',
+          '',
+          'STYLE BIBLE (must match every other page exactly):',
+          styleBible,
+          '',
+          `THIS PAGE (page ${promptData.page}):`,
+          `Scene: ${scene}`,
+          promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
+          promptData.text ? `Story text on this page: "${promptData.text}"` : '',
+          '',
+          'Illustrate exactly what this page\'s story text describes, while keeping the characters, style, palette and setting from the style bible perfectly consistent with the other pages.',
+        ].filter(Boolean).join('\n')
 
-        // Use fine-tuned Gemini Nano Banana model for image generation
-        try {
-          console.log(`Generating image for page ${promptData.page} with model ${geminiModel}`)
-          
-          const geminiPayload = {
-            contents: [{
-              parts: [{
-                text: `Generate an image: ${enhancedPrompt}`
-              }]
-            }],
-            generationConfig: {
-              responseMimeType: "image/jpeg"
-            }
-          }
-
-          const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodedModel}:generateContent?key=${geminiKey}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(geminiPayload),
-          })
-
-          if (geminiResponse.ok) {
-            const result = await geminiResponse.json()
-            console.log(`Gemini API response for page ${promptData.page}:`, JSON.stringify(result, null, 2))
-            
-            if (result.candidates && result.candidates.length > 0) {
-              const candidate = result.candidates[0]
-              if (candidate.content && candidate.content.parts) {
-                // Look for image data in the response
-                for (const part of candidate.content.parts) {
-                  if (part.inlineData && part.inlineData.data) {
-                    // Convert base64 to data URL
-                    const mimeType = part.inlineData.mimeType || 'image/jpeg'
-                    dataUrl = `data:${mimeType};base64,${part.inlineData.data}`
-                    console.log(`Generated high-quality image for page ${promptData.page} using Gemini 2.5 Flash`)
-                    break
-                  }
-                }
-              }
-            }
-          } else {
-            const errorText = await geminiResponse.text()
-            console.error(`Gemini API error for page ${promptData.page}:`, geminiResponse.status, errorText)
-          }
-        } catch (geminiError) {
-          console.error(`Gemini API error for page ${promptData.page}:`, geminiError)
-        }
-
-        if (!dataUrl) {
-          // Final fallback to placeholder
-          dataUrl = `https://picsum.photos/${dimensions.width}/${dimensions.height}?random=${promptData.page}`
-        }
-
-        images.push({ page: promptData.page, url: dataUrl })
-        
-      } catch (error) {
-        console.error(`Error generating image for page ${promptData.page}:`, error)
-        // Fallback to placeholder if generation fails
-        images.push({
+        console.log(`Generating image for page ${promptData.page} with model ${model} (${size}, ${quality})`)
+        const url = await generateOneImage(openaiKey, model, size, quality, fullPrompt)
+        images.push({ page: promptData.page, url })
+        console.log(`Generated illustration for page ${promptData.page}`)
+      } catch (pageError) {
+        // Never substitute stock photos: a failed page is reported so the UI can
+        // ask the user to retry instead of shipping unrelated imagery.
+        console.error(`Image generation failed for page ${promptData.page}:`, pageError)
+        errors.push({
           page: promptData.page,
-          url: `https://picsum.photos/${dimensions.width}/${dimensions.height}?random=${promptData.page}`
+          error: pageError instanceof Error ? pageError.message : String(pageError),
         })
       }
     }
 
-    return new Response(
-      JSON.stringify({ images }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    )
+    if (images.length === 0) {
+      return new Response(
+        JSON.stringify({
+          error: `Illustration generation failed for every page. ${errors[0]?.error || ''}`.trim(),
+          errors,
+        }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      )
+    }
 
+    return new Response(
+      JSON.stringify({ images, errors: errors.length ? errors : undefined }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
   } catch (error) {
     console.error('Generate images error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
+      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   }
 })
