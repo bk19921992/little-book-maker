@@ -84,9 +84,13 @@ set the required Supabase secrets:
 
 ```sh
 OPENAI_API_KEY=...
-GEMINI_API_KEY=...
 STRIPE_SECRET_KEY=...
 ```
+
+Story text and page illustrations both use OpenAI (`OPENAI_API_KEY`). Image
+generation defaults to `gpt-image-1` at `medium` quality; override with the
+optional `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE` and `OPENAI_IMAGE_QUALITY`
+secrets if needed.
 
 The currently generated frontend must point at an active Supabase project. A stale
 or deleted project ref such as `https://<missing-ref>.supabase.co` will fail before
