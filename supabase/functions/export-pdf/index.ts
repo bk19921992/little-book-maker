@@ -319,8 +319,16 @@ serve(async (req) => {
     const printPdfBytes = await createPDF(config, pages, true);
     
     // Convert to base64 for JSON response
-    const base64WebPdf = btoa(String.fromCharCode(...webPdfBytes));
-    const base64PrintPdf = btoa(String.fromCharCode(...printPdfBytes));
+    // Convert in bounded chunks; spreading the entire illustrated PDF overflows the call stack.
+    const toBase64 = (bytes: Uint8Array): string => {
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      return btoa(binary);
+    };
+    const base64WebPdf = toBase64(webPdfBytes);
+    const base64PrintPdf = toBase64(printPdfBytes);
     
     return new Response(
       JSON.stringify({
