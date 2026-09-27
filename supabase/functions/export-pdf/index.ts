@@ -318,7 +318,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   const subtitleText = config.storyType ? normaliseTypography(`A ${sentenceCase(config.storyType)}`) : '';
 
   // Display-sized title, auto-fit to the measure; subtitle at ~28% of it.
-  let titleSize = Math.round(pageWidth * 0.14);
+  let titleSize = Math.round(pageWidth * 0.115);
   const maxTitleWidth = pageWidth * TEXT_MEASURE;
   while (titleSize > pageWidth * 0.07 && fonts.display.widthOfTextAtSize(titleText, titleSize) > maxTitleWidth) {
     titleSize -= 1;
@@ -332,7 +332,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   const plateWidth = Math.min(pageWidth - safeInset * 2, plateTextWidth + platePadX * 2);
   const plateHeight = titleSize * 1.15 + (subtitleText ? subtitleSize * 1.6 : 0) + platePadY * 2;
   const plateX = (pageWidth - plateWidth) / 2;
-  const plateTop = pageHeight * 0.92; // title zone: top of page
+  const plateTop = pageHeight * 0.97; // title zone: hard against the top so cover art faces stay clear
   const plateY = plateTop - plateHeight;
 
   // Soft paper plate behind the title (double rect fakes a feathered edge).

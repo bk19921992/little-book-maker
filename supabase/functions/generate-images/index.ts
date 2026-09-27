@@ -310,8 +310,8 @@ serve(async (req) => {
           '',
           'COVER COMPOSITION (follow exactly):',
           '- One iconic, heartwarming scene with the main child and the most important supporting character(s) together.',
-          '- The characters and the action occupy the LOWER TWO-THIRDS of the image.',
-          '- The TOP THIRD is calm, simple and uncluttered (sky, soft wall, gentle background) with NO faces, characters or busy detail there - the printed book title sits in that space.',
+          '- The characters and the action occupy the LOWER HALF of the image; every face stays fully below the halfway line.',
+          '- The TOP HALF is calm, simple and uncluttered (sky, soft wall, gentle background, treetops) with NO faces, characters or busy detail above the halfway line - the printed book title sits in that space.',
           '- No text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
         ].filter(Boolean).join('\n')
         console.log('Generating dedicated cover image')
