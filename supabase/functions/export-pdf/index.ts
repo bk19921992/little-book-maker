@@ -39,6 +39,10 @@ const PAGE_SIZES = {
   '210×210 mm square': {
     content: { width: 210, height: 210 }, // mm
     withBleed: { width: 216, height: 216 } // mm
+  },
+  'A4 landscape': {
+    content: { width: 297, height: 210 }, // mm
+    withBleed: { width: 303, height: 216 } // mm
   }
 };
 
@@ -146,10 +150,15 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
       color: rgb(0.5, 0.5, 0.5),
     });
     
-    const imageAreaWidth = pageWidth * 0.8;
-    const imageAreaHeight = includeBleed ? pageHeight * 0.4 : pageHeight * 0.35;
-    const imageAreaX = pageWidth * 0.1;
-    const imageAreaY = pageHeight - imageAreaHeight - pageHeight * 0.15;
+    const layout = config.pageLayout === 'overlay' ? 'overlay' : 'split';
+    const overlay = layout === 'overlay';
+
+    const imageAreaWidth = overlay ? pageWidth : pageWidth * 0.8;
+    const imageAreaHeight = overlay
+      ? pageHeight
+      : includeBleed ? pageHeight * 0.4 : pageHeight * 0.35;
+    const imageAreaX = overlay ? 0 : pageWidth * 0.1;
+    const imageAreaY = overlay ? 0 : pageHeight - imageAreaHeight - pageHeight * 0.15;
 
     let imagePlaced = false;
 
@@ -164,15 +173,32 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
             embeddedImage = await pdfDoc.embedJpg(imageData.bytes);
           }
 
-          const fitted = embeddedImage.scaleToFit(imageAreaWidth, imageAreaHeight);
-          const imageX = imageAreaX + (imageAreaWidth - fitted.width) / 2;
-          const imageY = imageAreaY + (imageAreaHeight - fitted.height) / 2;
-          storyPage.drawImage(embeddedImage, {
-            x: imageX,
-            y: imageY,
-            width: fitted.width,
-            height: fitted.height,
-          });
+          if (overlay) {
+            // Full-page picture: scale to cover the whole page (centre crop;
+            // anything past the page edge is clipped by the PDF page box).
+            const scale = Math.max(
+              pageWidth / embeddedImage.width,
+              pageHeight / embeddedImage.height,
+            );
+            const drawW = embeddedImage.width * scale;
+            const drawH = embeddedImage.height * scale;
+            storyPage.drawImage(embeddedImage, {
+              x: (pageWidth - drawW) / 2,
+              y: (pageHeight - drawH) / 2,
+              width: drawW,
+              height: drawH,
+            });
+          } else {
+            const fitted = embeddedImage.scaleToFit(imageAreaWidth, imageAreaHeight);
+            const imageX = imageAreaX + (imageAreaWidth - fitted.width) / 2;
+            const imageY = imageAreaY + (imageAreaHeight - fitted.height) / 2;
+            storyPage.drawImage(embeddedImage, {
+              x: imageX,
+              y: imageY,
+              width: fitted.width,
+              height: fitted.height,
+            });
+          }
           imagePlaced = true;
         } catch (imageError) {
           console.error('Failed to embed image in PDF:', imageError);
@@ -180,7 +206,7 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
       }
     }
 
-    if (!imagePlaced) {
+    if (!imagePlaced && !overlay) {
       storyPage.drawRectangle({
         x: imageAreaX,
         y: imageAreaY,
@@ -209,18 +235,45 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
 
     // Story text
     if (page.text) {
-      const textLines = wrapText(page.text, font, includeBleed ? 16 : 14, pageWidth * 0.8);
-      let yPos = pageHeight * 0.35;
+      const fontSize = includeBleed ? 16 : 14;
+      const lineStep = includeBleed ? 20 : 18;
+      const textLines = wrapText(page.text, font, fontSize, pageWidth * 0.8);
 
-      for (const line of textLines) {
-        storyPage.drawText(line, {
-          x: pageWidth * 0.1,
-          y: yPos,
-          size: includeBleed ? 16 : 14,
-          font,
-          color: rgb(0.1, 0.1, 0.1),
+      if (overlay) {
+        // Soft light band along the bottom so the words stay readable over the picture.
+        const bandPadding = lineStep;
+        const bandHeight = textLines.length * lineStep + bandPadding * 1.5;
+        storyPage.drawRectangle({
+          x: 0,
+          y: 0,
+          width: pageWidth,
+          height: bandHeight,
+          color: rgb(1, 1, 1),
+          opacity: 0.78,
         });
-        yPos -= includeBleed ? 20 : 18;
+        let yPos = bandHeight - bandPadding;
+        for (const line of textLines) {
+          storyPage.drawText(line, {
+            x: pageWidth * 0.1,
+            y: yPos,
+            size: fontSize,
+            font,
+            color: rgb(0.1, 0.1, 0.1),
+          });
+          yPos -= lineStep;
+        }
+      } else {
+        let yPos = pageHeight * 0.35;
+        for (const line of textLines) {
+          storyPage.drawText(line, {
+            x: pageWidth * 0.1,
+            y: yPos,
+            size: fontSize,
+            font,
+            color: rgb(0.1, 0.1, 0.1),
+          });
+          yPos -= lineStep;
+        }
       }
     }
   }
