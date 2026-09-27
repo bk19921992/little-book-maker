@@ -129,7 +129,7 @@ serve(async (req) => {
     }
 
     const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
-    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
+    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'low'
     const size = Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536'
 
     // All pages in one request share the same config, so build the style bible once.
