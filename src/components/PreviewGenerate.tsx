@@ -115,7 +115,14 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         });
 
       const imageResponse = await api.generateImages(config.pageSize, imagePrompts);
-      
+
+      if (imageResponse.errors?.length) {
+        const failedPages = imageResponse.errors.map((e) => e.page).join(', ');
+        toast.warning(
+          `Could not create illustrations for page${imageResponse.errors.length > 1 ? 's' : ''} ${failedPages}. You can retry them from the editor.`
+        );
+      }
+
       // Update pages with image URLs
       const pagesWithImages = writeResponse.pages.map(page => {
         const imageData = imageResponse.images.find(img => img.page === page.page);

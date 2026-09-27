@@ -123,6 +123,7 @@ export interface WriteResponse {
 
 export interface ImageGenerateResponse {
   images: { page: number; url: string }[];
+  errors?: { page: number; error: string }[];
 }
 
 export interface ExportResponse {
