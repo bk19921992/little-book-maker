@@ -12,7 +12,7 @@ const PRICES = {
   subscriptionMonthly: 900, // pence, £9.00
 };
 
-const TEST_DISCOUNT_CODE = 'BEN-TEST-0';
+const TEST_DISCOUNT_CODE = 'TEST-BOOK-0';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
