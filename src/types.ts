@@ -2,7 +2,10 @@
 
 export type ReadingLevel = 'Toddler 2–3' | 'Early 4–5' | 'Primary 6–8';
 
-export type PageSizePreset = 'A5 portrait' | 'A4 portrait' | '210×210 mm square';
+export type PageSizePreset = 'A5 portrait' | 'A4 portrait' | '210×210 mm square' | 'A4 landscape';
+
+// How each story page arranges its illustration and text
+export type PageLayout = 'split' | 'overlay';
 
 export interface StoryConfig {
   children: string[];               // may be empty
@@ -26,6 +29,7 @@ export interface StoryConfig {
   contentSafety: boolean;           // must be true to generate
   imageStyle: 'Picture-book' | 'Watercolour' | 'Crayon' | 'Paper cut-out' | 'Cartoon line art' | { other: string };
   pageSize: PageSizePreset;
+  pageLayout: PageLayout;        // 'split' = picture above words, 'overlay' = full-page picture with words on top
   imageSeed?: number | null;
 
   // Generated
