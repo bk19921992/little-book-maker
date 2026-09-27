@@ -114,7 +114,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           };
         });
 
-      const imageResponse = await api.generateImages(config.pageSize, imagePrompts);
+      const imageResponse = await api.generateImages(config.pageSize, config.pageLayout, imagePrompts);
 
       if (imageResponse.errors?.length) {
         const failedPages = imageResponse.errors.map((e) => e.page).join(', ');
