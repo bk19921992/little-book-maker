@@ -54,6 +54,34 @@ function mmToPdfPoints(mm: number): number {
   return mm * 2.834645669; // 1mm = 2.834645669 PDF points
 }
 
+
+// Average luminance (0-255) of the bottom 30% of a JPEG image, used to pick a
+// legible overlay text colour. Returns null when the bytes cannot be sampled
+// (non-JPEG, decode failure) so callers can fall back to a safe default.
+async function bottomStripLuminance(bytes?: Uint8Array, mimeType?: string): Promise<number | null> {
+  try {
+    if (!bytes || !(mimeType || '').includes('jpe') && !(mimeType || '').includes('jpg')) return null;
+    const jpegJs = await import("https://esm.sh/jpeg-js@0.4.4");
+    const img: any = jpegJs.decode(bytes, { maxMemoryUsageInMB: 96 });
+    const { width, height, data } = img;
+    if (!width || !height || !data) return null;
+    const startRow = Math.floor(height * 0.7);
+    let sum = 0;
+    let count = 0;
+    for (let y = startRow; y < height; y += 2) {
+      for (let x = 0; x < width; x += 2) {
+        const i = (y * width + x) * 4;
+        sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        count++;
+      }
+    }
+    return count > 0 ? sum / count : null;
+  } catch (lumError) {
+    console.warn('Could not sample image luminance, using default overlay text colour');
+    return null;
+  }
+}
+
 async function fetchImageBytes(imageUrl: string): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
   try {
     if (!imageUrl) return null;
@@ -161,9 +189,11 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
     const imageAreaY = overlay ? 0 : pageHeight - imageAreaHeight - pageHeight * 0.15;
 
     let imagePlaced = false;
+    let overlayImageData: { bytes: Uint8Array; mimeType: string } | null = null;
 
     if (!page.imageLocked && page.imageUrl) {
       const imageData = await fetchImageBytes(page.imageUrl);
+      overlayImageData = imageData;
       if (imageData) {
         try {
           let embeddedImage;
@@ -241,25 +271,40 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
       const textLines = wrapText(cleanText, font, fontSize, pageWidth * 0.8);
 
       if (overlay) {
-        // Soft light band along the bottom so the words stay readable over the picture.
-        const bandPadding = lineStep;
-        const bandHeight = textLines.length * lineStep + bandPadding * 1.5;
-        storyPage.drawRectangle({
-          x: 0,
-          y: 0,
-          width: pageWidth,
-          height: bandHeight,
-          color: rgb(1, 1, 1),
-          opacity: 0.78,
-        });
-        let yPos = bandHeight - bandPadding;
+        // True overlay: words sit directly on the picture, centred, with no box.
+        // Contrast-aware: sample the bottom of the illustration - dark text on
+        // light scenes, white text on dark scenes - with a soft halo of the
+        // opposite colour so the words stay legible against the artwork.
+        const luminance = overlayImageData
+          ? await bottomStripLuminance(overlayImageData.bytes, overlayImageData.mimeType)
+          : null;
+        const darkText = luminance !== null ? luminance >= 140 : false;
+        const textColour = darkText ? rgb(0.07, 0.07, 0.09) : rgb(1, 1, 1);
+        const haloColour = darkText ? rgb(1, 1, 1) : rgb(0, 0, 0);
+        const haloOpacity = 0.5;
+        const haloOffset = 0.8;
+
+        const bottomMargin = pageHeight * 0.07;
+        let yPos = bottomMargin + (textLines.length - 1) * lineStep;
         for (const line of textLines) {
+          const lineWidth = font.widthOfTextAtSize(line, fontSize);
+          const x = (pageWidth - lineWidth) / 2;
+          for (const [dx, dy] of [[-haloOffset, 0], [haloOffset, 0], [0, -haloOffset], [0, haloOffset]]) {
+            storyPage.drawText(line, {
+              x: x + dx,
+              y: yPos + dy,
+              size: fontSize,
+              font,
+              color: haloColour,
+              opacity: haloOpacity,
+            });
+          }
           storyPage.drawText(line, {
-            x: pageWidth * 0.1,
+            x,
             y: yPos,
             size: fontSize,
             font,
-            color: rgb(0.1, 0.1, 0.1),
+            color: textColour,
           });
           yPos -= lineStep;
         }

@@ -115,9 +115,9 @@ export interface ValidationError {
 }
 
 export interface WordCountTargets {
-  'Toddler 2–3': { min: 60; max: 80 };
-  'Early 4–5': { min: 80; max: 120 };
-  'Primary 6–8': { min: 120; max: 150 };
+  'Toddler 2–3': { min: 5; max: 25 };
+  'Early 4–5': { min: 20; max: 50 };
+  'Primary 6–8': { min: 40; max: 90 };
 }
 
 // API Response types
@@ -153,6 +153,6 @@ export interface PrintOrderResponse {
   provider: string;
   orderId?: string;
   checkoutUrl?: string;
-  raw?: any;
+  raw?: unknown;
   error?: string;
 }

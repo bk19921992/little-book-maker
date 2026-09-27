@@ -59,11 +59,11 @@ Page Requirements:
 
 CRITICAL READING LEVEL REQUIREMENTS FOR ${config.readingLevel}:
 ${config.readingLevel === 'Toddler 2–3' ? 
-  '- Write 60-80 words per page total\n- Use simple 2-4 word sentences\n- Repeat key phrases for comfort and learning\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words only\n- Be descriptive but simple\n- Example: "Big red ball. Ball is round. Ball bounces up and down. Up, up, up! Down, down, down! Fun ball!"' :
+  '- Write 5-25 words per page total\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort and learning\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words only\n- Be descriptive but simple\n- Example: "Big red ball. Ball is round. Ball bounces up and down. Up, up, up! Down, down, down! Fun ball!"' :
 config.readingLevel === 'Early 4–5' ?
-  '- Write 80-120 words per page total\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language that toddlers love\n- Focus on everyday experiences and emotions\n- Use descriptive but simple words\n- Create engaging, flowing text\n- Example: "The little boy ran fast. He ran to the big tree. The tree had pretty green leaves. So many leaves! He touched the soft grass. Green, soft grass!"' :
+  '- Write 20-50 words per page total\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language that toddlers love\n- Focus on everyday experiences and emotions\n- Use descriptive but simple words\n- Create engaging, flowing text\n- Example: "The little boy ran fast. He ran to the big tree. The tree had pretty green leaves. So many leaves! He touched the soft grass. Green, soft grass!"' :
 config.readingLevel === 'Primary 6–8' ?
-  '- Write 120-150 words per page total\n- Use 4-8 word sentences with varied structure\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression and character development\n- Use slightly more complex vocabulary but keep it accessible\n- Create engaging narratives with emotional connection\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with tiny black spots. She watched it dance from flower to flower."' :
+  '- Write 40-90 words per page total\n- Use 4-8 word sentences with varied structure\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression and character development\n- Use slightly more complex vocabulary but keep it accessible\n- Create engaging narratives with emotional connection\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with tiny black spots. She watched it dance from flower to flower."' :
   '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate for the age group'}
 
 Important Instructions:
@@ -123,7 +123,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `You write professional children's book pages in UK English with the quality of published books. Return ONLY the story text and ensure word-count target is met exactly.` },
-              { role: 'user', content: `${writingPrompt}\n\nWrite between ${config.readingLevel === 'Toddler 2–3' ? '60 and 80' : config.readingLevel === 'Early 4–5' ? '80 and 120' : '120 and 150'} words (aim ${pageOutline.wordCount || pageOutline.wordsTarget || 100}).` }
+              { role: 'user', content: `${writingPrompt}\n\nWrite between ${config.readingLevel === 'Toddler 2–3' ? '5 and 25' : config.readingLevel === 'Early 4–5' ? '20 and 50' : '40 and 90'} words (aim ${pageOutline.wordCount || pageOutline.wordsTarget || 100}).` }
             ],
             max_completion_tokens: 600
           })
@@ -165,13 +165,13 @@ Important Instructions:
       }
 
       const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
-      const target = pageOutline.wordCount || pageOutline.wordsTarget || 100
+      const target = pageOutline.wordCount || pageOutline.wordsTarget || 40
       const [min, max] = (
         () => {
           switch (config.readingLevel) {
-            case 'Toddler 2–3': return [60, 80]
-            case 'Early 4–5': return [80, 120]
-            case 'Primary 6–8': return [120, 150]
+            case 'Toddler 2–3': return [5, 25]
+            case 'Early 4–5': return [20, 50]
+            case 'Primary 6–8': return [40, 90]
             default: return [Math.round(target*0.9), Math.round(target*1.1)]
           }
         }
