@@ -95,7 +95,7 @@ Important Instructions:
 - The text should flow naturally with the overall story arc
 - Reflect the chosen theme and color palette in descriptions when natural
 - FORMAT (critical for typesetting): write the page as short newline-separated lines. Each line at most 7 words, one thought per line. Never put a long sentence or a whole paragraph on one line - long lines wrap badly when typeset.
-- Line budget: at most ${config.readingLevel === 'Primary 6–8' ? '6' : '4'} lines on the page. Fewer, shorter lines always beats more, longer ones.`
+- Line budget: at most ${config.readingLevel === 'Toddler 2–3' ? '4' : '6'} lines on the page. Fewer, shorter lines always beats more, longer ones.`
 
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -185,9 +185,10 @@ Important Instructions:
         () => {
           switch (config.readingLevel) {
             case 'Toddler 2–3': return [5, 25]
-            case 'Early 4–5': return [20, 50]
-            case 'Primary 6–8': return [40, 90]
-            default: return [Math.round(target*0.9), Math.round(target*1.1)]
+            // 42 = 6 typeset lines x 7 words: the export band's hard capacity
+            case 'Early 4–5': return [20, 42]
+            case 'Primary 6–8': return [40, 42]
+            default: return [Math.round(target*0.9), Math.min(Math.round(target*1.1), 42)]
           }
         }
       )()
@@ -201,7 +202,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
-              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Keep the format: newline-separated lines of at most 7 words each, at most ${config.readingLevel === 'Primary 6–8' ? '6' : '4'} lines. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Keep the format: newline-separated lines of at most 7 words each, at most ${config.readingLevel === 'Toddler 2–3' ? '4' : '6'} lines. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -216,7 +217,7 @@ Important Instructions:
       // band past its cap. Prompts alone do not hold the 7-word line limit,
       // so verify programmatically and rebreak with up to 2 targeted passes.
       const MAX_LINE_WORDS = 7
-      const maxLines = config.readingLevel === 'Primary 6–8' ? 6 : 4
+      const maxLines = config.readingLevel === 'Toddler 2–3' ? 4 : 6
       const lineWords = (l: string) => l.split(/\s+/).filter(Boolean).length
       const needsRebreak = (t: string) => {
         const lines = t.split('\n').map((l) => l.trim()).filter(Boolean)
@@ -245,7 +246,18 @@ Important Instructions:
         }
       }
       if (needsRebreak(pageText)) {
-        console.log(`Line-format enforcement gave up on page ${pageOutline.page}; export band cap will step the tier down`)
+        // Deterministic last resort: LLM word-counting is unreliable, so
+        // repack the word stream into <=7-word lines in code. Line-length is
+        // then guaranteed; line COUNT holds whenever the page is <=42 words
+        // (the adjust pass above targets that). Rhyme placement degrades on
+        // this path - it is the safety net, not the norm.
+        const allWords = pageText.split(/\s+/).filter(Boolean)
+        const packed: string[] = []
+        for (let i = 0; i < allWords.length; i += MAX_LINE_WORDS) {
+          packed.push(allWords.slice(i, i + MAX_LINE_WORDS).join(' '))
+        }
+        pageText = packed.join('\n')
+        console.log(`Mechanical rebreak applied to page ${pageOutline.page} (LLM rebreak did not converge)`)
       }
       console.log(`Final text length for page ${pageOutline.page}:`, countWords(pageText))
 
