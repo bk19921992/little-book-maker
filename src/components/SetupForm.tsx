@@ -4,7 +4,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -102,7 +101,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Add the names of children in your story (optional)
+              The first name stars in the story and on the cover. Add a second name for a sibling or friend to join in.
             </p>
             <div className="flex gap-2">
               <Input
@@ -356,6 +355,30 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 <span>6 pages</span>
                 <span>20 pages</span>
               </div>
+              <p className="text-xs text-muted-foreground">
+                6-8 pages is a short bedtime read. 12 or more makes a fuller book.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Picture Style</Label>
+              <Select
+                value={typeof config.imageStyle === 'string' ? config.imageStyle : 'Picture-book'}
+                onValueChange={(value: StoryConfig['imageStyle']) => onConfigChange({ imageStyle: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Picture-book">Picture-book (classic)</SelectItem>
+                  <SelectItem value="Watercolour">Watercolour</SelectItem>
+                  <SelectItem value="Crayon">Crayon</SelectItem>
+                  <SelectItem value="Paper cut-out">Paper cut-out</SelectItem>
+                  <SelectItem value="Cartoon line art">Cartoon line art</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                The look of every illustration in the book.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -365,10 +388,13 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           <CardHeader>
             <CardTitle>Personal Touches</CardTitle>
           </CardHeader>
+          <p className="text-sm text-muted-foreground px-6 -mt-2">
+            We weave these into the story and the pictures. All optional.
+          </p>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Town/City</Label>
+                <Label>Your town (appears in the story)</Label>
                 <Input
                   placeholder="Brighton"
                   value={config.personal.town || ''}
@@ -444,10 +470,10 @@ export const SetupForm: React.FC<SetupFormProps> = ({
       {/* Advanced Options */}
       <Card className="story-card">
         <CardHeader>
-          <CardTitle>Advanced Options</CardTitle>
+          <CardTitle>Story Style (optional)</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Narration Style</Label>
               <Select
@@ -486,44 +512,14 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Image Style</Label>
-              <Select
-                value={typeof config.imageStyle === 'string' ? config.imageStyle : 'Picture-book'}
-                onValueChange={(value: StoryConfig['imageStyle']) => onConfigChange({ imageStyle: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Picture-book">Picture-book</SelectItem>
-                  <SelectItem value="Watercolour">Watercolour</SelectItem>
-                  <SelectItem value="Crayon">Crayon</SelectItem>
-                  <SelectItem value="Paper cut-out">Paper cut-out</SelectItem>
-                  <SelectItem value="Cartoon line art">Cartoon line art</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Content Safety */}
-      <Card className="story-card border-primary/20">
-        <CardContent className="p-6">
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="contentSafety"
-              checked={config.contentSafety}
-              onCheckedChange={(checked) => onConfigChange({ contentSafety: !!checked })}
-            />
-            <Label htmlFor="contentSafety" className="text-sm leading-relaxed">
-              I agree that this story will be generated with child-safe content, free from violence, 
-              fear, or inappropriate themes. All content will be gentle and age-appropriate.
-            </Label>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Content Safety reassurance */}
+      <p className="text-center text-sm text-muted-foreground">
+        Every story is gentle and age-appropriate - no violence, scares or upsetting themes.
+      </p>
 
       {/* Next Button */}
       <div className="flex justify-center">
