@@ -75,8 +75,8 @@ function buildStyleBible(config: StoryConfig | undefined, size: string, pageLayo
     `Mood: gentle, warm, cozy and child-friendly, with soft lighting.`,
     `Composition: ${orientationWord(size)} storybook composition with important elements away from the edges (safe for print trim), no text, letters, numbers, captions or watermarks anywhere in the image.`,
     pageLayout === 'overlay'
-      ? 'This page will have story text overlaid along the bottom: keep the bottom third of the scene calm, simple and uncluttered (sky, floor, grass, bedding) so the text stays readable over it.'
-      : '',
+      ? 'This page prints with a solid text band across the bottom: keep the bottom third of the scene calm, simple and uncluttered (sky, floor, grass, bedding) and keep every face and important subject fully inside the upper two-thirds - nothing important may cross the bottom-third line.'
+      : 'This page prints with the artwork above a text band: keep every face and important subject inside the upper two-thirds of the image, well away from the bottom edge - the print crop trims the bottom of the artwork.',
     `Species rule: the child is always human; pets and animal characters are always animals. Never blend the two.`,
   ]
 
