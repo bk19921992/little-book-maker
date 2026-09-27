@@ -142,6 +142,10 @@ interface ReviewContext {
   label: string
   brief: string
   config?: StoryConfig
+  // Accepted earlier illustration used as the character source of truth. When
+  // present the reviewer compares the candidate against it, which is the only
+  // way to catch page-to-page character/toy drift - text config alone cannot.
+  referenceDataUrl?: string
 }
 
 // Vision QA gate: a review model inspects every generated image BEFORE it can
@@ -167,13 +171,16 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
     `- This image is: ${ctx.label}`,
     `- Scene brief: ${ctx.brief}`,
     '',
-    'REJECT the image if ANY of these is visible:',
-    '1. ANATOMY: wrong number of eyes, ears, limbs, fingers or toes on any person or animal; mangled or fused hands; distorted or duplicated faces; extra or half-formed characters.',
-    '2. ARTIFACTS: garbled text, letters, numbers, watermarks or signatures; glitch patches; smeared or melted regions; abrupt style breaks inside the image.',
-    '3. CONSISTENCY: characters that contradict the book context (wrong species, wrong recurring toy, two different-looking versions of the same child in one image).',
-    '4. APPROPRIATENESS: anything frightening, violent or unsuitable for a bedtime story.',
+    ctx.referenceDataUrl ? 'You are shown TWO images. IMAGE 1 is the accepted reference illustration from earlier in this book - it defines what the child, supporting characters and recurring toy look like. IMAGE 2 is the new candidate under review.' : '',
     '',
-    'Judge only what is visible. Stylisation (big heads, simple shapes, paper-cut proportions) is NOT a defect - reject only clear errors a customer would notice.',
+    'REJECT the candidate image if ANY of these is visible:',
+    '1. ANATOMY: for every person and animal in the scene, count their eyes, ears, arms, legs, hands and fingers. Reject if any count is wrong for that creature, or if hands are mangled or fused, faces distorted or duplicated, or extra or half-formed characters appear.',
+    '2. ARTIFACTS: any legible text, letters or numbers rendered inside the artwork (this book prints no words inside its illustrations - the title is added at export), garbled glyphs, watermarks or signatures; glitch patches; smeared or melted regions; abrupt style breaks inside the image.',
+    '3. CONSISTENCY: characters that contradict the book context (wrong species, wrong recurring toy, two different-looking versions of the same child in one image).',
+    ctx.referenceDataUrl ? '4. MATCH TO REFERENCE: the child, each recurring supporting character and the recurring toy in IMAGE 2 must be recognisably the same individual as in IMAGE 1 - same face, hair, skin tone, outfit palette and toy design, allowing for pose, expression and scene-appropriate clothing changes. A redesigned character or a different-looking toy is a reject.' : '',
+    ctx.referenceDataUrl ? '5' : '4' + '. APPROPRIATENESS: anything frightening, violent or unsuitable for a bedtime story.',
+    '',
+    'Judge only what is visible. Stylisation (big heads, simple shapes, paper-cut proportions) is NOT a defect - reject only clear errors a customer would notice. Calm or empty background areas are intentional, not missing content.',
     'Return ONLY JSON: {"pass": true} or {"pass": false, "issues": ["one specific visible problem per string"]}.',
   ].filter(Boolean).join('\n')
 
@@ -185,6 +192,7 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
         model: reviewModel,
         messages: [{ role: 'user', content: [
           { type: 'text', text: reviewPrompt },
+          ...(ctx.referenceDataUrl ? [{ type: 'image_url', image_url: { url: ctx.referenceDataUrl } }] : []),
           { type: 'image_url', image_url: { url: imageDataUrl } },
         ] }],
         max_completion_tokens: 300,
@@ -284,6 +292,7 @@ serve(async (req) => {
           label: (typeof item === 'object' && item?.label) || 'an illustration',
           brief: (typeof item === 'object' && item?.brief) || "children's book illustration",
           config: (typeof item === 'object' && item?.config) || prompts?.[0]?.config,
+          referenceDataUrl: (typeof item === 'object' && item?.reference) || undefined,
         })
         reviews.push({ label: (typeof item === 'object' && item?.label) || 'image', ...r })
       }
@@ -387,6 +396,7 @@ serve(async (req) => {
             label: `page ${promptData.page}`,
             brief: scene,
             config: promptData.config,
+            referenceDataUrl: referenceUrl || undefined,
           })
           if (review.pass) break
         }
@@ -464,6 +474,7 @@ serve(async (req) => {
             label: 'the front cover of the book (the top half is intentionally calm for the printed title; the characters sit in the lower half)',
             brief: 'front cover: one iconic heartwarming scene with the main child and the most important supporting character(s)',
             config: prompts[0]?.config,
+            referenceDataUrl: referenceUrl || undefined,
           })
           if (coverReview.pass) break
         }
