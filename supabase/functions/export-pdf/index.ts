@@ -102,9 +102,34 @@ interface StoryPage {
   layout?: string;
 }
 
+
+// Auto typography: picks the type size, line spacing and measure per page so
+// the words stay very legible and look professionally set whatever the inputs.
+// Short pages (young reads) get display-sized type; longer pages settle into a
+// comfortable reading size. Sizes are a share of the page width, so they scale
+// across A5, A4 and square formats.
+function overlayTypography(text: string, pageWidth: number, overlay: boolean, includeBleed: boolean) {
+  const words = text.split(' ').filter(Boolean).length;
+  let share: number;
+  if (words <= 6) share = 0.088;
+  else if (words <= 12) share = 0.072;
+  else if (words <= 20) share = 0.058;
+  else if (words <= 35) share = 0.048;
+  else share = 0.040;
+  if (!overlay) share *= 0.62; // split layout sets text in a narrower block
+  const fontSize = Math.max(12, Math.round(pageWidth * share)) + (includeBleed ? 2 : 0);
+  return {
+    fontSize,
+    lineStep: Math.round(fontSize * 1.28),
+    maxWidth: pageWidth * 0.84,
+    words,
+  };
+}
+
 interface StoryConfigInput {
   children: string[];
   pageSize: string;
+  pageLayout?: string;
   storyType?: string;
   personal?: { dedication?: string };
 }
@@ -262,9 +287,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     // Story text (normalise whitespace: raw newlines cannot be WinAnsi-encoded)
     const cleanText = (page.text || '').replace(/\s+/g, ' ').trim();
     if (cleanText) {
-      const fontSize = includeBleed ? 16 : 14;
-      const lineStep = includeBleed ? 20 : 18;
-      const textLines = wrapText(cleanText, font, fontSize, pageWidth * 0.8);
+      const type = overlayTypography(cleanText, pageWidth, layout === 'overlay', includeBleed);
+      const fontSize = type.fontSize;
+      const lineStep = type.lineStep;
+      const textLines = wrapText(cleanText, font, fontSize, type.maxWidth);
 
       if (overlay) {
         // True overlay: words sit directly on the picture, centred, with no box.
@@ -277,15 +303,24 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const darkText = luminance !== null ? luminance >= 140 : false;
         const textColour = darkText ? rgb(0.07, 0.07, 0.09) : rgb(1, 1, 1);
         const haloColour = darkText ? rgb(1, 1, 1) : rgb(0, 0, 0);
-        const haloOpacity = 0.5;
-        const haloOffset = 0.8;
+        // Mid-tone artwork (luminance near the switch point) is the hardest to
+        // read against, so the halo gets stronger there. Offset scales with the
+        // type size so big display text keeps an even outline.
+        const ambiguous = luminance !== null && luminance > 100 && luminance < 180;
+        const haloOpacity = ambiguous ? 0.75 : 0.55;
+        const haloOffset = Math.max(0.8, fontSize * 0.055);
+        const haloDirs = [
+          [-haloOffset, 0], [haloOffset, 0], [0, -haloOffset], [0, haloOffset],
+          [-haloOffset, -haloOffset], [haloOffset, -haloOffset],
+          [-haloOffset, haloOffset], [haloOffset, haloOffset],
+        ];
 
         const bottomMargin = pageHeight * 0.07;
         let yPos = bottomMargin + (textLines.length - 1) * lineStep;
         for (const line of textLines) {
           const lineWidth = font.widthOfTextAtSize(line, fontSize);
           const x = (pageWidth - lineWidth) / 2;
-          for (const [dx, dy] of [[-haloOffset, 0], [haloOffset, 0], [0, -haloOffset], [0, haloOffset]]) {
+          for (const [dx, dy] of haloDirs) {
             storyPage.drawText(line, {
               x: x + dx,
               y: yPos + dy,
