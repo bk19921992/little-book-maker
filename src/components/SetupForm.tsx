@@ -432,7 +432,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               <Label>Narration Style</Label>
               <Select
                 value={config.narrationStyle}
-                onValueChange={(value: any) => onConfigChange({ narrationStyle: value })}
+                onValueChange={(value: string) => onConfigChange({ narrationStyle: value as typeof config.narrationStyle })}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -449,7 +449,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               <Label>Educational Focus</Label>
               <Select
                 value={config.educationalFocus}
-                onValueChange={(value: any) => onConfigChange({ educationalFocus: value })}
+                onValueChange={(value: string) => onConfigChange({ educationalFocus: value as typeof config.educationalFocus })}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -470,7 +470,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               <Label>Image Style</Label>
               <Select
                 value={typeof config.imageStyle === 'string' ? config.imageStyle : 'Picture-book'}
-                onValueChange={(value: any) => onConfigChange({ imageStyle: value })}
+                onValueChange={(value: string) => onConfigChange({ imageStyle: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
