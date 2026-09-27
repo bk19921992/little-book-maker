@@ -48,6 +48,35 @@ function resolveImageStyle(imageStyle: StoryConfig['imageStyle']): string {
   return imageStyle.other || "children's book illustration"
 }
 
+// A style NAME alone ("Paper cut-out") is too weak to hold the look - the
+// image model drifts back to its default soft 3D storybook render. Named
+// styles get an explicit technique description with negative constraints.
+// The closing anchor line is repeated at the END of every prompt (recency
+// effect) and again after any review-feedback block.
+const STYLE_PROFILES: Record<string, { technique: string; anchor: string }> = {
+  'paper cut-out': {
+    technique: 'flat 2D paper-cut collage: every shape is a piece of cut construction paper with crisp scissored edges, solid matte unblended colours, subtle paper-grain texture, and a gentle drop shadow ONLY where one paper layer overlaps another',
+    anchor: 'STYLE LOCK: this must look like real cut paper - flat layered construction-paper shapes with crisp cut edges and solid matte colours. NO 3D rendering, NO clay or plastic look, NO airbrushed gradients, NO painterly blending, NO glossy shading.',
+  },
+  'watercolour': {
+    technique: 'traditional watercolour painting: translucent washes of colour, visible paper texture, soft wet-on-wet edges for backgrounds with crisper brush definition on the characters',
+    anchor: 'STYLE LOCK: this must look hand-painted in watercolour - translucent washes and visible paper texture. NO 3D rendering, NO digital airbrush, NO vector-flat plastic shapes.',
+  },
+  'pencil crayon': {
+    technique: 'coloured pencil drawing: visible pencil strokes and hatching, warm slightly waxy colour, hand-drawn linework',
+    anchor: 'STYLE LOCK: this must look drawn in coloured pencil - visible strokes and hand-drawn lines. NO 3D rendering, NO digital airbrush, NO smooth vector fills.',
+  },
+}
+
+function styleProfile(imageStyle: StoryConfig['imageStyle']): { technique: string; anchor: string } | null {
+  const name = resolveImageStyle(imageStyle).trim().toLowerCase()
+  if (STYLE_PROFILES[name]) return STYLE_PROFILES[name]
+  for (const key of Object.keys(STYLE_PROFILES)) {
+    if (name.includes(key)) return STYLE_PROFILES[key]
+  }
+  return null
+}
+
 // One style bible per request, reused verbatim for every page so the child,
 // characters, palette and rendering style stay consistent across the book.
 function buildStyleBible(config: StoryConfig | undefined, size: string, pageLayout: string): string {
@@ -65,10 +94,13 @@ function buildStyleBible(config: StoryConfig | undefined, size: string, pageLayo
   const favouriteColour = c.personal?.favouriteColour
   const pets = c.personal?.pets
 
+  const profile = styleProfile(c.imageStyle)
   const lines = [
-    `Rendering style: ${resolveImageStyle(c.imageStyle)}, consistent across every page of this book.`,
+    profile
+      ? `Rendering style: ${resolveImageStyle(c.imageStyle)} - ${profile.technique}. This exact technique must be consistent across every page of this book.`
+      : `Rendering style: ${resolveImageStyle(c.imageStyle)}, consistent across every page of this book.`,
     `Main child: ${mainChild} (human child). The same child, with the same face, hair, clothing and proportions, must appear on every page they feature in.`,
-    `Supporting characters: ${characters}. Keep each character's appearance identical on every page.`,
+    `Supporting characters: ${characters}. Draw each animal species with its accurate natural markings and face (an owl has a feathered face and beak, a badger has black-and-white face stripes - never a human-like face on an animal), and keep each character's appearance identical on every page.`,
     pets ? `Pet companion: ${pets} (animal, not human). Keep the pet the same species, breed and coloring on every page.` : '',
     `Setting: ${setting}.`,
     `Colour palette: ${palette}${favouriteColour ? `, featuring the child's favourite colour ${favouriteColour}` : ''}.`,
@@ -177,6 +209,7 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
     '1. ANATOMY: for every person and animal in the scene, count their eyes, ears, arms, legs, hands and fingers. Reject if any count is wrong for that creature, or if hands are mangled or fused, faces distorted or duplicated, or extra or half-formed characters appear.',
     '2. ARTIFACTS: any legible text, letters or numbers rendered inside the artwork (this book prints no words inside its illustrations - the title is added at export), garbled glyphs, watermarks or signatures; glitch patches; smeared or melted regions; abrupt style breaks inside the image.',
     '3. CONSISTENCY: characters that contradict the book context (wrong species, wrong recurring toy, two different-looking versions of the same child in one image).',
+    '3b. SPECIES-FACE MATCH: every creature\'s face must belong to its species. A human-like face on an animal body (an owl, badger, rabbit or toy with a human child\'s face) or an animal muzzle on a human body is ALWAYS a reject, even if the eye and limb counts are correct.',
     ctx.referenceDataUrl ? '4. MATCH TO REFERENCE: the child, each recurring supporting character and the recurring toy in IMAGE 2 must be recognisably the same individual as in IMAGE 1 - same face, hair, skin tone, outfit palette and toy design, allowing for pose, expression and scene-appropriate clothing changes. A redesigned character or a different-looking toy is a reject.' : '',
     ctx.referenceDataUrl ? '5' : '4' + '. APPROPRIATENESS: anything frightening, violent or unsuitable for a bedtime story.',
     '',
@@ -320,6 +353,7 @@ serve(async (req) => {
 
     // All pages in one request share the same config, so build the style bible once.
     const styleBible = buildStyleBible(prompts[0]?.config, size, pageLayout || 'split')
+    const styleAnchor = styleProfile(prompts[0]?.config?.imageStyle)?.anchor || ''
 
     const images: { page: number; url: string; review?: ImageReview }[] = []
     const errors: { page: number; error: string }[] = []
@@ -349,6 +383,7 @@ serve(async (req) => {
             '',
             'Illustrate exactly this scene in a new composition. Do not copy the reference image\'s scene - only its characters, props, style and palette.',
             'The image must contain no text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
+            styleAnchor,
           ].filter(Boolean).join('\n')
         } else {
           fullPrompt = [
@@ -363,6 +398,7 @@ serve(async (req) => {
             promptData.text ? `Story text on this page: "${promptData.text}"` : '',
             '',
             'Illustrate exactly what this page\'s story text describes, while keeping the characters, style, palette and setting from the style bible perfectly consistent with the other pages.',
+            styleAnchor,
           ].filter(Boolean).join('\n')
         }
 
@@ -375,22 +411,28 @@ serve(async (req) => {
         // bad art never reaches export.
         let url = ''
         let review: ImageReview = { pass: false, issues: ['not yet reviewed'] }
+        const basePrompt = fullPrompt
         for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+          // Retry hygiene: only the LATEST rejection is fed back (stacking
+          // notes bloats the prompt and dilutes the scene), and the style
+          // lock is repeated AFTER the feedback so it stays the final word.
+          const attemptPrompt = attempt > 1
+            ? basePrompt + `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${review.issues.join('; ')}. The new image must not have these problems.${styleAnchor ? '\n\n' + styleAnchor : ''}`
+            : basePrompt
           if (attempt > 1) {
             console.log(`Regenerating page ${promptData.page} after review rejection (attempt ${attempt}): ${review.issues.join('; ')}`)
-            fullPrompt += `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${review.issues.join('; ')}. The new image must not have these problems.`
           }
           if (referenceUrl) {
             try {
-              url = await editImageWithReference(openaiKey, model, size, quality, fullPrompt, referenceUrl)
+              url = await editImageWithReference(openaiKey, model, size, quality, attemptPrompt, referenceUrl)
             } catch (editError) {
               // Never lose a page because the edits call failed: fall back to a
               // plain generation guided by the style bible.
               console.error(`Reference edit failed for page ${promptData.page}, falling back to plain generation:`, editError)
-              url = await generateOneImage(openaiKey, model, size, quality, fullPrompt)
+              url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
             }
           } else {
-            url = await generateOneImage(openaiKey, model, size, quality, fullPrompt)
+            url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
           }
           review = await reviewImage(openaiKey, reviewModel, url, {
             label: `page ${promptData.page}`,
@@ -447,18 +489,20 @@ serve(async (req) => {
           '- The characters and the action occupy the LOWER HALF of the image; every face stays fully below the halfway line.',
           '- The TOP HALF is calm, simple and uncluttered (sky, soft wall, gentle background, treetops) with NO faces, characters or busy detail above the halfway line - the printed book title sits in that space.',
           '- No text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
+          styleAnchor,
         ].filter(Boolean).join('\n')
         console.log('Generating dedicated cover image')
         // Same vision gate as the inside pages: a rejected cover is
         // regenerated with feedback, and a cover that never passes is dropped
         // (the export falls back to its no-dedicated-cover path) rather than
         // shipping a defective front cover.
-        let fullCoverPrompt = coverPrompt
         coverReview = { pass: false, issues: ['not yet reviewed'] }
         for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+          const fullCoverPrompt = attempt > 1
+            ? coverPrompt + `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${coverReview.issues.join('; ')}. The new image must not have these problems.${styleAnchor ? '\n\n' + styleAnchor : ''}`
+            : coverPrompt
           if (attempt > 1) {
             console.log(`Regenerating cover after review rejection (attempt ${attempt}): ${coverReview.issues.join('; ')}`)
-            fullCoverPrompt += `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${coverReview.issues.join('; ')}. The new image must not have these problems.`
           }
           if (referenceUrl) {
             try {
