@@ -222,9 +222,9 @@ serve(async (req) => {
             `NEW SCENE FOR THIS PAGE (page ${promptData.page}):`,
             `Scene: ${scene}`,
             promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
-            promptData.text ? `Story text on this page: "${promptData.text}"` : '',
             '',
-            'Illustrate exactly what this page\'s story text describes in a new composition. Do not copy the reference image\'s scene - only its characters, props, style and palette.',
+            'Illustrate exactly this scene in a new composition. Do not copy the reference image\'s scene - only its characters, props, style and palette.',
+            'The image must contain no text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
           ].filter(Boolean).join('\n')
         } else {
           fullPrompt = [
