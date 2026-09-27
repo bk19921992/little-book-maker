@@ -92,6 +92,12 @@ generation defaults to `gpt-image-1` at `low` quality; override with the
 optional `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE` and `OPENAI_IMAGE_QUALITY`
 secrets if needed.
 
+Illustrations are made in this order: a character sheet (the child, pets,
+supporting characters and toy drawn once on a plain background), then each
+page and the cover, one edge-function call each, all drawn from that sheet so
+characters stay the same across the book. Every image passes a vision review
+(`OPENAI_REVIEW_MODEL`, default `gpt-4.1`) before it is accepted.
+
 The currently generated frontend must point at an active Supabase project. A stale
 or deleted project ref such as `https://<missing-ref>.supabase.co` will fail before
 any function code runs.

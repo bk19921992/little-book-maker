@@ -1,4 +1,5 @@
 import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
+import type { ImageConfig, ImagePromptInput } from './lib/images';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
 
@@ -67,14 +68,28 @@ class APIClient {
   async generateImages(
     pageSize: PageSizePreset,
     pageLayout: PageLayout,
-    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[],
-    includeCover: boolean = false
+    prompts: ImagePromptInput[],
+    includeCover: boolean = false,
+    options: { reference?: { url: string; kind: 'sheet' | 'page' }; config?: ImageConfig } = {}
   ): Promise<ImageGenerateResponse> {
     return this.invokeFunction<ImageGenerateResponse>('generate-images', {
       pageSize,
       pageLayout,
       prompts,
       includeCover,
+      config: options.config,
+      referenceImage: options.reference?.url,
+      referenceKind: options.reference?.kind,
+    });
+  }
+
+  // Character sheet for the book: every later illustration is drawn from it.
+  async generateCharacterSheet(pageSize: PageSizePreset, pageLayout: PageLayout, config: ImageConfig): Promise<ImageGenerateResponse> {
+    return this.invokeFunction<ImageGenerateResponse>('generate-images', {
+      mode: 'reference',
+      pageSize,
+      pageLayout,
+      config,
     });
   }
 

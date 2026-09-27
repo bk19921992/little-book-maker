@@ -10,6 +10,7 @@ import { api } from '../api';
 import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
 import { resolveAutoFormat } from '../lib/format';
+import { imageConfig, ImagePromptInput, runPool } from '../lib/images';
 
 interface PreviewGenerateProps {
   config: StoryConfig;
@@ -116,10 +117,16 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       setCurrentStep('images');
 
       // Step 3: Generate images (AI-powered illustrations)
-      toast.info('Creating AI illustrations...');
+      // One edge-function call per illustration: a whole book in one call runs
+      // past the edge timeout once every image is reviewed and retried. Every
+      // page and the cover are drawn from one character sheet so the child,
+      // pets and toy look the same throughout.
+      toast.info('Designing your characters...');
+      setEstimatedTimeRemaining('Designing the characters...');
+      const imgConfig = imageConfig(config);
       // Build a quick lookup for outline data
       const outlineByPage = new Map<number, OutlineItem>(planResponse.outline.pages.map((p: OutlineItem) => [p.page, p]));
-      const imagePrompts = writeResponse.pages
+      const imagePrompts: ImagePromptInput[] = writeResponse.pages
         .filter((p) => p && p.page !== undefined)
         .map((p) => {
           const outline = outlineByPage.get(p.page) || ({} as Partial<OutlineItem>);
@@ -129,31 +136,87 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             text: p.text,
             visualBrief: outline.visualBrief,
             seed: config.imageSeed || undefined,
-            config: config,
+            config: imgConfig,
           };
         });
 
-      const imageResponse = await api.generateImages(effectivePageSize, effectivePageLayout, imagePrompts, true);
+      let reference: { url: string; kind: 'sheet' | 'page' } | undefined;
+      try {
+        const sheet = await api.generateCharacterSheet(effectivePageSize, effectivePageLayout, imgConfig);
+        if (sheet.reference?.url) reference = { url: sheet.reference.url, kind: 'sheet' };
+      } catch (sheetError) {
+        // Fall back to using the first page as the reference below.
+        console.warn('Character sheet failed, falling back to first-page reference', sheetError);
+      }
 
-      if (imageResponse.errors?.length) {
-        const failedPages = imageResponse.errors.map((e) => e.page).join(', ');
+      const totalIllustrations = imagePrompts.length + 1; // + cover
+      let finished = 0;
+      const markFinished = () => {
+        finished += 1;
+        setProgress(70 + Math.round((finished / totalIllustrations) * 29));
+        setEstimatedTimeRemaining(`${finished} of ${totalIllustrations} illustrations done`);
+      };
+      setEstimatedTimeRemaining(`0 of ${totalIllustrations} illustrations done`);
+      toast.info('Creating AI illustrations...');
+
+      const imagesByPage = new Map<number, string>();
+      const failedPages: number[] = [];
+      let coverUrl: string | undefined;
+      const generatePage = async (prompt: ImagePromptInput) => {
+        try {
+          const res = await api.generateImages(effectivePageSize, effectivePageLayout, [prompt], false, { reference, config: imgConfig });
+          const url = res.images?.[0]?.url;
+          if (url) imagesByPage.set(prompt.page, url);
+          else failedPages.push(prompt.page);
+        } catch (pageError) {
+          console.error(`Illustration failed for page ${prompt.page}`, pageError);
+          failedPages.push(prompt.page);
+        }
+        markFinished();
+      };
+
+      let queue = [...imagePrompts].sort((a, b) => a.page - b.page);
+      if (!reference && queue.length > 0) {
+        await generatePage(queue[0]);
+        const firstUrl = imagesByPage.get(queue[0].page);
+        if (firstUrl) reference = { url: firstUrl, kind: 'page' };
+        queue = queue.slice(1);
+      }
+
+      type IllustrationTask = { kind: 'page'; prompt: ImagePromptInput } | { kind: 'cover' };
+      const tasks: IllustrationTask[] = [...queue.map((prompt) => ({ kind: 'page' as const, prompt })), { kind: 'cover' }];
+      await runPool(tasks, 3, async (task) => {
+        if (task.kind === 'page') return generatePage(task.prompt);
+        try {
+          const res = await api.generateImages(effectivePageSize, effectivePageLayout, [], true, { reference, config: imgConfig });
+          coverUrl = res.cover?.url;
+        } catch (coverError) {
+          // Export falls back to a page illustration when there is no cover.
+          console.warn('Cover illustration failed', coverError);
+        }
+        markFinished();
+      });
+
+      if (imagesByPage.size === 0) {
+        throw new Error('We could not create any illustrations. Please try again.');
+      }
+      if (failedPages.length) {
+        failedPages.sort((a, b) => a - b);
         toast.warning(
-          `Could not create illustrations for page${imageResponse.errors.length > 1 ? 's' : ''} ${failedPages}. You can retry them from the editor.`
+          `Could not create illustrations for page${failedPages.length > 1 ? 's' : ''} ${failedPages.join(', ')}. You can retry them from the editor.`
         );
       }
 
       // Update pages with image URLs
-      const pagesWithImages = writeResponse.pages.map(page => {
-        const imageData = imageResponse.images.find(img => img.page === page.page);
-        return {
-          ...page,
-          imageUrl: imageData?.url,
-        };
-      });
+      const pagesWithImages = writeResponse.pages.map(page => ({
+        ...page,
+        imageUrl: imagesByPage.get(page.page),
+      }));
 
       onConfigChange({
         pages: pagesWithImages,
-        coverImageUrl: imageResponse.cover?.url,
+        coverImageUrl: coverUrl,
+        referenceImageUrl: reference?.kind === 'sheet' ? reference.url : undefined,
       });
 
       updateProgress(100);

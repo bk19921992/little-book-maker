@@ -18,6 +18,7 @@ import {
   Download
 } from 'lucide-react';
 import { StoryConfig, StoryPage } from '../types';
+import { imageConfig } from '../lib/images';
 import { countWords, getWordCountStatus, wordCountTargets } from '../lib/validation';
 import { toast } from 'sonner';
 import { api } from '../api';
@@ -74,16 +75,25 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     setIsRegeneratingImage(true);
     try {
       const prompt = outlinePage.imagePrompt || outlinePage.visualBrief || 'storybook illustration';
+      // Draw from the book's character sheet (or, for older books, another
+      // page) so the regenerated page keeps the same child, pets and toy.
+      const otherPage = pages.find(p => p.page !== pageNumber && p.imageUrl?.startsWith('data:image/'));
+      const reference = config.referenceImageUrl
+        ? { url: config.referenceImageUrl, kind: 'sheet' as const }
+        : otherPage?.imageUrl
+          ? { url: otherPage.imageUrl, kind: 'page' as const }
+          : undefined;
+      const imgConfig = imageConfig(config);
       const response = await api.generateImages(config.pageSize, config.pageLayout, [
         {
           page: pageNumber,
           prompt,
           text: storyPage.text,
           visualBrief: outlinePage.visualBrief,
-          config,
+          config: imgConfig,
           seed: config.imageSeed ? config.imageSeed + pageNumber : undefined,
         },
-      ]);
+      ], false, { reference, config: imgConfig });
 
       const generated = response.images?.[0];
       if (generated?.url) {

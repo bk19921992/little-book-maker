@@ -13,6 +13,7 @@ export type FormatMode = 'auto' | 'manual';
 export interface StoryConfig {
   children: string[];               // may be empty
   coverImageUrl?: string;             // dedicated cover illustration, when generated
+  referenceImageUrl?: string;         // character sheet every illustration is drawn from
   storyType: string;                // preset or custom
   themePreset?: string | null;      // eg 'Calm pastels'
   themeCustom?: string | null;
@@ -143,6 +144,7 @@ export interface WriteResponse {
 export interface ImageGenerateResponse {
   images: { page: number; url: string }[];
   cover?: { url: string };
+  reference?: { url: string };        // character sheet, returned by mode 'reference'
   errors?: { page: number; error: string }[];
 }
 
