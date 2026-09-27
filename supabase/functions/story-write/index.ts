@@ -1,19 +1,35 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { AuthError, requireUser, unauthorisedResponse } from "../_shared/auth.ts"
+import { getCorsHeaders } from "../_shared/cors.ts"
+import { validateStoryConfig } from "../_shared/validation.ts"
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    let user
+    try {
+      user = await requireUser(req)
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders)
+      throw authError
+    }
+
     const { config, outline } = await req.json()
-    console.log('Story write request received:', { config, outline })
-    
+
+    const validationError = validateStoryConfig(config)
+    if (validationError) {
+      return new Response(JSON.stringify({ error: validationError }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    console.log('Story write request: user', user.id, 'pages', outline?.pages?.length)
+
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
 
     if (!openaiKey) {
@@ -26,7 +42,7 @@ serve(async (req) => {
     // Generate story text for all pages in parallel for speed
     console.log(`Generating ${outline.pages.length} pages in parallel...`)
     
-    const pagePromises = outline.pages.map(async (pageOutline) => {
+    const pagePromises = outline.pages.map(async (pageOutline: { page: number; wordCount?: number; wordsTarget?: number; imagePrompt?: string; visualBrief?: string; summary?: string }) => {
       const writingPrompt = `Write page ${pageOutline.page} of a children's story:
 
 Story Details:
@@ -79,7 +95,6 @@ Important Instructions:
 - The text should flow naturally with the overall story arc
 - Reflect the chosen theme and color palette in descriptions when natural`
 
-      console.log(`Making OpenAI API call for page ${pageOutline.page}...`)
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -112,7 +127,6 @@ Important Instructions:
 
       const aiResponse = await response.json()
       let pageText = (aiResponse.choices?.[0]?.message?.content || '').trim()
-      console.log(`Raw response for page ${pageOutline.page}:`, JSON.stringify(aiResponse, null, 2))
 
       // If model returned no text, regenerate directly with stricter instructions
       if (!pageText) {
@@ -143,8 +157,8 @@ Important Instructions:
           body: JSON.stringify({
             model: 'gpt-4.1',
             messages: [
-              { role: 'system', content: 'Write professional UK English children\'s story pages with published book quality. Return ONLY story text, no quotes or extra text.' },
-              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children\'s story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
+              { role: 'system', content: "Write professional UK English children's story pages with published book quality. Return ONLY story text, no quotes or extra text." },
+              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
             ],
             max_completion_tokens: 600
           })
@@ -152,7 +166,6 @@ Important Instructions:
         if (simple.ok) {
           const sj = await simple.json()
           pageText = (sj.choices?.[0]?.message?.content || '').trim()
-          console.log(`Simplified generation result for page ${pageOutline.page}:`, pageText.substring(0, 100))
         }
       }
 
@@ -176,7 +189,7 @@ Important Instructions:
           }
         }
       )()
-      let words = countWords(pageText)
+      const words = countWords(pageText)
       if (words < min || words > max) {
         console.log(`Adjusting page ${pageOutline.page} from ${words} words to within ${min}-${max}`)
         const adjust = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -185,7 +198,7 @@ Important Instructions:
           body: JSON.stringify({
             model: 'gpt-4.1',
             messages: [
-              { role: 'system', content: `Revise children\'s story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
+              { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
               { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
@@ -220,7 +233,7 @@ Important Instructions:
   } catch (error) {
     console.error('Story write error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: (error instanceof Error ? error.message : 'Unexpected server error') }),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

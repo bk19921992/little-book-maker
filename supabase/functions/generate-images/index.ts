@@ -1,9 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
+import { getCorsHeaders } from "../_shared/cors.ts"
+import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 
 type StoryConfig = {
   children?: string[]
@@ -112,21 +110,39 @@ async function generateOneImage(
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    let user
+    try {
+      user = await requireUser(req)
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders)
+      throw authError
+    }
+
     const { pageSize, prompts } = await req.json()
-    console.log('Generate images request received:', { pageSize, pageCount: prompts?.length })
+
+    if (!Array.isArray(prompts) || prompts.length === 0) {
+      throw new Error('prompts must be a non-empty array')
+    }
+    if (prompts.length > 20) {
+      throw new Error('prompts must contain at most 20 pages')
+    }
+
+    const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'image', prompts.length)
+    if (limitMessage) {
+      return tooManyRequestsResponse(corsHeaders, limitMessage)
+    }
+
+    console.log('Generate images request: user', user.id, 'pages', prompts.length)
 
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
     if (!openaiKey) {
       throw new Error('OPENAI_API_KEY is required. Add it to your Supabase function secrets.')
-    }
-
-    if (!Array.isArray(prompts) || prompts.length === 0) {
-      throw new Error('prompts must be a non-empty array')
     }
 
     const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
@@ -135,7 +151,6 @@ serve(async (req) => {
 
     // All pages in one request share the same config, so build the style bible once.
     const styleBible = buildStyleBible(prompts[0]?.config)
-    console.log('Style bible:', styleBible)
 
     const images: { page: number; url: string }[] = []
     const errors: { page: number; error: string }[] = []

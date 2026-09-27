@@ -1,19 +1,61 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
+import { getCorsHeaders } from "../_shared/cors.ts"
+import { validateStoryConfig } from "../_shared/validation.ts"
+import { moderateFreeText } from "../_shared/moderation.ts"
+import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    let user
+    try {
+      user = await requireUser(req)
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders)
+      throw authError
+    }
+
     const { config } = await req.json()
-    console.log('Story plan request received:', config)
-    
+
+    const validationError = validateStoryConfig(config)
+    if (validationError) {
+      return new Response(JSON.stringify({ error: validationError }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const moderationError = await moderateFreeText({
+      storyType: config.storyType,
+      setting: config.setting,
+      themeCustom: config.themeCustom || undefined,
+      children: (config.children || []).join(', '),
+      characters: (config.characters || []).join(', '),
+      town: config.personal?.town,
+      favouriteToy: config.personal?.favouriteToy,
+      favouriteColour: config.personal?.favouriteColour,
+      pets: config.personal?.pets,
+      dedication: config.personal?.dedication,
+    })
+    if (moderationError) {
+      return new Response(JSON.stringify({ error: moderationError }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'story', 1)
+    if (limitMessage) {
+      return tooManyRequestsResponse(corsHeaders, limitMessage)
+    }
+
+    console.log('Story plan request: user', user.id, 'pages', config.lengthPages)
+
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
 
     if (!openaiKey) {
@@ -72,7 +114,6 @@ Make sure to incorporate the personal details naturally throughout the story and
 
 Return as JSON with pages array containing page, wordCount, visualBrief, and imagePrompt fields.`
 
-    console.log('Making OpenAI API call...')
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -96,8 +137,6 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
       }),
     })
 
-    console.log('OpenAI response status:', response.status)
-    
     if (!response.ok) {
       const errorText = await response.text()
       console.error('OpenAI API error:', errorText)
@@ -138,7 +177,7 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
   } catch (error) {
     console.error('Story plan error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: (error instanceof Error ? error.message : 'Unexpected server error') }),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
