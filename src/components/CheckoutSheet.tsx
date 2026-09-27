@@ -199,7 +199,7 @@ const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
               onChange={(e) => setDiscountCode(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Use code "BEN-TEST-0" for testing
+              Use code "TEST-BOOK-0" for testing
             </p>
           </div>
         )}
