@@ -211,6 +211,42 @@ Important Instructions:
           pageText = adj.choices[0].message.content.trim()
         }
       }
+      // Line-format enforcement (typesetting contract): the export typesets
+      // hard lines and soft-wraps anything too long, which swells the paper
+      // band past its cap. Prompts alone do not hold the 7-word line limit,
+      // so verify programmatically and rebreak with up to 2 targeted passes.
+      const MAX_LINE_WORDS = 7
+      const maxLines = config.readingLevel === 'Primary 6–8' ? 6 : 4
+      const lineWords = (l: string) => l.split(/\s+/).filter(Boolean).length
+      const needsRebreak = (t: string) => {
+        const lines = t.split('\n').map((l) => l.trim()).filter(Boolean)
+        return lines.length > maxLines || lines.some((l) => lineWords(l) > MAX_LINE_WORDS)
+      }
+      for (let attempt = 0; attempt < 2 && needsRebreak(pageText); attempt++) {
+        console.log(`Rebreaking page ${pageOutline.page} into <=${MAX_LINE_WORDS}-word lines (attempt ${attempt + 1})`)
+        const rebreak = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-4.1',
+            messages: [
+              { role: 'system', content: 'You reformat children\'s story pages for typesetting. You never drop meaning.' },
+              { role: 'user', content: `Reformat this children's book page so EVERY line has at most ${MAX_LINE_WORDS} words and there are at most ${maxLines} lines, newline-separated. Keep UK English, all proper nouns, the ${config.narrationStyle} feel and as many of the original words as possible - prefer breaking one long line into two shorter rhyming lines over deleting words. If you must exceed ${maxLines} lines to keep every line at most ${MAX_LINE_WORDS} words, keep the lines short anyway. Return ONLY the reformatted text.\n\nText:\n"""${pageText}"""` }
+            ],
+            max_completion_tokens: 600
+          })
+        })
+        if (rebreak.ok) {
+          const rb = await rebreak.json()
+          const candidate = (rb.choices?.[0]?.message?.content || '').trim()
+          if (candidate.length >= 10) pageText = candidate
+        } else {
+          break
+        }
+      }
+      if (needsRebreak(pageText)) {
+        console.log(`Line-format enforcement gave up on page ${pageOutline.page}; export band cap will step the tier down`)
+      }
       console.log(`Final text length for page ${pageOutline.page}:`, countWords(pageText))
 
       return {
