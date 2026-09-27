@@ -133,7 +133,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           };
         });
 
-      const imageResponse = await api.generateImages(effectivePageSize, effectivePageLayout, imagePrompts);
+      const imageResponse = await api.generateImages(effectivePageSize, effectivePageLayout, imagePrompts, true);
 
       if (imageResponse.errors?.length) {
         const failedPages = imageResponse.errors.map((e) => e.page).join(', ');
@@ -153,6 +153,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
 
       onConfigChange({
         pages: pagesWithImages,
+        coverImageUrl: imageResponse.cover?.url,
       });
 
       updateProgress(100);

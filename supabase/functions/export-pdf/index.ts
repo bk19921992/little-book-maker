@@ -120,23 +120,41 @@ interface TypesetLine {
 // boundary that fits.
 function chooseBreak(line: string, font: PDFFont, fontSize: number, maxWidth: number): number {
   const words = line.split(' ');
-  let lastFit = -1;
-  let lastClauseFit = -1;
+  const candidates: { cut: number; clause: boolean }[] = [];
   let acc = '';
   for (let i = 0; i < words.length - 1; i++) {
     acc = acc ? `${acc} ${words[i]}` : words[i];
     if (font.widthOfTextAtSize(acc, fontSize) <= maxWidth) {
-      lastFit = acc.length;
-      const w = words[i];
-      if (/[,;:]$/.test(w) || /^(and|or|but|so|then)$/i.test(words[i + 1] || '')) {
-        lastClauseFit = acc.length;
-      }
+      const clause = /[,;:]$/.test(words[i]) || /^(and|or|but|so|then)$/i.test(words[i + 1] || '');
+      candidates.push({ cut: acc.length, clause });
     } else {
       break;
     }
   }
-  const cut = lastClauseFit > 0 ? lastClauseFit : lastFit;
-  return cut > 0 ? cut : line.indexOf(' ') > 0 ? line.indexOf(' ') : line.length;
+  if (!candidates.length) {
+    return line.indexOf(' ') > 0 ? line.indexOf(' ') : line.length;
+  }
+  const restWidth = (cut: number) => font.widthOfTextAtSize(line.slice(cut).trimStart(), fontSize);
+  const lastFit = candidates[candidates.length - 1];
+  // If even the fullest break leaves an overflowing remainder, this is a
+  // three-or-more-segment wrap: fill greedily so the middle lines stay full.
+  if (restWidth(lastFit.cut) > maxWidth) {
+    return lastFit.cut;
+  }
+  // Two-segment break: balance the halves like a typesetter would, with a
+  // 15% preference for clause boundaries.
+  let best = lastFit;
+  let bestScore = Infinity;
+  for (const c of candidates) {
+    const firstW = font.widthOfTextAtSize(line.slice(0, c.cut), fontSize);
+    let score = Math.abs(firstW - restWidth(c.cut));
+    if (c.clause) score *= 0.85;
+    if (score < bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  return best.cut;
 }
 
 // Verse-aware typesetting. Hard newlines in the story text are sacred: one
@@ -235,7 +253,7 @@ async function embedAny(pdfDoc: PDFDocument, imageData: { bytes: Uint8Array; mim
   return await pdfDoc.embedJpg(imageData.bytes);
 }
 
-async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
+async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
   const pdfDoc = await PDFDocument.create();
   const qa: QaEntry[] = [];
 
@@ -264,11 +282,14 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
 
   // ---- Cover: full-bleed illustration with the title on a paper plate ----
   const coverImagePage = pages.find((p) => p.imageUrl && !p.imageLocked);
+  // Prefer the dedicated cover illustration (generated with clear title
+  // space); fall back to the first story image for older books.
+  const coverImageUrl = coverImage || coverImagePage?.imageUrl;
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
   coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
 
-  if (coverImagePage?.imageUrl) {
-    const coverData = await fetchImageBytes(coverImagePage.imageUrl);
+  if (coverImageUrl) {
+    const coverData = await fetchImageBytes(coverImageUrl);
     if (coverData) {
       try {
         const img = await embedAny(pdfDoc, coverData);
@@ -281,7 +302,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
           width: drawW,
           height: drawH,
         });
-        qa.push({ where: 'cover', severity: 'pass', check: 'cover illustration present, full-bleed' });
+        qa.push({ where: 'cover', severity: 'pass', check: coverImage ? 'dedicated cover illustration, full-bleed, title space reserved' : 'cover illustration present, full-bleed (page art fallback)' });
       } catch (coverError) {
         console.error('Failed to embed cover image', coverError);
         qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration failed to embed' });
@@ -487,8 +508,13 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       }
       const longest = Math.max(...lineWidths);
       const shortest = Math.min(...lineWidths);
-      if (textLines.length > 1 && shortest < longest * 0.35) {
-        qa.push({ where: `page ${page.page}`, severity: 'warn', check: 'ragged block: shortest line under 35% of longest' });
+      // Rag check only applies to soft-wrapped verse: varied hard-line
+      // lengths are the metre, not a typesetting fault.
+      const hasSoftWrap = textLines.some((l) => l.indent);
+      if (hasSoftWrap) {
+        if (shortest < longest * 0.35) {
+          qa.push({ where: `page ${page.page}`, severity: 'warn', check: 'ragged wrap: shortest wrapped line under 35% of longest' });
+        }
       }
       if (longest > type.maxWidth + 1) {
         qa.push({ where: `page ${page.page}`, severity: 'warn', check: 'a line exceeds the 78% measure (unbreakable word?)' });
@@ -531,7 +557,7 @@ serve(async (req) => {
       throw authError;
     }
 
-    const { config, pages, storyId, includeBleed = true } = await req.json();
+    const { config, pages, storyId, includeBleed = true, coverImage } = await req.json();
 
     if (!storyId || typeof storyId !== 'string' || storyId.length > 100) {
       throw new Error('Missing story id.');
@@ -564,8 +590,8 @@ serve(async (req) => {
     }
 
     // Generate both web and print PDFs
-    const web = await createPDF(config, pages, false);
-    const print = await createPDF(config, pages, true);
+    const web = await createPDF(config, pages, false, coverImage);
+    const print = await createPDF(config, pages, true, coverImage);
     const qa = [...web.qa, ...print.qa.filter((p) => p.severity !== 'pass')];
 
     // Convert to base64 for JSON response

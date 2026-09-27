@@ -184,7 +184,7 @@ serve(async (req) => {
       throw authError
     }
 
-    const { pageSize, pageLayout, prompts } = await req.json()
+    const { pageSize, pageLayout, prompts, includeCover } = await req.json()
 
     if (!Array.isArray(prompts) || prompts.length === 0) {
       throw new Error('prompts must be a non-empty array')
@@ -193,7 +193,7 @@ serve(async (req) => {
       throw new Error('prompts must contain at most 20 pages')
     }
 
-    const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'image', prompts.length)
+    const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'image', prompts.length + (includeCover ? 1 : 0))
     if (limitMessage) {
       return tooManyRequestsResponse(corsHeaders, limitMessage)
     }
@@ -289,6 +289,47 @@ serve(async (req) => {
       }
     }
 
+
+    // Dedicated cover image, generated AFTER the story pages so the first
+    // page can serve as the visual reference - the cover must look like the
+    // same book. The composition keeps the top third calm for the printed
+    // title. A cover failure never blocks the book.
+    let coverUrl: string | undefined
+    if (includeCover) {
+      try {
+        const coverPrompt = [
+          referenceUrl
+            ? "This is the FRONT COVER of the same children's picture book as the reference image."
+            : "Front cover illustration for a personalised children's picture book.",
+          referenceUrl
+            ? 'Keep the EXACT same characters, style, linework, lighting and colour palette as the reference image.'
+            : '',
+          '',
+          'STYLE BIBLE (must match the inside pages exactly):',
+          styleBible,
+          '',
+          'COVER COMPOSITION (follow exactly):',
+          '- One iconic, heartwarming scene with the main child and the most important supporting character(s) together.',
+          '- The characters and the action occupy the LOWER TWO-THIRDS of the image.',
+          '- The TOP THIRD is calm, simple and uncluttered (sky, soft wall, gentle background) with NO faces, characters or busy detail there - the printed book title sits in that space.',
+          '- No text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
+        ].filter(Boolean).join('\n')
+        console.log('Generating dedicated cover image')
+        if (referenceUrl) {
+          try {
+            coverUrl = await editImageWithReference(openaiKey, model, size, quality, coverPrompt, referenceUrl)
+          } catch (coverEditError) {
+            console.error('Cover reference edit failed, falling back to plain generation:', coverEditError)
+            coverUrl = await generateOneImage(openaiKey, model, size, quality, coverPrompt)
+          }
+        } else {
+          coverUrl = await generateOneImage(openaiKey, model, size, quality, coverPrompt)
+        }
+      } catch (coverError) {
+        console.error('Cover generation failed (book continues without a dedicated cover):', coverError)
+      }
+    }
+
     if (images.length === 0) {
       return new Response(
         JSON.stringify({
@@ -300,7 +341,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ images, errors: errors.length ? errors : undefined }),
+      JSON.stringify({ images, cover: coverUrl ? { url: coverUrl } : undefined, errors: errors.length ? errors : undefined }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   } catch (error) {

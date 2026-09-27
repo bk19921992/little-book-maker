@@ -64,7 +64,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
     setIsExporting(true);
     try {
-      const response = await api.exportPDF(config, config.pages, config.storyId, true);
+      const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
 
       onConfigChange({
         exports: {

@@ -67,12 +67,14 @@ class APIClient {
   async generateImages(
     pageSize: PageSizePreset,
     pageLayout: PageLayout,
-    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[]
+    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[],
+    includeCover: boolean = false
   ): Promise<ImageGenerateResponse> {
     return this.invokeFunction<ImageGenerateResponse>('generate-images', {
       pageSize,
       pageLayout,
       prompts,
+      includeCover,
     });
   }
 
@@ -80,13 +82,15 @@ class APIClient {
     config: StoryConfig,
     pages: StoryPage[],
     storyId: string,
-    includeBleed: boolean = true
+    includeBleed: boolean = true,
+    coverImage?: string
   ): Promise<ExportResponse> {
     return this.invokeFunction<ExportResponse>('export-pdf', {
       config,
       pages,
       storyId,
       includeBleed,
+      coverImage,
     });
   }
 
