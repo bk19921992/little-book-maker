@@ -432,8 +432,10 @@ export const SetupForm: React.FC<SetupFormProps> = ({
         </CardHeader>
         <CardContent>
           <FormatPicker
+            formatMode={config.formatMode}
             pageSize={config.pageSize}
             pageLayout={config.pageLayout}
+            formatReason={config.formatReason}
             onConfigChange={onConfigChange}
           />
         </CardContent>

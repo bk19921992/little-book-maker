@@ -17,8 +17,10 @@ const createInitialConfig = (): StoryConfig => ({
   personal: {},
   contentSafety: false,
   imageStyle: 'Picture-book',
+  formatMode: 'auto',
   pageSize: 'A5 portrait',
   pageLayout: 'split',
+  formatReason: null,
   imageSeed: null,
 });
 

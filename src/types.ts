@@ -7,6 +7,9 @@ export type PageSizePreset = 'A5 portrait' | 'A4 portrait' | '210×210 mm square
 // How each story page arranges its illustration and text
 export type PageLayout = 'split' | 'overlay';
 
+// Who picks the book format: 'auto' = AI decides per story, 'manual' = user picks
+export type FormatMode = 'auto' | 'manual';
+
 export interface StoryConfig {
   children: string[];               // may be empty
   storyType: string;                // preset or custom
@@ -28,8 +31,10 @@ export interface StoryConfig {
   };
   contentSafety: boolean;           // must be true to generate
   imageStyle: 'Picture-book' | 'Watercolour' | 'Crayon' | 'Paper cut-out' | 'Cartoon line art' | { other: string };
+  formatMode: FormatMode;         // 'auto' = AI picks shape+layout per story after planning
   pageSize: PageSizePreset;
   pageLayout: PageLayout;        // 'split' = picture above words, 'overlay' = full-page picture with words on top
+  formatReason?: string | null;  // why the AI picked this format (auto mode)
   imageSeed?: number | null;
 
   // Generated
@@ -116,9 +121,17 @@ export interface WordCountTargets {
 }
 
 // API Response types
+// Format suggestion returned by the planner when formatMode is 'auto'
+export interface PlanFormatSuggestion {
+  pageSize?: string;
+  pageLayout?: string;
+  reason?: string;
+}
+
 export interface PlanResponse {
   outline: StoryOutline;
   styleBible: StyleBible;
+  format?: PlanFormatSuggestion | null;
 }
 
 export interface WriteResponse {

@@ -70,7 +70,12 @@ Create exactly ${config.lengthPages} pages. Each page should have:
 
 Make sure to incorporate the personal details naturally throughout the story and use the specified narration style.
 
-Return as JSON with pages array containing page, wordCount, visualBrief, and imagePrompt fields.`
+${config.formatMode === 'auto' ? `BOOK FORMAT CHOICE (required): choose the printed page shape and layout that best fit THIS particular story - its type, audience age, mood, and page count. Do not default to one answer; different stories suit different formats.
+- pageSize must be exactly one of: "A5 portrait" (classic small storybook, suits longer text for confident readers), "A4 portrait" (large portrait pages), "210×210 mm square" (the classic modern picture-book shape), "A4 landscape" (wide pages for big cinematic scenes and read-aloud story-time books).
+- pageLayout must be exactly one of: "split" (picture above, words below - easiest for very young children and text-heavier pages) or "overlay" (full-page illustration with words on top - immersive modern picture-book look).
+- Give a short friendly reason (one sentence) a parent will understand.` : ''}
+
+Return as JSON with a pages array containing page, wordCount, visualBrief, and imagePrompt fields${config.formatMode === 'auto' ? `, plus a format object containing pageSize, pageLayout, and reason` : ''}.`
 
     console.log('Making OpenAI API call...')
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -125,10 +130,24 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
       throw new Error('Story planner returned an unexpected shape.');
     }
 
+    // Auto format mode: pass through the planner's format suggestion when it is
+    // a valid object. The client validates the values against its canonical
+    // lists and falls back to a per-book heuristic when absent or invalid.
+    let formatSuggestion = null
+    if (config.formatMode === 'auto' && outlineData.format && typeof outlineData.format === 'object') {
+      formatSuggestion = {
+        pageSize: typeof outlineData.format.pageSize === 'string' ? outlineData.format.pageSize : undefined,
+        pageLayout: typeof outlineData.format.pageLayout === 'string' ? outlineData.format.pageLayout : undefined,
+        reason: typeof outlineData.format.reason === 'string' ? outlineData.format.reason : undefined,
+      }
+    }
+    delete outlineData.format
+
     return new Response(
       JSON.stringify({
         outline: outlineData,
-        styleBible
+        styleBible,
+        format: formatSuggestion
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

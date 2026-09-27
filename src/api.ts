@@ -123,8 +123,10 @@ class APIClient {
       },
       contentSafety: true,
       imageStyle: 'Picture-book',
+      formatMode: 'manual',
       pageSize: 'A5 portrait',
       pageLayout: 'split',
+      formatReason: null,
       imageSeed: 12345,
     };
 

@@ -5,10 +5,11 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, BookOpen, Image, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
-import { StoryConfig, StoryPage, StoryOutline, StyleBible } from '../types';
+import { StoryConfig, StoryPage, StoryOutline, StyleBible , PageSizePreset, PageLayout } from '../types';
 import { api } from '../api';
 import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
+import { resolveAutoFormat } from '../lib/format';
 
 interface PreviewGenerateProps {
   config: StoryConfig;
@@ -74,10 +75,28 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // Step 1: Plan the story
       toast.info('Planning your story...');
       const planResponse = await api.planStory(config);
-      
+
+      // Auto format mode: the planner (or a per-book fallback heuristic) picks
+      // the shape and layout for this particular story. Resolve it now and use
+      // the resolved values for everything downstream in this run, since the
+      // config state update above is async.
+      let effectivePageSize = config.pageSize;
+      let effectivePageLayout = config.pageLayout;
+      const formatUpdates: { pageSize?: PageSizePreset; pageLayout?: PageLayout; formatReason?: string | null } = {};
+      if (config.formatMode === 'auto') {
+        const resolved = resolveAutoFormat(config, planResponse.format);
+        effectivePageSize = resolved.pageSize;
+        effectivePageLayout = resolved.pageLayout;
+        formatUpdates.pageSize = resolved.pageSize;
+        formatUpdates.pageLayout = resolved.pageLayout;
+        formatUpdates.formatReason = resolved.reason;
+        toast.info(`AI picked ${resolved.pageSize} with ${resolved.pageLayout === 'overlay' ? 'full-page pictures' : 'split pages'} for this story`);
+      }
+
       onConfigChange({
         styleBible: planResponse.styleBible,
         outline: planResponse.outline,
+        ...formatUpdates,
       });
 
       updateProgress(25);
@@ -114,7 +133,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           };
         });
 
-      const imageResponse = await api.generateImages(config.pageSize, config.pageLayout, imagePrompts);
+      const imageResponse = await api.generateImages(effectivePageSize, effectivePageLayout, imagePrompts);
 
       if (imageResponse.errors?.length) {
         const failedPages = imageResponse.errors.map((e) => e.page).join(', ');
@@ -233,7 +252,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Page Size:</span>
-                  <span className="text-sm text-muted-foreground">{config.pageSize}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {config.pageSize}{config.formatMode === 'auto' && config.formatReason ? ' (AI picked)' : ''}
+                  </span>
                 </div>
               </div>
             </div>
