@@ -347,7 +347,7 @@ serve(async (req) => {
     console.log('Generate images request: user', user.id, 'pages', prompts.length)
 
     const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
-    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'low'
+    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
     const size = Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536'
     const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
 
