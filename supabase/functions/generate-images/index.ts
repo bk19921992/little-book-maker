@@ -132,6 +132,82 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
   return bytes
 }
 
+interface ImageReview {
+  pass: boolean
+  issues: string[]
+  skipped?: boolean
+}
+
+interface ReviewContext {
+  label: string
+  brief: string
+  config?: StoryConfig
+}
+
+// Vision QA gate: a review model inspects every generated image BEFORE it can
+// ship. Geometry QA (export-pdf) can measure bands and tiers but cannot see a
+// three-eyed doll - this layer catches anatomy/artifact/consistency defects.
+// A reviewer API outage never blocks the pipeline (marked skipped, surfaced in
+// the response); a found defect DOES - the page is regenerated with the
+// rejection reasons fed back, up to MAX_IMAGE_ATTEMPTS total tries.
+const MAX_IMAGE_ATTEMPTS = 3
+
+async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl: string, ctx: ReviewContext): Promise<ImageReview> {
+  const cfg = ctx.config || {}
+  const reviewPrompt = [
+    "You are the quality-control reviewer for a personalised children's picture book. This illustration must pass your review before it can ship to a paying customer.",
+    '',
+    'BOOK CONTEXT:',
+    `- Child protagonist: ${(cfg.children || []).join(' and ') || 'a child'} (a human child)`,
+    `- Supporting characters: ${(cfg.characters || []).join(', ') || 'as described'}`,
+    `- Setting: ${cfg.setting || 'as described'}`,
+    cfg.personal?.favouriteToy ? `- Recurring toy: ${cfg.personal.favouriteToy}` : '',
+    cfg.personal?.pets ? `- Pet: ${cfg.personal.pets}` : '',
+    `- Illustration style: ${resolveImageStyle(cfg.imageStyle)}`,
+    `- This image is: ${ctx.label}`,
+    `- Scene brief: ${ctx.brief}`,
+    '',
+    'REJECT the image if ANY of these is visible:',
+    '1. ANATOMY: wrong number of eyes, ears, limbs, fingers or toes on any person or animal; mangled or fused hands; distorted or duplicated faces; extra or half-formed characters.',
+    '2. ARTIFACTS: garbled text, letters, numbers, watermarks or signatures; glitch patches; smeared or melted regions; abrupt style breaks inside the image.',
+    '3. CONSISTENCY: characters that contradict the book context (wrong species, wrong recurring toy, two different-looking versions of the same child in one image).',
+    '4. APPROPRIATENESS: anything frightening, violent or unsuitable for a bedtime story.',
+    '',
+    'Judge only what is visible. Stylisation (big heads, simple shapes, paper-cut proportions) is NOT a defect - reject only clear errors a customer would notice.',
+    'Return ONLY JSON: {"pass": true} or {"pass": false, "issues": ["one specific visible problem per string"]}.',
+  ].filter(Boolean).join('\n')
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: reviewModel,
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: reviewPrompt },
+          { type: 'image_url', image_url: { url: imageDataUrl } },
+        ] }],
+        max_completion_tokens: 300,
+        response_format: { type: 'json_object' },
+      }),
+    })
+    if (!response.ok) {
+      console.error(`Review API error for ${ctx.label}: ${response.status}`)
+      return { pass: true, issues: [], skipped: true }
+    }
+    const data = await response.json()
+    const content = data.choices?.[0]?.message?.content || '{}'
+    const parsed = JSON.parse(content)
+    if (parsed.pass === false) {
+      return { pass: false, issues: Array.isArray(parsed.issues) ? parsed.issues.map(String) : ['unspecified quality problem'] }
+    }
+    return { pass: true, issues: [] }
+  } catch (reviewError) {
+    console.error(`Review call failed for ${ctx.label} (allowing image, flagged skipped):`, reviewError)
+    return { pass: true, issues: [], skipped: true }
+  }
+}
+
 // gpt-image-1 accepts reference images on the edits endpoint. Passing the first
 // page's illustration anchors the child, animals and recurring props visually,
 // which holds their identity far better than a text-only description.
@@ -146,7 +222,7 @@ async function editImageWithReference(
   const bytes = dataUrlToBytes(referenceDataUrl)
   const form = new FormData()
   form.append('model', model)
-  form.append('image[]', new Blob([bytes], { type: 'image/jpeg' }), 'reference.jpg')
+  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: 'image/jpeg' }), 'reference.jpg')
   form.append('prompt', fullPrompt)
   form.append('n', '1')
   form.append('size', size)
@@ -184,7 +260,35 @@ serve(async (req) => {
       throw authError
     }
 
-    const { pageSize, pageLayout, prompts, includeCover } = await req.json()
+    const body = await req.json()
+    const { pageSize, pageLayout, prompts, includeCover } = body
+
+    const openaiKey = Deno.env.get('OPENAI_API_KEY')
+    if (!openaiKey) {
+      throw new Error('OPENAI_API_KEY is required. Add it to your Supabase function secrets.')
+    }
+
+    // Review-only mode: re-run the vision QA gate over already-generated
+    // images (data URLs) without generating anything and without consuming
+    // image usage. Used to audit existing books and to prove the gate catches
+    // known-bad art.
+    const reviewOnly = Array.isArray(body.reviewImages) ? body.reviewImages : null
+    if (reviewOnly) {
+      console.log('Review-only request: user', user.id, 'images', reviewOnly.length)
+      const reviewModel0 = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
+      const reviews = []
+      for (const item of reviewOnly.slice(0, 12)) {
+        const url = typeof item === 'string' ? item : item?.url
+        if (!url) continue
+        const r = await reviewImage(openaiKey, reviewModel0, url, {
+          label: (typeof item === 'object' && item?.label) || 'an illustration',
+          brief: (typeof item === 'object' && item?.brief) || "children's book illustration",
+          config: (typeof item === 'object' && item?.config) || prompts?.[0]?.config,
+        })
+        reviews.push({ label: (typeof item === 'object' && item?.label) || 'image', ...r })
+      }
+      return new Response(JSON.stringify({ reviews }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
 
     if (!Array.isArray(prompts) || prompts.length === 0) {
       throw new Error('prompts must be a non-empty array')
@@ -200,19 +304,15 @@ serve(async (req) => {
 
     console.log('Generate images request: user', user.id, 'pages', prompts.length)
 
-    const openaiKey = Deno.env.get('OPENAI_API_KEY')
-    if (!openaiKey) {
-      throw new Error('OPENAI_API_KEY is required. Add it to your Supabase function secrets.')
-    }
-
     const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
     const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'low'
     const size = Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536'
+    const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
 
     // All pages in one request share the same config, so build the style bible once.
     const styleBible = buildStyleBible(prompts[0]?.config, size, pageLayout || 'split')
 
-    const images: { page: number; url: string }[] = []
+    const images: { page: number; url: string; review?: ImageReview }[] = []
     const errors: { page: number; error: string }[] = []
 
     // Page order matters: the first successfully generated page becomes the
@@ -259,25 +359,48 @@ serve(async (req) => {
 
         console.log(`Generating image for page ${promptData.page} with model ${model} (${size}, ${quality}${referenceUrl ? ', with reference' : ''})`)
 
-        let url: string
-        if (referenceUrl) {
-          try {
-            url = await editImageWithReference(openaiKey, model, size, quality, fullPrompt, referenceUrl)
-          } catch (editError) {
-            // Never lose a page because the edits call failed: fall back to a
-            // plain generation guided by the style bible.
-            console.error(`Reference edit failed for page ${promptData.page}, falling back to plain generation:`, editError)
+        // Generate -> vision review -> regenerate with feedback. A page ships
+        // only with an image that passed the review gate (or where the gate
+        // itself was unreachable, which is surfaced as skipped). A page that
+        // fails review after every attempt gets NO image and an errors entry -
+        // bad art never reaches export.
+        let url = ''
+        let review: ImageReview = { pass: false, issues: ['not yet reviewed'] }
+        for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+          if (attempt > 1) {
+            console.log(`Regenerating page ${promptData.page} after review rejection (attempt ${attempt}): ${review.issues.join('; ')}`)
+            fullPrompt += `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${review.issues.join('; ')}. The new image must not have these problems.`
+          }
+          if (referenceUrl) {
+            try {
+              url = await editImageWithReference(openaiKey, model, size, quality, fullPrompt, referenceUrl)
+            } catch (editError) {
+              // Never lose a page because the edits call failed: fall back to a
+              // plain generation guided by the style bible.
+              console.error(`Reference edit failed for page ${promptData.page}, falling back to plain generation:`, editError)
+              url = await generateOneImage(openaiKey, model, size, quality, fullPrompt)
+            }
+          } else {
             url = await generateOneImage(openaiKey, model, size, quality, fullPrompt)
           }
-        } else {
-          url = await generateOneImage(openaiKey, model, size, quality, fullPrompt)
+          review = await reviewImage(openaiKey, reviewModel, url, {
+            label: `page ${promptData.page}`,
+            brief: scene,
+            config: promptData.config,
+          })
+          if (review.pass) break
         }
-
+        if (!review.pass) {
+          console.error(`Quality review failed for page ${promptData.page} after ${MAX_IMAGE_ATTEMPTS} attempts: ${review.issues.join('; ')}`)
+          errors.push({ page: promptData.page, error: `Quality review failed after ${MAX_IMAGE_ATTEMPTS} attempts: ${review.issues.join('; ')}` })
+          continue
+        }
+        // A rejected page never becomes the visual reference for later pages.
         if (!referenceUrl) {
           referenceUrl = url
         }
-        images.push({ page: promptData.page, url })
-        console.log(`Generated illustration for page ${promptData.page}`)
+        images.push({ page: promptData.page, url, review })
+        console.log(`Generated illustration for page ${promptData.page} (review ${review.skipped ? 'skipped - reviewer unreachable' : 'passed'})`)
       } catch (pageError) {
         // Never substitute stock photos: a failed page is reported so the UI can
         // ask the user to retry instead of shipping unrelated imagery.
@@ -295,6 +418,7 @@ serve(async (req) => {
     // same book. The composition keeps the top third calm for the printed
     // title. A cover failure never blocks the book.
     let coverUrl: string | undefined
+    let coverReview: ImageReview | undefined
     if (includeCover) {
       try {
         const coverPrompt = [
@@ -315,15 +439,38 @@ serve(async (req) => {
           '- No text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
         ].filter(Boolean).join('\n')
         console.log('Generating dedicated cover image')
-        if (referenceUrl) {
-          try {
-            coverUrl = await editImageWithReference(openaiKey, model, size, quality, coverPrompt, referenceUrl)
-          } catch (coverEditError) {
-            console.error('Cover reference edit failed, falling back to plain generation:', coverEditError)
-            coverUrl = await generateOneImage(openaiKey, model, size, quality, coverPrompt)
+        // Same vision gate as the inside pages: a rejected cover is
+        // regenerated with feedback, and a cover that never passes is dropped
+        // (the export falls back to its no-dedicated-cover path) rather than
+        // shipping a defective front cover.
+        let fullCoverPrompt = coverPrompt
+        coverReview = { pass: false, issues: ['not yet reviewed'] }
+        for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+          if (attempt > 1) {
+            console.log(`Regenerating cover after review rejection (attempt ${attempt}): ${coverReview.issues.join('; ')}`)
+            fullCoverPrompt += `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${coverReview.issues.join('; ')}. The new image must not have these problems.`
           }
-        } else {
-          coverUrl = await generateOneImage(openaiKey, model, size, quality, coverPrompt)
+          if (referenceUrl) {
+            try {
+              coverUrl = await editImageWithReference(openaiKey, model, size, quality, fullCoverPrompt, referenceUrl)
+            } catch (coverEditError) {
+              console.error('Cover reference edit failed, falling back to plain generation:', coverEditError)
+              coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
+            }
+          } else {
+            coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
+          }
+          coverReview = await reviewImage(openaiKey, reviewModel, coverUrl, {
+            label: 'the front cover of the book (the top half is intentionally calm for the printed title; the characters sit in the lower half)',
+            brief: 'front cover: one iconic heartwarming scene with the main child and the most important supporting character(s)',
+            config: prompts[0]?.config,
+          })
+          if (coverReview.pass) break
+        }
+        if (!coverReview.pass) {
+          console.error(`Cover failed quality review after ${MAX_IMAGE_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}`)
+          errors.push({ page: 0, error: `Cover quality review failed after ${MAX_IMAGE_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}` })
+          coverUrl = undefined
         }
       } catch (coverError) {
         console.error('Cover generation failed (book continues without a dedicated cover):', coverError)
@@ -341,7 +488,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ images, cover: coverUrl ? { url: coverUrl } : undefined, errors: errors.length ? errors : undefined }),
+      JSON.stringify({ images, cover: coverUrl ? { url: coverUrl, review: coverReview } : undefined, coverReview: coverUrl ? undefined : coverReview, errors: errors.length ? errors : undefined }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   } catch (error) {
