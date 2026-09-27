@@ -35,6 +35,7 @@ const INK = rgb(0.169, 0.149, 0.133);    // #2B2622
 const SAFE = 0.07;                       // safe-area inset, share of page width
 const TEXT_MEASURE = 0.78;               // max line measure, share of page width
 const MAX_VERSE_LINES = 4;
+const BAND_CAP = 0.40;                 // hard cap on band height, share of page height
 
 const FONT_URLS = {
   text: "https://cdn.jsdelivr.net/fontsource/fonts/nunito@latest/latin-600-normal.ttf",
@@ -191,13 +192,23 @@ function typesetVerse(raw: string, font: PDFFont, fontSize: number, maxWidth: nu
 // Fixed type tiers picked by verse line count - never scale-to-fit. Sizes are
 // a share of the page width so they scale across A5, A4 and square formats,
 // and every page of a book lands on one of the same three sizes.
-function verseTier(hardLineCount: number, pageWidth: number, includeBleed: boolean) {
-  const share = hardLineCount <= 2 ? 0.052 : hardLineCount === 3 ? 0.046 : hardLineCount === 4 ? 0.041 : 0.038;
+// TIER_SHARES is a largest-to-smallest ladder: when long copy would push the
+// paper band past BAND_CAP, the page steps DOWN this ladder one fixed tier at
+// a time (never arbitrary scale-to-fit) until the band fits. The floor tier
+// is the last rung; if copy still does not fit, the band is clamped at the
+// cap and QA fails the page so it surfaces upstream.
+const TIER_SHARES = [0.052, 0.046, 0.041, 0.038, 0.034];
+function verseTier(hardLineCount: number, pageWidth: number, includeBleed: boolean, tierOverride?: number) {
+  const base = hardLineCount <= 2 ? 0 : hardLineCount === 3 ? 1 : hardLineCount === 4 ? 2 : 3;
+  const idx = Math.min(tierOverride ?? base, TIER_SHARES.length - 1);
+  const share = TIER_SHARES[idx];
   const fontSize = Math.max(12, Math.round(pageWidth * share)) + (includeBleed ? 2 : 0);
   return {
     fontSize,
     lineStep: Math.round(fontSize * 1.4),
     maxWidth: pageWidth * TEXT_MEASURE,
+    tierIndex: idx,
+    baseIndex: base,
   };
 }
 
@@ -394,22 +405,40 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const overlay = config.pageLayout === 'overlay';
     const rawText = page.text || '';
     const hardLineCount = rawText.split('\n').map((l) => l.trim()).filter(Boolean).length || 1;
-    const type = verseTier(hardLineCount, pageWidth, includeBleed);
-    const fontSize = type.fontSize;
-    const lineStep = type.lineStep;
-    const textLines = rawText.trim() ? typesetVerse(rawText, fonts.text, fontSize, type.maxWidth) : [];
+
+    // Paper band across the bottom: sized to the text block, floored at 24%
+    // and HARD-CAPPED at 40% of the page height. Long copy steps the type
+    // down the fixed tier ladder (see verseTier) instead of growing the band.
+    const minBand = pageHeight * 0.24;
+    const maxBand = pageHeight * BAND_CAP;
+
+    let type = verseTier(hardLineCount, pageWidth, includeBleed);
+    let fontSize = type.fontSize;
+    let lineStep = type.lineStep;
+    let indentX = fontSize * 1.5;
+    let padY = fontSize * 0.9;
+    let textLines = rawText.trim() ? typesetVerse(rawText, fonts.text, fontSize, type.maxWidth) : [];
+    let lineWidths = textLines.map((l) => fonts.text.widthOfTextAtSize(l.text, fontSize) + (l.indent ? indentX : 0));
+    let blockHeight = textLines.length ? (textLines.length - 1) * lineStep + fontSize : 0;
+    let bandHeight = textLines.length ? Math.max(minBand, blockHeight + padY * 2 + safeInset * 0.5) : minBand;
+
+    while (bandHeight > maxBand && type.tierIndex < TIER_SHARES.length - 1 && textLines.length) {
+      type = verseTier(hardLineCount, pageWidth, includeBleed, type.tierIndex + 1);
+      fontSize = type.fontSize;
+      lineStep = type.lineStep;
+      indentX = fontSize * 1.5;
+      padY = fontSize * 0.9;
+      textLines = typesetVerse(rawText, fonts.text, fontSize, type.maxWidth);
+      lineWidths = textLines.map((l) => fonts.text.widthOfTextAtSize(l.text, fontSize) + (l.indent ? indentX : 0));
+      blockHeight = textLines.length ? (textLines.length - 1) * lineStep + fontSize : 0;
+      bandHeight = Math.max(minBand, blockHeight + padY * 2 + safeInset * 0.5);
+    }
+    const bandOverflow = bandHeight > maxBand;
+    if (bandOverflow) bandHeight = maxBand;
+    const bandTop = bandHeight;
 
     // Text block geometry: common left axis, centred as a block.
-    const indentX = fontSize * 1.5;
-    const lineWidths = textLines.map((l) => fonts.text.widthOfTextAtSize(l.text, fontSize) + (l.indent ? indentX : 0));
     const blockWidth = lineWidths.length ? Math.max(...lineWidths) : 0;
-    const blockHeight = textLines.length ? (textLines.length - 1) * lineStep + fontSize : 0;
-
-    // Paper band across the bottom: sized to the text block, floored at 24%.
-    const padY = fontSize * 0.9;
-    const minBand = pageHeight * 0.24;
-    const bandHeight = textLines.length ? Math.max(minBand, blockHeight + padY * 2 + safeInset * 0.5) : minBand;
-    const bandTop = bandHeight;
 
     // Artwork region: everything above the band.
     const artHeight = pageHeight - bandTop;
@@ -519,7 +548,14 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       if (longest > type.maxWidth + 1) {
         qa.push({ where: `page ${page.page}`, severity: 'warn', check: 'a line exceeds the 78% measure (unbreakable word?)' });
       }
-      qa.push({ where: `page ${page.page}`, severity: 'pass', check: `type tier ${fontSize}pt for ${hardLineCount} verse line(s), fixed tier` });
+      if (type.tierIndex > type.baseIndex) {
+        qa.push({ where: `page ${page.page}`, severity: 'warn', check: `type tier stepped down ${type.baseIndex} -> ${type.tierIndex} so the band fits the 40% cap; shorten copy upstream` });
+      } else {
+        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `type tier ${fontSize}pt for ${hardLineCount} verse line(s), fixed tier` });
+      }
+      if (bandOverflow) {
+        qa.push({ where: `page ${page.page}`, severity: 'fail', check: 'text block does not fit the 40% band even at the smallest tier; band clamped, copy must be shortened upstream' });
+      }
       if (blockWidth > pageWidth - safeInset * 2) {
         qa.push({ where: `page ${page.page}`, severity: 'fail', check: 'text block crosses the safe area' });
       }

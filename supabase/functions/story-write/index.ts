@@ -93,7 +93,9 @@ Important Instructions:
 - Make the text engaging and age-appropriate
 - No page numbers, titles, or extra formatting
 - The text should flow naturally with the overall story arc
-- Reflect the chosen theme and color palette in descriptions when natural`
+- Reflect the chosen theme and color palette in descriptions when natural
+- FORMAT (critical for typesetting): write the page as short newline-separated lines. Each line at most 7 words, one thought per line. Never put a long sentence or a whole paragraph on one line - long lines wrap badly when typeset.
+- Line budget: at most ${config.readingLevel === 'Primary 6–8' ? '6' : '4'} lines on the page. Fewer, shorter lines always beats more, longer ones.`
 
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -137,7 +139,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `You write professional children's book pages in UK English with the quality of published books. Return ONLY the story text and ensure word-count target is met exactly.` },
-              { role: 'user', content: `${writingPrompt}\n\nWrite between ${config.readingLevel === 'Toddler 2–3' ? '5 and 25' : config.readingLevel === 'Early 4–5' ? '20 and 50' : '40 and 90'} words (aim ${pageOutline.wordCount || pageOutline.wordsTarget || 100}).` }
+              { role: 'user', content: `${writingPrompt}\n\nWrite between ${config.readingLevel === 'Toddler 2–3' ? '5 and 25' : config.readingLevel === 'Early 4–5' ? '20 and 50' : '40 and 90'} words (aim ${pageOutline.wordCount || pageOutline.wordsTarget || 100}). Format as newline-separated lines of at most 7 words each.` }
             ],
             max_completion_tokens: 600
           })
@@ -158,7 +160,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: "Write professional UK English children's story pages with published book quality. Return ONLY story text, no quotes or extra text." },
-              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
+              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Format as newline-separated lines of at most 7 words each. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
             ],
             max_completion_tokens: 600
           })
@@ -199,7 +201,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
-              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Keep the format: newline-separated lines of at most 7 words each, at most ${config.readingLevel === 'Primary 6–8' ? '6' : '4'} lines. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
