@@ -233,11 +233,12 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
       });
     }
 
-    // Story text
-    if (page.text) {
+    // Story text (normalise whitespace: raw newlines cannot be WinAnsi-encoded)
+    const cleanText = (page.text || '').replace(/\s+/g, ' ').trim();
+    if (cleanText) {
       const fontSize = includeBleed ? 16 : 14;
       const lineStep = includeBleed ? 20 : 18;
-      const textLines = wrapText(page.text, font, fontSize, pageWidth * 0.8);
+      const textLines = wrapText(cleanText, font, fontSize, pageWidth * 0.8);
 
       if (overlay) {
         // Soft light band along the bottom so the words stay readable over the picture.
