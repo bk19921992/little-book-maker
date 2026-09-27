@@ -6,7 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const TEST_DISCOUNT_CODE = 'BEN-TEST-0';
+const TEST_DISCOUNT_CODE = 'TEST-BOOK-0';
 
 // Simple token generation for billing authorization
 function generateBillingToken(data: any): string {
