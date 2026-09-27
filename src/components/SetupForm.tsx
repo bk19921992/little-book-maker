@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Plus, X, BookOpen, Palette, Users, MapPin } from 'lucide-react';
 import { StoryConfig, ReadingLevel } from '../types';
+import { FormatPicker } from './FormatPicker';
 import { themePresets, storyTypePresets, characterPresets, settingPresets } from '../lib/presets';
 
 interface SetupFormProps {
@@ -420,6 +421,23 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           </CardContent>
         </Card>
       </div>
+
+      {/* Book Format */}
+      <Card className="story-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BookOpen className="w-5 h-5" />
+            Book Format
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FormatPicker
+            pageSize={config.pageSize}
+            pageLayout={config.pageLayout}
+            onConfigChange={onConfigChange}
+          />
+        </CardContent>
+      </Card>
 
       {/* Advanced Options */}
       <Card className="story-card">
