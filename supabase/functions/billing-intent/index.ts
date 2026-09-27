@@ -1,136 +1,107 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@14.21.0";
+import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+const PRICES: Record<string, number> = {
+  export: 200,   // pence, £2.00
+  print: 500,    // pence, £5.00 (disabled until Phase 5)
+  subscription: 900, // pence, £9.00
 };
-
-const PRICES = {
-  exportSingle: 200,   // pence, £2.00
-  printHandling: 500,  // pence, £5.00
-  subscriptionMonthly: 900, // pence, £9.00
-};
-
-const TEST_DISCOUNT_CODE = 'TEST-BOOK-0';
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const { item, discountCode, sessionData } = await req.json();
-    
-    console.log('Creating billing intent for:', { item, discountCode, sessionData });
-
-    // Check for test bypass in non-production
-    const isDevelopment = Deno.env.get('NODE_ENV') !== 'production';
-    const isTestBypass = discountCode === TEST_DISCOUNT_CODE && isDevelopment;
-    
-    if (isTestBypass) {
-      console.log('Test bypass activated');
-      return new Response(
-        JSON.stringify({
-          clientSecret: null,
-          approved: true,
-          testBypass: true,
-          amount: 0,
-          currency: 'gbp'
-        }),
-        {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+    let user;
+    try {
+      user = await requireUser(req);
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders);
+      throw authError;
     }
 
-    // Determine amount based on item type
-    let amount = 0;
-    let isFree = false;
-    
-    if (item === 'export') {
-      // First export is free if not used
-      if (sessionData && !sessionData.firstExportUsed) {
-        amount = 0;
-        isFree = true;
-        console.log('First export is free');
-      } else {
-        amount = PRICES.exportSingle;
-        console.log('Paid export:', amount);
-      }
-    } else if (item === 'print') {
-      amount = PRICES.printHandling;
-      console.log('Print handling fee:', amount);
-    } else if (item === 'subscription') {
-      // Check if subscriptions are enabled (for future use)
-      const subscriptionsEnabled = Deno.env.get('SUBSCRIPTIONS_ENABLED') === 'true';
-      if (!subscriptionsEnabled) {
-        throw new Error('Subscriptions are not currently enabled');
-      }
-      amount = PRICES.subscriptionMonthly;
-    } else {
+    const { item, storyId } = await req.json();
+
+    if (!item || !(item in PRICES)) {
       throw new Error(`Invalid item type: ${item}`);
     }
+    if (item !== 'subscription' && (!storyId || typeof storyId !== 'string' || storyId.length > 100)) {
+      throw new Error('Missing story id.');
+    }
 
-    // If free, return without creating Stripe intent
-    if (isFree) {
+    // Printing is switched off until Phase 5.
+    if (item === 'print' && Deno.env.get('PRINT_ENABLED') !== 'true') {
       return new Response(
-        JSON.stringify({
-          clientSecret: null,
-          approved: true,
-          free: true,
-          amount: 0,
-          currency: 'gbp'
-        }),
-        {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
+        JSON.stringify({ error: "Printing isn't available yet." }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
-    // Create Stripe PaymentIntent
+    if (item === 'subscription' && Deno.env.get('SUBSCRIPTIONS_ENABLED') !== 'true') {
+      throw new Error('Subscriptions are not currently enabled');
+    }
+
+    const service = serviceClient();
+
+    // First export is free, once per user, tracked server-side.
+    if (item === 'export') {
+      const { data: existing, error: entitlementError } = await service
+        .from('entitlements')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('item', 'export')
+        .limit(1);
+      if (entitlementError) throw entitlementError;
+
+      if (!existing || existing.length === 0) {
+        console.log('Free first export approved: user', user.id);
+        return new Response(
+          JSON.stringify({ clientSecret: null, approved: true, free: true, amount: 0, currency: 'gbp' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+    }
+
+    const amount = PRICES[item];
+
     const stripeKey = Deno.env.get('STRIPE_SECRET_KEY');
     if (!stripeKey) {
       throw new Error('Stripe secret key not configured');
     }
 
     const stripe = new Stripe(stripeKey, { apiVersion: '2023-10-16' });
-    
     const paymentIntent = await stripe.paymentIntents.create({
       amount,
       currency: 'gbp',
       automatic_payment_methods: { enabled: true },
       metadata: {
-        item_type: item,
-        session_id: sessionData?.sessionId || 'unknown'
-      }
+        user_id: user.id,
+        story_id: typeof storyId === 'string' ? storyId : '',
+        item,
+      },
     });
 
-    console.log('PaymentIntent created:', paymentIntent.id);
+    console.log('PaymentIntent created:', paymentIntent.id, 'item', item, 'user', user.id);
 
     return new Response(
       JSON.stringify({
         clientSecret: paymentIntent.client_secret,
         amount,
         currency: 'gbp',
-        paymentIntentId: paymentIntent.id
+        paymentIntentId: paymentIntent.id,
       }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
 
   } catch (error) {
     console.error('Error creating billing intent:', error);
     return new Response(
-      JSON.stringify({ 
-        success: false,
-        error: error.message 
-      }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
+      JSON.stringify({ success: false, error: (error instanceof Error ? error.message : 'Unexpected server error') }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }
 });

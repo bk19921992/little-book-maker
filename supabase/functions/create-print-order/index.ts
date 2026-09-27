@@ -1,28 +1,32 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { AuthError, requireUser, unauthorisedResponse } from "../_shared/auth.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-billing-token',
-};
+interface PrintOrderResult {
+  ok: boolean;
+  provider: string;
+  orderId?: string;
+  checkoutUrl?: string;
+  error?: string;
+  estimatedCost?: string;
+  estimatedDelivery?: string;
+  raw?: unknown;
+}
 
-// Simple token verification function
-function verifyBillingToken(token: string): any {
-  try {
-    const decoded = JSON.parse(atob(token));
-    
-    // Check if token is expired (10 minutes)
-    if (decoded.expires && Date.now() > decoded.expires) {
-      throw new Error('Billing token expired');
-    }
-    
-    return decoded;
-  } catch (error) {
-    throw new Error('Invalid billing token');
-  }
+interface CustomerInfo {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  country?: string;
 }
 
 // Peecho API integration based on official documentation
-async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?: any): Promise<any> {
+async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?: CustomerInfo): Promise<PrintOrderResult> {
   const peechoApiKey = Deno.env.get('PEECHO_API_KEY');
 
   if (!peechoApiKey) {
@@ -49,7 +53,7 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
     'A4 landscape': { width: 29.7, height: 21.0 }
   };
 
-  const dimensions = pageDimensions[pageSize] || pageDimensions['A5 portrait'];
+  const dimensions = (pageDimensions as Record<string, (typeof pageDimensions)['A5 portrait']>)[pageSize] || pageDimensions['A5 portrait'];
 
   // Default customer info if not provided
   const defaultCustomerInfo = {
@@ -57,7 +61,9 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
     firstName: 'Customer',
     lastName: 'Name',
     address1: 'Test Address',
+    address2: '',
     city: 'Test City',
+    state: '',
     zipCode: '12345',
     country: 'US'
   };
@@ -125,7 +131,7 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
     }
 
     const result = await response.json();
-    console.log('Peecho order created successfully:', result);
+    console.log('Peecho order created:', result?.id ?? 'unknown id');
 
     return {
       ok: true,
@@ -143,7 +149,7 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
 }
 
 // Stub implementations for other providers
-async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<any> {
+async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<PrintOrderResult> {
   // BookVault integration - stubbed for now
   return {
     ok: false,
@@ -154,7 +160,7 @@ async function createBookVaultOrder(pdfUrl: string, pageSize: string): Promise<a
   };
 }
 
-async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<any> {
+async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<PrintOrderResult> {
   // Lulu integration - stubbed for now
   return {
     ok: false,
@@ -165,7 +171,7 @@ async function createLuluOrder(pdfUrl: string, pageSize: string): Promise<any> {
   };
 }
 
-async function createGelatoOrder(pdfUrl: string, pageSize: string): Promise<any> {
+async function createGelatoOrder(pdfUrl: string, pageSize: string): Promise<PrintOrderResult> {
   // Gelato integration - stubbed for now
   return {
     ok: false,
@@ -177,45 +183,36 @@ async function createGelatoOrder(pdfUrl: string, pageSize: string): Promise<any>
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
+    let user;
+    try {
+      user = await requireUser(req);
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders);
+      throw authError;
+    }
+
+    // Printing is switched off until Phase 5: refuse all requests while the
+    // flag is unset, so nobody can pay for or place an order.
+    if (Deno.env.get('PRINT_ENABLED') !== 'true') {
+      return new Response(
+        JSON.stringify({ ok: false, error: "Printing isn't available yet." }),
+        {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     const { provider, pdfUrl, pageSize } = await req.json();
 
-    console.log(`Creating print order with ${provider} for ${pageSize}`);
-
-    // Check for billing authorization
-    const billingToken = req.headers.get('X-Billing-Token');
-    
-    if (billingToken) {
-      try {
-        const tokenData = verifyBillingToken(billingToken);
-        console.log('Billing token verified:', tokenData);
-        
-        if (tokenData.item !== 'print' || !tokenData.approved) {
-          throw new Error('Invalid billing authorization for print');
-        }
-      } catch (error) {
-        console.error('Billing verification failed:', error);
-        return new Response(
-          JSON.stringify({
-            ok: false,
-            error: 'Payment required. Please complete billing process.'
-          }),
-          {
-            status: 402,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        );
-      }
-    } else {
-      // Check for test bypass in development
-      const isDevelopment = Deno.env.get('NODE_ENV') !== 'production';
-      // For now, we'll allow requests without billing token - this should be updated for production
-      console.log('Warning: No billing token provided');
-    }
+    console.log(`Creating print order: user ${user.id}, provider ${provider}, size ${pageSize}`);
 
     if (!pdfUrl) {
       throw new Error('PDF URL is required');

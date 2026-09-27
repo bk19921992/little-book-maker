@@ -30,6 +30,7 @@ export interface StoryConfig {
     dedication?: string;
   };
   contentSafety: boolean;           // must be true to generate
+  storyId?: string;                 // per-book id, set when planning starts (billing + future saving)
   imageStyle: 'Picture-book' | 'Watercolour' | 'Crayon' | 'Paper cut-out' | 'Cartoon line art' | { other: string };
   formatMode: FormatMode;         // 'auto' = AI picks shape+layout per story after planning
   pageSize: PageSizePreset;

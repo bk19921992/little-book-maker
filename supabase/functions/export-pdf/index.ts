@@ -1,26 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-billing-token',
-};
-
-// Simple token verification function
-function verifyBillingToken(token: string): any {
-  try {
-    const decoded = JSON.parse(atob(token));
-    
-    // Check if token is expired (10 minutes)
-    if (decoded.expires && Date.now() > decoded.expires) {
-      throw new Error('Billing token expired');
-    }
-    
-    return decoded;
-  } catch (error) {
-    throw new Error('Invalid billing token');
-  }
-}
+import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 
 // Page size calculations (300 DPI = 11.811 pixels per mm)
 const DPI = 300;
@@ -113,7 +94,22 @@ async function fetchImageBytes(imageUrl: string): Promise<{ bytes: Uint8Array; m
   }
 }
 
-async function createPDF(config: any, pages: any[], includeBleed: boolean): Promise<Uint8Array> {
+interface StoryPage {
+  page: number;
+  text: string;
+  imageUrl?: string;
+  imageLocked?: boolean;
+  layout?: string;
+}
+
+interface StoryConfigInput {
+  children: string[];
+  pageSize: string;
+  storyType?: string;
+  personal?: { dedication?: string };
+}
+
+async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   
   // Embed Nunito font (fallback to Helvetica if not available)
@@ -124,7 +120,7 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
     font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   }
   
-  const pageSize = PAGE_SIZES[config.pageSize] || PAGE_SIZES['A5 portrait'];
+  const pageSize = (PAGE_SIZES as Record<string, (typeof PAGE_SIZES)['A5 portrait']>)[config.pageSize] || PAGE_SIZES['A5 portrait'];
   const dimensions = includeBleed ? pageSize.withBleed : pageSize.content;
   
   const pageWidth = mmToPdfPoints(dimensions.width);
@@ -134,7 +130,7 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
   
   // Title
-  const titleText = `${config.children.join(' & ')}'s Story` || 'Magical Story';
+  const titleText = config.children.length ? `${config.children.join(' & ')}'s Story` : 'Magical Story';
   coverPage.drawText(titleText, {
     x: pageWidth * 0.1,
     y: pageHeight * 0.8,
@@ -327,7 +323,7 @@ async function createPDF(config: any, pages: any[], includeBleed: boolean): Prom
   return await pdfDoc.save();
 }
 
-function wrapText(text: string, font: any, fontSize: number, maxWidth: number): string[] {
+function wrapText(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, fontSize: number, maxWidth: number): string[] {
   const words = text.split(' ');
   const lines: string[] = [];
   let currentLine = '';
@@ -356,61 +352,50 @@ function wrapText(text: string, font: any, fontSize: number, maxWidth: number): 
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const { config, pages, includeBleed = true } = await req.json();
+    let user;
+    try {
+      user = await requireUser(req);
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders);
+      throw authError;
+    }
 
-    console.log(`Generating ${includeBleed ? 'print' : 'web'} PDF for ${pages.length} pages`);
+    const { config, pages, storyId, includeBleed = true } = await req.json();
 
-    // Check for billing authorization
-    const billingToken = req.headers.get('X-Billing-Token');
-    
-    if (billingToken) {
-      try {
-        const tokenData = verifyBillingToken(billingToken);
-        console.log('Billing token verified:', tokenData);
-        
-        if (tokenData.item !== 'export' || !tokenData.approved) {
-          throw new Error('Invalid billing authorization for export');
+    if (!storyId || typeof storyId !== 'string' || storyId.length > 100) {
+      throw new Error('Missing story id.');
+    }
+
+    console.log(`PDF export: user ${user.id}, ${pages?.length ?? 0} pages`);
+
+    // Server-authoritative: an export entitlement must exist for this caller
+    // and story. Client-sent tokens are ignored entirely.
+    const { data: entitlements, error: entitlementError } = await serviceClient()
+      .from('entitlements')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('story_id', storyId)
+      .eq('item', 'export')
+      .limit(1);
+    if (entitlementError) throw entitlementError;
+
+    if (!entitlements || entitlements.length === 0) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Payment required. Please complete the billing step for this book.'
+        }),
+        {
+          status: 402,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
-      } catch (error) {
-        console.error('Billing verification failed:', error);
-        return new Response(
-          JSON.stringify({ 
-            success: false,
-            error: 'Payment required. Please complete billing process.' 
-          }),
-          {
-            status: 402,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        );
-      }
-    } else {
-      // Check for first free export
-      console.log('No billing token - checking for free export eligibility')
-      
-      // Allow first export without billing for testing
-      // In production, you'd want to track this per user
-      const allowFreeExport = true; // Change this based on your business logic
-      
-      if (!allowFreeExport) {
-        return new Response(
-          JSON.stringify({ 
-            success: false,
-            error: 'Billing authorization required' 
-          }),
-          {
-            status: 402,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          }
-        );
-      }
-      
-      console.log('Allowing free export for testing')
+      );
     }
 
     // Generate both web and print PDFs
@@ -437,7 +422,7 @@ serve(async (req) => {
         webFilename: `${config.children?.join('-') || 'story'}-web.pdf`,
         printFilename: `${config.children?.join('-') || 'story'}-print.pdf`,
         pageCount: pages.length + 1, // +1 for cover
-        dimensions: PAGE_SIZES[config.pageSize] || PAGE_SIZES['A5 portrait']
+        dimensions: (PAGE_SIZES as Record<string, unknown>)[config.pageSize] || PAGE_SIZES['A5 portrait']
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -449,7 +434,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: false,
-        error: error.message 
+        error: error instanceof Error ? error.message : 'Export failed' 
       }),
       {
         status: 500,
