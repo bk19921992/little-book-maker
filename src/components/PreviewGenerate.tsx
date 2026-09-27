@@ -5,7 +5,7 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, BookOpen, Image, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
-import { StoryConfig, StoryPage, StoryOutline, StyleBible , PageSizePreset, PageLayout } from '../types';
+import { StoryConfig, StoryPage, StoryOutline, StyleBible, PageSizePreset, PageLayout, OutlineItem } from '../types';
 import { api } from '../api';
 import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
@@ -118,11 +118,11 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // Step 3: Generate images (AI-powered illustrations)
       toast.info('Creating AI illustrations...');
       // Build a quick lookup for outline data
-      const outlineByPage = new Map(planResponse.outline.pages.map((p: any) => [p.page, p]));
+      const outlineByPage = new Map<number, OutlineItem>(planResponse.outline.pages.map((p: OutlineItem) => [p.page, p]));
       const imagePrompts = writeResponse.pages
         .filter((p) => p && p.page !== undefined)
         .map((p) => {
-          const outline = outlineByPage.get(p.page) || {} as any;
+          const outline = outlineByPage.get(p.page) || ({} as Partial<OutlineItem>);
           return {
             page: p.page,
             prompt: outline.imagePrompt || outline.visualBrief || 'storybook scene',
