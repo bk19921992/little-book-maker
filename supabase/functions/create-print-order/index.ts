@@ -189,6 +189,14 @@ serve(async (req) => {
   }
 
   try {
+    let user;
+    try {
+      user = await requireUser(req);
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders);
+      throw authError;
+    }
+
     // Printing is switched off until Phase 5: refuse all requests while the
     // flag is unset, so nobody can pay for or place an order.
     if (Deno.env.get('PRINT_ENABLED') !== 'true') {
@@ -199,14 +207,6 @@ serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
       );
-    }
-
-    let user;
-    try {
-      user = await requireUser(req);
-    } catch (authError) {
-      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders);
-      throw authError;
     }
 
     const { provider, pdfUrl, pageSize } = await req.json();
