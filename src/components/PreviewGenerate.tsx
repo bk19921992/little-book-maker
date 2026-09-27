@@ -71,6 +71,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       setIsGenerating(true);
       updateProgress(5);
 
+      // Give this book an id up front - billing and (later) saving key off it.
+      const storyId = config.storyId || crypto.randomUUID();
+
       // Step 1: Plan the story
       toast.info('Planning your story...');
       const planResponse = await api.planStory(config);
@@ -99,11 +102,11 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // Step 3: Generate images (AI-powered illustrations)
       toast.info('Creating AI illustrations...');
       // Build a quick lookup for outline data
-      const outlineByPage = new Map(planResponse.outline.pages.map((p: any) => [p.page, p]));
+      const outlineByPage = new Map(planResponse.outline.pages.map((p: { page: number; imagePrompt?: string; visualBrief?: string }) => [p.page, p]));
       const imagePrompts = writeResponse.pages
         .filter((p) => p && p.page !== undefined)
         .map((p) => {
-          const outline = outlineByPage.get(p.page) || {} as any;
+          const outline = outlineByPage.get(p.page) ?? {};
           return {
             page: p.page,
             prompt: outline.imagePrompt || outline.visualBrief || 'storybook scene',

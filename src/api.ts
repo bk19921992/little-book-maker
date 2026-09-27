@@ -1,21 +1,33 @@
 import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
+
+// Read the friendly error message returned by an edge function (401/402/429/
+// validation/moderation responses) so the UI can show it to the user.
+const extractFunctionError = async (error: unknown): Promise<string> => {
+  try {
+    const context = (error as { context?: Response }).context;
+    if (context && typeof context.json === 'function') {
+      const body = await context.json();
+      if (body && typeof body.error === 'string' && body.error.trim()) {
+        return body.error;
+      }
+    }
+  } catch {
+    // fall through to the generic message
+  }
+  return error instanceof Error ? error.message : 'Edge Function error';
+};
+
 // API client for communicating with Supabase edge functions
 class APIClient {
-  private async invokeFunction<T>(functionName: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
+  private async invokeFunction<T>(functionName: string, body: unknown): Promise<T> {
     try {
       if (supabaseConfigError) {
         throw new Error(supabaseConfigError);
       }
 
-      console.log(`Calling ${functionName} with:`, body)
-      const { data, error } = await supabase.functions.invoke(functionName, {
-        body,
-        headers,
-      });
-
-      console.log(`${functionName} response:`, { data, error })
+      const { data, error } = await supabase.functions.invoke(functionName, { body });
 
       if (error) {
         console.error(`Error calling ${functionName}:`, error);
@@ -24,13 +36,13 @@ class APIClient {
         if (msg.includes('Failed to send a request to the Edge Function')) {
           console.warn(`[${functionName}] Retry after transient send failure...`);
           await new Promise((r) => setTimeout(r, 600));
-          const retry = await supabase.functions.invoke(functionName, { body, headers });
+          const retry = await supabase.functions.invoke(functionName, { body });
           if (retry.error) {
-            throw new Error(`[${functionName}] ${retry.error.message || 'Edge Function request failed again'}`);
+            throw new Error(`[${functionName}] ${await extractFunctionError(retry.error)}`);
           }
           return retry.data as T;
         }
-        throw new Error(`[${functionName}] ${msg}`);
+        throw new Error(`[${functionName}] ${await extractFunctionError(error)}`);
       }
 
       return data as T;
@@ -65,37 +77,27 @@ class APIClient {
   async exportPDF(
     config: StoryConfig,
     pages: StoryPage[],
-    includeBleed: boolean = true,
-    authToken?: string
+    storyId: string,
+    includeBleed: boolean = true
   ): Promise<ExportResponse> {
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers['X-Billing-Token'] = authToken;
-    }
-    
     return this.invokeFunction<ExportResponse>('export-pdf', {
       config,
       pages,
+      storyId,
       includeBleed,
-    }, headers);
+    });
   }
 
   async createPrintOrder(
     provider: 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO',
     pdfUrl: string,
-    pageSize: PageSizePreset,
-    authToken?: string
+    pageSize: PageSizePreset
   ): Promise<PrintOrderResponse> {
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers['X-Billing-Token'] = authToken;
-    }
-    
     return this.invokeFunction<PrintOrderResponse>('create-print-order', {
       provider,
       pdfUrl,
       pageSize,
-    }, headers);
+    });
   }
 
   // Mock data for development

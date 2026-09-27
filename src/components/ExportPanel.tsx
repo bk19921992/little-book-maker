@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -20,8 +20,9 @@ import { StoryConfig } from '../types';
 import { api } from '../api';
 import { toast } from 'sonner';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
-import { getSession, markFirstExportUsed } from '@/lib/session';
-import { useAuth } from '@/context/AuthContext';
+
+// Print stays hidden until Phase 5 - the server refuses orders while the flag is off too.
+const PRINT_ENABLED = import.meta.env.VITE_PRINT_ENABLED === 'true';
 
 interface ExportPanelProps {
   config: StoryConfig;
@@ -51,23 +52,19 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const [showExportCheckout, setShowExportCheckout] = useState(false);
   const [showPrintCheckout, setShowPrintCheckout] = useState(false);
 
-  const { user } = useAuth();
-  const session = useMemo(() => getSession(user?.id), [user?.id]);
-  const [firstExportUsed, setFirstExportUsed] = useState(session.firstExportUsed);
-
-  useEffect(() => {
-    setFirstExportUsed(session.firstExportUsed);
-  }, [session.sessionId]);
-
-  const exportPDF = async (billingToken?: string) => {
+  const exportPDF = async () => {
     if (!config.pages || config.pages.length === 0) {
       toast.error('No pages to export');
+      return;
+    }
+    if (!config.storyId) {
+      toast.error('This book is missing its id - please go back and generate again.');
       return;
     }
 
     setIsExporting(true);
     try {
-      const response = await api.exportPDF(config, config.pages, true, billingToken);
+      const response = await api.exportPDF(config, config.pages, config.storyId, true);
 
       onConfigChange({
         exports: {
@@ -76,14 +73,10 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         },
       });
 
-      if (!firstExportUsed) {
-        markFirstExportUsed(user?.id);
-        setFirstExportUsed(true);
-      }
-
       toast.success('PDFs generated successfully!');
     } catch (error) {
-      toast.error('Failed to generate PDFs');
+      const message = error instanceof Error ? error.message : 'Failed to generate PDFs';
+      toast.error(message);
       console.error('Export error:', error);
     } finally {
       setIsExporting(false);
@@ -92,19 +85,16 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   };
 
   const handleExportClick = () => {
-    if (isFirstExport) {
-      exportPDF();
-    } else {
-      setShowExportCheckout(true);
-    }
+    // Billing (free first export or payment) is settled with the server first.
+    setShowExportCheckout(true);
   };
 
-  const handleExportSuccess = (billingToken: string) => {
+  const handleExportSuccess = () => {
     setShowExportCheckout(false);
-    exportPDF(billingToken);
+    exportPDF();
   };
 
-  const createPrintOrder = async (billingToken?: string) => {
+  const createPrintOrder = async () => {
     if (!config.exports?.printPdfUrl) {
       toast.error('Please export PDFs first');
       return;
@@ -115,8 +105,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       const response = await api.createPrintOrder(
         selectedProvider,
         config.exports.printPdfUrl,
-        config.pageSize,
-        billingToken
+        config.pageSize
       );
 
       setPrintResult(response);
@@ -139,9 +128,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     setShowPrintCheckout(true);
   };
 
-  const handlePrintSuccess = (billingToken: string) => {
+  const handlePrintSuccess = () => {
     setShowPrintCheckout(false);
-    createPrintOrder(billingToken);
+    createPrintOrder();
   };
 
   const downloadFile = (url: string, filename: string) => {
@@ -156,8 +145,6 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const storyTitle = config.children.length > 0
     ? `${config.children.join(' and ')}'s ${config.storyType} Story`
     : `A ${config.storyType} Story`;
-
-  const isFirstExport = !firstExportUsed;
 
   const handleCreateAnother = () => {
     onReset();
@@ -228,11 +215,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Badge variant="secondary">Includes print-ready & web PDF</Badge>
-              {isFirstExport && (
-                <Badge variant="outline" className="text-story-nature border-story-nature">
-                  First export is free
-                </Badge>
-              )}
+              <Badge variant="outline" className="text-story-nature border-story-nature">
+                First export is free
+              </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
               Generate professionally typeset PDFs that include all text, illustrations, bleed and trim marks.
@@ -287,7 +272,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </CardContent>
       </Card>
 
-      {/* Print Order */}
+      {/* Print Order - hidden until Phase 5 */}
+      {PRINT_ENABLED && (
       <Card className="story-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -362,6 +348,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           )}
         </CardContent>
       </Card>
+      )}
 
       <Dialog open={showExportCheckout} onOpenChange={setShowExportCheckout}>
         <DialogContent>
@@ -373,6 +360,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           </DialogHeader>
           <CheckoutSheet
             item="export"
+            storyId={config.storyId}
             onSuccess={handleExportSuccess}
             onCancel={() => setShowExportCheckout(false)}
           />
@@ -389,6 +377,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           </DialogHeader>
           <CheckoutSheet
             item="print"
+            storyId={config.storyId}
             onSuccess={handlePrintSuccess}
             onCancel={() => setShowPrintCheckout(false)}
           />

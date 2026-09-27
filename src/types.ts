@@ -24,6 +24,7 @@ export interface StoryConfig {
     dedication?: string;
   };
   contentSafety: boolean;           // must be true to generate
+  storyId?: string;                 // per-book id, set when planning starts (billing + future saving)
   imageStyle: 'Picture-book' | 'Watercolour' | 'Crayon' | 'Paper cut-out' | 'Cartoon line art' | { other: string };
   pageSize: PageSizePreset;
   imageSeed?: number | null;
@@ -136,6 +137,6 @@ export interface PrintOrderResponse {
   provider: string;
   orderId?: string;
   checkoutUrl?: string;
-  raw?: any;
+  raw?: unknown;
   error?: string;
 }
