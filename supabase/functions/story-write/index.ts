@@ -222,7 +222,7 @@ Important Instructions:
         const lines = t.split('\n').map((l) => l.trim()).filter(Boolean)
         return lines.length > maxLines || lines.some((l) => lineWords(l) > MAX_LINE_WORDS)
       }
-      for (let attempt = 0; attempt < 2 && needsRebreak(pageText); attempt++) {
+      for (let attempt = 0; attempt < 3 && needsRebreak(pageText); attempt++) {
         console.log(`Rebreaking page ${pageOutline.page} into <=${MAX_LINE_WORDS}-word lines (attempt ${attempt + 1})`)
         const rebreak = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
@@ -231,7 +231,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: 'You reformat children\'s story pages for typesetting. You never drop meaning.' },
-              { role: 'user', content: `Reformat this children's book page so EVERY line has at most ${MAX_LINE_WORDS} words and there are at most ${maxLines} lines, newline-separated. Keep UK English, all proper nouns, the ${config.narrationStyle} feel and as many of the original words as possible - prefer breaking one long line into two shorter rhyming lines over deleting words. If you must exceed ${maxLines} lines to keep every line at most ${MAX_LINE_WORDS} words, keep the lines short anyway. Return ONLY the reformatted text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `Rewrite this children's book page as at most ${maxLines} newline-separated lines where EVERY line has at most ${MAX_LINE_WORDS} words. Both limits are hard. You may reword and compress freely to fit them, but keep the story beats, all proper nouns, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
