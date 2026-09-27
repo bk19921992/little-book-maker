@@ -1,4 +1,4 @@
-import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
+import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
 // API client for communicating with Supabase edge functions
@@ -54,10 +54,12 @@ class APIClient {
 
   async generateImages(
     pageSize: PageSizePreset,
+    pageLayout: PageLayout,
     prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[]
   ): Promise<ImageGenerateResponse> {
     return this.invokeFunction<ImageGenerateResponse>('generate-images', {
       pageSize,
+      pageLayout,
       prompts,
     });
   }
@@ -122,6 +124,7 @@ class APIClient {
       contentSafety: true,
       imageStyle: 'Picture-book',
       pageSize: 'A5 portrait',
+      pageLayout: 'split',
       imageSeed: 12345,
     };
 
