@@ -74,7 +74,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     setIsRegeneratingImage(true);
     try {
       const prompt = outlinePage.imagePrompt || outlinePage.visualBrief || 'storybook illustration';
-      const response = await api.generateImages(config.pageSize, [
+      const response = await api.generateImages(config.pageSize, config.pageLayout, [
         {
           page: pageNumber,
           prompt,
