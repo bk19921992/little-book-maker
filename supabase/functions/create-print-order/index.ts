@@ -45,7 +45,8 @@ async function createPeechoOrder(pdfUrl: string, pageSize: string, customerInfo?
   const pageDimensions = {
     'A5 portrait': { width: 14.8, height: 21.0 },
     'A4 portrait': { width: 21.0, height: 29.7 },
-    '210×210 mm square': { width: 21.0, height: 21.0 }
+    '210×210 mm square': { width: 21.0, height: 21.0 },
+    'A4 landscape': { width: 29.7, height: 21.0 }
   };
 
   const dimensions = pageDimensions[pageSize] || pageDimensions['A5 portrait'];
