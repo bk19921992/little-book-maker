@@ -1,12 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
+import type { PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
+import * as fontkit from "https://esm.sh/@pdf-lib/fontkit@1.1.1";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-
-// Page size calculations (300 DPI = 11.811 pixels per mm)
-const DPI = 300;
-const MM_TO_PX = DPI / 25.4; // 11.811 pixels per mm
-const BLEED_MM = 3;
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -27,40 +24,177 @@ const PAGE_SIZES = {
   }
 };
 
-function mmToPx(mm: number): number {
-  return mm * MM_TO_PX;
-}
-
 function mmToPdfPoints(mm: number): number {
   return mm * 2.834645669; // 1mm = 2.834645669 PDF points
 }
 
+// Paper-plate design system: artwork on top, story text on a warm paper band
+// below. Dark ink on paper always passes contrast; no strokes or halos.
+const PAPER = rgb(1, 0.976, 0.941);      // #FFF9F0
+const INK = rgb(0.169, 0.149, 0.133);    // #2B2622
+const SAFE = 0.07;                       // safe-area inset, share of page width
+const TEXT_MEASURE = 0.78;               // max line measure, share of page width
+const MAX_VERSE_LINES = 4;
 
-// Average luminance (0-255) of the bottom 30% of a JPEG image, used to pick a
-// legible overlay text colour. Returns null when the bytes cannot be sampled
-// (non-JPEG, decode failure) so callers can fall back to a safe default.
-async function bottomStripLuminance(bytes?: Uint8Array, mimeType?: string): Promise<number | null> {
+const FONT_URLS = {
+  text: "https://cdn.jsdelivr.net/fontsource/fonts/nunito@latest/latin-600-normal.ttf",
+  display: "https://cdn.jsdelivr.net/fontsource/fonts/nunito@latest/latin-800-normal.ttf",
+};
+
+interface EmbeddedFonts {
+  text: PDFFont;
+  display: PDFFont;
+  custom: boolean;
+}
+
+// Nunito (SemiBold text, ExtraBold display) embedded from static TTFs; falls
+// back to Helvetica when the fetch fails so an export can never hard-break on
+// a font download.
+async function embedFonts(pdfDoc: PDFDocument): Promise<EmbeddedFonts> {
   try {
-    if (!bytes || !(mimeType || '').includes('jpe') && !(mimeType || '').includes('jpg')) return null;
-    const jpegJs = await import("https://esm.sh/jpeg-js@0.4.4");
-    const img: any = jpegJs.decode(bytes, { maxMemoryUsageInMB: 96 });
-    const { width, height, data } = img;
-    if (!width || !height || !data) return null;
-    const startRow = Math.floor(height * 0.7);
-    let sum = 0;
-    let count = 0;
-    for (let y = startRow; y < height; y += 2) {
-      for (let x = 0; x < width; x += 2) {
-        const i = (y * width + x) * 4;
-        sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        count++;
-      }
-    }
-    return count > 0 ? sum / count : null;
-  } catch (lumError) {
-    console.warn('Could not sample image luminance, using default overlay text colour');
-    return null;
+    const [textRes, displayRes] = await Promise.all([
+      fetch(FONT_URLS.text),
+      fetch(FONT_URLS.display),
+    ]);
+    if (!textRes.ok || !displayRes.ok) throw new Error('font fetch failed');
+    const [textBytes, displayBytes] = await Promise.all([
+      textRes.arrayBuffer(),
+      displayRes.arrayBuffer(),
+    ]);
+    // esm.sh exposes fontkit's CommonJS export under .default in a namespace import.
+    const fk = (fontkit as unknown as { default?: typeof fontkit }).default ?? fontkit;
+    pdfDoc.registerFontkit(fk);
+    // liga disabled: pdf-lib/fontkit double-counts ligature advances, leaving
+    // visible gaps inside words like 'flies'.
+    const text = await pdfDoc.embedFont(new Uint8Array(textBytes), { features: { liga: false } });
+    const display = await pdfDoc.embedFont(new Uint8Array(displayBytes), { features: { liga: false } });
+    return { text, display, custom: true };
+  } catch (fontError) {
+    console.warn('Custom font embed failed, falling back to Helvetica', fontError);
+    const fallback = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    return { text: fallback, display: fallback, custom: false };
   }
+}
+
+// Typographic normalisation for every rendered string: curly apostrophes and
+// quotes, proper ellipsis and em dashes.
+function normaliseTypography(s: string): string {
+  return s
+    .replace(/\.{3}/g, '…')
+    .replace(/--/g, '—')
+    .replace(/'/g, '\u2019')
+    .replace(/"([^"]*)"/g, '\u201C$1\u201D');
+}
+
+function sentenceCase(s: string): string {
+  const t = s.trim();
+  return t ? t[0].toLowerCase() + t.slice(1) : t;
+}
+
+// WCAG-style contrast ratio between two 0-1 rgb triples.
+function contrastRatio(a: { r: number; g: number; b: number }, b: { r: number; g: number; b: number }): number {
+  const lum = (c: { r: number; g: number; b: number }) => {
+    const f = (v: number) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const l1 = lum(a);
+  const l2 = lum(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+interface StoryPage {
+  page: number;
+  text: string;
+  imageUrl?: string;
+  imageLocked?: boolean;
+  layout?: string;
+}
+
+interface TypesetLine {
+  text: string;
+  indent: boolean; // continuation of a soft-wrapped verse line
+}
+
+// Pick the break point for an overlong verse line: prefer the last clause
+// boundary (comma, semicolon, conjunction) that fits; otherwise the last word
+// boundary that fits.
+function chooseBreak(line: string, font: PDFFont, fontSize: number, maxWidth: number): number {
+  const words = line.split(' ');
+  let lastFit = -1;
+  let lastClauseFit = -1;
+  let acc = '';
+  for (let i = 0; i < words.length - 1; i++) {
+    acc = acc ? `${acc} ${words[i]}` : words[i];
+    if (font.widthOfTextAtSize(acc, fontSize) <= maxWidth) {
+      lastFit = acc.length;
+      const w = words[i];
+      if (/[,;:]$/.test(w) || /^(and|or|but|so|then)$/i.test(words[i + 1] || '')) {
+        lastClauseFit = acc.length;
+      }
+    } else {
+      break;
+    }
+  }
+  const cut = lastClauseFit > 0 ? lastClauseFit : lastFit;
+  return cut > 0 ? cut : line.indexOf(' ') > 0 ? line.indexOf(' ') : line.length;
+}
+
+// Verse-aware typesetting. Hard newlines in the story text are sacred: one
+// source line is one typeset line whenever it fits the measure. Only an
+// overlong line is soft-wrapped, at a clause boundary where possible, with a
+// hanging indent on the continuation (standard poetry convention).
+function typesetVerse(raw: string, font: PDFFont, fontSize: number, maxWidth: number): TypesetLine[] {
+  const hardLines = raw
+    .split('\n')
+    .map((l) => normaliseTypography(l.replace(/\s+/g, ' ').trim()))
+    .filter(Boolean);
+  const out: TypesetLine[] = [];
+  for (const hardLine of hardLines) {
+    if (font.widthOfTextAtSize(hardLine, fontSize) <= maxWidth) {
+      out.push({ text: hardLine, indent: false });
+      continue;
+    }
+    let rest = hardLine;
+    let first = true;
+    while (rest) {
+      if (font.widthOfTextAtSize(rest, fontSize) <= maxWidth) {
+        out.push({ text: rest, indent: !first });
+        break;
+      }
+      const cut = chooseBreak(rest, font, fontSize, maxWidth);
+      out.push({ text: rest.slice(0, cut).trimEnd(), indent: !first });
+      rest = rest.slice(cut).trimStart();
+      first = false;
+    }
+  }
+  return out;
+}
+
+// Fixed type tiers picked by verse line count - never scale-to-fit. Sizes are
+// a share of the page width so they scale across A5, A4 and square formats,
+// and every page of a book lands on one of the same three sizes.
+function verseTier(hardLineCount: number, pageWidth: number, includeBleed: boolean) {
+  const share = hardLineCount <= 2 ? 0.052 : hardLineCount === 3 ? 0.046 : hardLineCount === 4 ? 0.041 : 0.038;
+  const fontSize = Math.max(12, Math.round(pageWidth * share)) + (includeBleed ? 2 : 0);
+  return {
+    fontSize,
+    lineStep: Math.round(fontSize * 1.4),
+    maxWidth: pageWidth * TEXT_MEASURE,
+  };
+}
+
+interface StoryConfigInput {
+  children: string[];
+  pageSize: string;
+  pageLayout?: string;
+  storyType?: string;
+  personal?: { dedication?: string };
+}
+
+interface QaEntry {
+  where: string;
+  severity: 'pass' | 'warn' | 'fail';
+  check: string;
 }
 
 async function fetchImageBytes(imageUrl: string): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
@@ -94,143 +228,180 @@ async function fetchImageBytes(imageUrl: string): Promise<{ bytes: Uint8Array; m
   }
 }
 
-interface StoryPage {
-  page: number;
-  text: string;
-  imageUrl?: string;
-  imageLocked?: boolean;
-  layout?: string;
-}
-
-
-// Auto typography: picks the type size, line spacing and measure per page so
-// the words stay very legible and look professionally set whatever the inputs.
-// Short pages (young reads) get display-sized type; longer pages settle into a
-// comfortable reading size. Sizes are a share of the page width, so they scale
-// across A5, A4 and square formats.
-function overlayTypography(text: string, pageWidth: number, overlay: boolean, includeBleed: boolean) {
-  const words = text.split(' ').filter(Boolean).length;
-  let share: number;
-  if (words <= 6) share = 0.088;
-  else if (words <= 12) share = 0.072;
-  else if (words <= 20) share = 0.058;
-  else if (words <= 35) share = 0.048;
-  else share = 0.040;
-  if (!overlay) share *= 0.62; // split layout sets text in a narrower block
-  const fontSize = Math.max(12, Math.round(pageWidth * share)) + (includeBleed ? 2 : 0);
-  return {
-    fontSize,
-    lineStep: Math.round(fontSize * 1.28),
-    maxWidth: pageWidth * 0.84,
-    words,
-  };
-}
-
-interface StoryConfigInput {
-  children: string[];
-  pageSize: string;
-  pageLayout?: string;
-  storyType?: string;
-  personal?: { dedication?: string };
-}
-
-async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean): Promise<Uint8Array> {
-  const pdfDoc = await PDFDocument.create();
-  
-  // Embed Nunito font (fallback to Helvetica if not available)
-  let font;
-  try {
-    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  } catch {
-    font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+async function embedAny(pdfDoc: PDFDocument, imageData: { bytes: Uint8Array; mimeType: string }) {
+  if (imageData.mimeType.includes('png')) {
+    return await pdfDoc.embedPng(imageData.bytes);
   }
-  
+  return await pdfDoc.embedJpg(imageData.bytes);
+}
+
+async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
+  const pdfDoc = await PDFDocument.create();
+  const qa: QaEntry[] = [];
+
+  const fonts = await embedFonts(pdfDoc);
+  qa.push({
+    where: 'book',
+    severity: fonts.custom ? 'pass' : 'warn',
+    check: fonts.custom ? 'typeface: Nunito embedded' : 'typeface: FALLBACK Helvetica (Nunito fetch failed)',
+  });
+  const ratio = contrastRatio(
+    { r: 0.169, g: 0.149, b: 0.133 },
+    { r: 1, g: 0.976, b: 0.941 },
+  );
+  qa.push({
+    where: 'book',
+    severity: ratio >= 4.5 ? 'pass' : 'fail',
+    check: `contrast: ink on paper ${ratio.toFixed(1)}:1 (gate 4.5:1)`,
+  });
+
   const pageSize = (PAGE_SIZES as Record<string, (typeof PAGE_SIZES)['A5 portrait']>)[config.pageSize] || PAGE_SIZES['A5 portrait'];
   const dimensions = includeBleed ? pageSize.withBleed : pageSize.content;
-  
+
   const pageWidth = mmToPdfPoints(dimensions.width);
   const pageHeight = mmToPdfPoints(dimensions.height);
-  
-  // Create cover page
+  const safeInset = pageWidth * SAFE;
+
+  // ---- Cover: full-bleed illustration with the title on a paper plate ----
+  const coverImagePage = pages.find((p) => p.imageUrl && !p.imageLocked);
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
-  
-  // Title
-  const titleText = config.children.length ? `${config.children.join(' & ')}'s Story` : 'Magical Story';
-  coverPage.drawText(titleText, {
-    x: pageWidth * 0.1,
-    y: pageHeight * 0.8,
-    size: includeBleed ? 24 : 20,
-    font,
-    color: rgb(0.2, 0.2, 0.2),
+  coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+
+  if (coverImagePage?.imageUrl) {
+    const coverData = await fetchImageBytes(coverImagePage.imageUrl);
+    if (coverData) {
+      try {
+        const img = await embedAny(pdfDoc, coverData);
+        const scale = Math.max(pageWidth / img.width, pageHeight / img.height);
+        const drawW = img.width * scale;
+        const drawH = img.height * scale;
+        coverPage.drawImage(img, {
+          x: (pageWidth - drawW) / 2,
+          y: (pageHeight - drawH) / 2,
+          width: drawW,
+          height: drawH,
+        });
+        qa.push({ where: 'cover', severity: 'pass', check: 'cover illustration present, full-bleed' });
+      } catch (coverError) {
+        console.error('Failed to embed cover image', coverError);
+        qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration failed to embed' });
+      }
+    } else {
+      qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration fetch failed' });
+    }
+  } else {
+    qa.push({ where: 'cover', severity: 'fail', check: 'no illustration available for the cover' });
+  }
+
+  const titleText = normaliseTypography(config.children.length ? `${config.children.join(' & ')}'s Story` : 'Magical Story');
+  const subtitleText = config.storyType ? normaliseTypography(`A ${sentenceCase(config.storyType)}`) : '';
+
+  // Display-sized title, auto-fit to the measure; subtitle at ~28% of it.
+  let titleSize = Math.round(pageWidth * 0.14);
+  const maxTitleWidth = pageWidth * TEXT_MEASURE;
+  while (titleSize > pageWidth * 0.07 && fonts.display.widthOfTextAtSize(titleText, titleSize) > maxTitleWidth) {
+    titleSize -= 1;
+  }
+  const subtitleSize = Math.max(12, Math.round(titleSize * 0.28));
+  const titleWidth = fonts.display.widthOfTextAtSize(titleText, titleSize);
+  const subtitleWidth = subtitleText ? fonts.text.widthOfTextAtSize(subtitleText, subtitleSize) : 0;
+  const plateTextWidth = Math.max(titleWidth, subtitleWidth);
+  const platePadX = titleSize * 0.55;
+  const platePadY = titleSize * 0.45;
+  const plateWidth = Math.min(pageWidth - safeInset * 2, plateTextWidth + platePadX * 2);
+  const plateHeight = titleSize * 1.15 + (subtitleText ? subtitleSize * 1.6 : 0) + platePadY * 2;
+  const plateX = (pageWidth - plateWidth) / 2;
+  const plateTop = pageHeight * 0.92; // title zone: top of page
+  const plateY = plateTop - plateHeight;
+
+  // Soft paper plate behind the title (double rect fakes a feathered edge).
+  coverPage.drawRectangle({
+    x: plateX - platePadX * 0.3,
+    y: plateY - platePadY * 0.3,
+    width: plateWidth + platePadX * 0.6,
+    height: plateHeight + platePadY * 0.6,
+    color: PAPER,
+    opacity: 0.35,
   });
-  
-  // Subtitle
-  if (config.storyType) {
-    coverPage.drawText(`A ${config.storyType}`, {
-      x: pageWidth * 0.1,
-      y: pageHeight * 0.75,
-      size: includeBleed ? 16 : 14,
-      font,
-      color: rgb(0.4, 0.4, 0.4),
+  coverPage.drawRectangle({ x: plateX, y: plateY, width: plateWidth, height: plateHeight, color: PAPER, opacity: 0.9 });
+
+  const titleY = plateY + plateHeight - platePadY - titleSize * 0.85;
+  coverPage.drawText(titleText, {
+    x: (pageWidth - titleWidth) / 2,
+    y: titleY,
+    size: titleSize,
+    font: fonts.display,
+    color: INK,
+  });
+  if (subtitleText) {
+    coverPage.drawText(subtitleText, {
+      x: (pageWidth - subtitleWidth) / 2,
+      y: titleY - subtitleSize * 1.5,
+      size: subtitleSize,
+      font: fonts.text,
+      color: INK,
     });
   }
-  
-  // Dedication
+
   if (config.personal?.dedication) {
-    coverPage.drawText(config.personal.dedication, {
-      x: pageWidth * 0.1,
-      y: pageHeight * 0.2,
-      size: includeBleed ? 14 : 12,
-      font,
-      color: rgb(0.3, 0.3, 0.3),
+    const dedText = normaliseTypography(config.personal.dedication);
+    const dedSize = Math.max(10, Math.round(pageWidth * 0.024));
+    const dedWidth = fonts.text.widthOfTextAtSize(dedText, dedSize);
+    const dedPad = dedSize * 0.8;
+    coverPage.drawRectangle({
+      x: (pageWidth - dedWidth) / 2 - dedPad,
+      y: safeInset - dedPad * 0.5,
+      width: dedWidth + dedPad * 2,
+      height: dedSize * 1.2 + dedPad,
+      color: PAPER,
+      opacity: 0.88,
+    });
+    coverPage.drawText(dedText, {
+      x: (pageWidth - dedWidth) / 2,
+      y: safeInset + dedPad * 0.25,
+      size: dedSize,
+      font: fonts.text,
+      color: INK,
     });
   }
-  
-  // Add story pages
+
+  // ---- Story pages ----
   for (const page of pages) {
     const storyPage = pdfDoc.addPage([pageWidth, pageHeight]);
-    
-    // Page number
-    storyPage.drawText(`${page.page}`, {
-      x: pageWidth * 0.9,
-      y: pageHeight * 0.05,
-      size: 10,
-      font,
-      color: rgb(0.5, 0.5, 0.5),
-    });
-    
-    const layout = config.pageLayout === 'overlay' ? 'overlay' : 'split';
-    const overlay = layout === 'overlay';
+    storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
 
-    const imageAreaWidth = overlay ? pageWidth : pageWidth * 0.8;
-    const imageAreaHeight = overlay
-      ? pageHeight
-      : includeBleed ? pageHeight * 0.4 : pageHeight * 0.35;
-    const imageAreaX = overlay ? 0 : pageWidth * 0.1;
-    const imageAreaY = overlay ? 0 : pageHeight - imageAreaHeight - pageHeight * 0.15;
+    const overlay = config.pageLayout === 'overlay';
+    const rawText = page.text || '';
+    const hardLineCount = rawText.split('\n').map((l) => l.trim()).filter(Boolean).length || 1;
+    const type = verseTier(hardLineCount, pageWidth, includeBleed);
+    const fontSize = type.fontSize;
+    const lineStep = type.lineStep;
+    const textLines = rawText.trim() ? typesetVerse(rawText, fonts.text, fontSize, type.maxWidth) : [];
+
+    // Text block geometry: common left axis, centred as a block.
+    const indentX = fontSize * 1.5;
+    const lineWidths = textLines.map((l) => fonts.text.widthOfTextAtSize(l.text, fontSize) + (l.indent ? indentX : 0));
+    const blockWidth = lineWidths.length ? Math.max(...lineWidths) : 0;
+    const blockHeight = textLines.length ? (textLines.length - 1) * lineStep + fontSize : 0;
+
+    // Paper band across the bottom: sized to the text block, floored at 24%.
+    const padY = fontSize * 0.9;
+    const minBand = pageHeight * 0.24;
+    const bandHeight = textLines.length ? Math.max(minBand, blockHeight + padY * 2 + safeInset * 0.5) : minBand;
+    const bandTop = bandHeight;
+
+    // Artwork region: everything above the band.
+    const artHeight = pageHeight - bandTop;
 
     let imagePlaced = false;
-    let overlayImageData: { bytes: Uint8Array; mimeType: string } | null = null;
-
     if (!page.imageLocked && page.imageUrl) {
       const imageData = await fetchImageBytes(page.imageUrl);
-      overlayImageData = imageData;
       if (imageData) {
         try {
-          let embeddedImage;
-          if (imageData.mimeType.includes('png')) {
-            embeddedImage = await pdfDoc.embedPng(imageData.bytes);
-          } else {
-            embeddedImage = await pdfDoc.embedJpg(imageData.bytes);
-          }
-
+          const embeddedImage = await embedAny(pdfDoc, imageData);
           if (overlay) {
-            // Full-page picture: scale to cover the whole page (centre crop;
-            // anything past the page edge is clipped by the PDF page box).
-            const scale = Math.max(
-              pageWidth / embeddedImage.width,
-              pageHeight / embeddedImage.height,
-            );
+            // Full-bleed picture behind the whole page; the band sits on it.
+            const scale = Math.max(pageWidth / embeddedImage.width, pageHeight / embeddedImage.height);
             const drawW = embeddedImage.width * scale;
             const drawH = embeddedImage.height * scale;
             storyPage.drawImage(embeddedImage, {
@@ -240,15 +411,19 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
               height: drawH,
             });
           } else {
-            const fitted = embeddedImage.scaleToFit(imageAreaWidth, imageAreaHeight);
-            const imageX = imageAreaX + (imageAreaWidth - fitted.width) / 2;
-            const imageY = imageAreaY + (imageAreaHeight - fitted.height) / 2;
+            // Split: cover-crop the artwork into the region above the band,
+            // edge to edge.
+            const scale = Math.max(pageWidth / embeddedImage.width, artHeight / embeddedImage.height);
+            const drawW = embeddedImage.width * scale;
+            const drawH = embeddedImage.height * scale;
             storyPage.drawImage(embeddedImage, {
-              x: imageX,
-              y: imageY,
-              width: fitted.width,
-              height: fitted.height,
+              x: (pageWidth - drawW) / 2,
+              y: bandTop + (artHeight - drawH) / 2,
+              width: drawW,
+              height: drawH,
             });
+            // Mask any artwork spilling into the band (centre crop overflow).
+            storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: bandTop, color: PAPER });
           }
           imagePlaced = true;
         } catch (imageError) {
@@ -257,133 +432,88 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       }
     }
 
-    if (!imagePlaced && !overlay) {
-      storyPage.drawRectangle({
-        x: imageAreaX,
-        y: imageAreaY,
-        width: imageAreaWidth,
-        height: imageAreaHeight,
-        borderColor: rgb(0.8, 0.8, 0.8),
-        borderWidth: 1,
-      });
+    qa.push({
+      where: `page ${page.page}`,
+      severity: imagePlaced ? 'pass' : page.imageLocked ? 'pass' : 'fail',
+      check: imagePlaced
+        ? 'illustration placed'
+        : page.imageLocked
+          ? 'illustration intentionally omitted'
+          : 'illustration MISSING',
+    });
 
-      const placeholderText = page.imageLocked
-        ? 'Illustration intentionally omitted'
-        : 'Illustration pending';
-
-      const textWidth = font.widthOfTextAtSize(placeholderText, 12);
-      const textX = imageAreaX + (imageAreaWidth - textWidth) / 2;
-      const textY = imageAreaY + imageAreaHeight / 2 - 6;
-
+    if (!imagePlaced && !page.imageLocked) {
+      const phX = safeInset;
+      const phW = pageWidth - safeInset * 2;
+      const phY = bandTop + artHeight * 0.2;
+      const phH = artHeight * 0.6;
+      storyPage.drawRectangle({ x: phX, y: phY, width: phW, height: phH, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 1 });
+      const placeholderText = 'Illustration pending';
+      const phTextWidth = fonts.text.widthOfTextAtSize(placeholderText, 12);
       storyPage.drawText(placeholderText, {
-        x: textX,
-        y: textY,
+        x: phX + (phW - phTextWidth) / 2,
+        y: phY + phH / 2 - 6,
         size: 12,
-        font,
+        font: fonts.text,
         color: rgb(0.6, 0.6, 0.6),
       });
     }
 
-    // Story text (normalise whitespace: raw newlines cannot be WinAnsi-encoded)
-    const cleanText = (page.text || '').replace(/\s+/g, ' ').trim();
-    if (cleanText) {
-      const type = overlayTypography(cleanText, pageWidth, layout === 'overlay', includeBleed);
-      const fontSize = type.fontSize;
-      const lineStep = type.lineStep;
-      const textLines = wrapText(cleanText, font, fontSize, type.maxWidth);
+    // Paper band (opaque) over the bottom of the page for overlay pages; for
+    // split pages the page background is already paper and the art was masked.
+    if (overlay) {
+      storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: bandTop, color: PAPER });
+    }
 
-      if (overlay) {
-        // True overlay: words sit directly on the picture, centred, with no box.
-        // Contrast-aware: sample the bottom of the illustration - dark text on
-        // light scenes, white text on dark scenes - with a soft halo of the
-        // opposite colour so the words stay legible against the artwork.
-        const luminance = overlayImageData
-          ? await bottomStripLuminance(overlayImageData.bytes, overlayImageData.mimeType)
-          : null;
-        const darkText = luminance !== null ? luminance >= 140 : false;
-        const textColour = darkText ? rgb(0.07, 0.07, 0.09) : rgb(1, 1, 1);
-        const haloColour = darkText ? rgb(1, 1, 1) : rgb(0, 0, 0);
-        // Mid-tone artwork (luminance near the switch point) is the hardest to
-        // read against, so the halo gets stronger there. Offset scales with the
-        // type size so big display text keeps an even outline.
-        const ambiguous = luminance !== null && luminance > 100 && luminance < 180;
-        const haloOpacity = ambiguous ? 0.75 : 0.55;
-        const haloOffset = Math.max(0.8, fontSize * 0.055);
-        const haloDirs = [
-          [-haloOffset, 0], [haloOffset, 0], [0, -haloOffset], [0, haloOffset],
-          [-haloOffset, -haloOffset], [haloOffset, -haloOffset],
-          [-haloOffset, haloOffset], [haloOffset, haloOffset],
-        ];
+    if (textLines.length) {
+      const blockX = (pageWidth - blockWidth) / 2;
+      let baseline = bandTop - padY - fontSize * 0.8;
+      // Centre the block vertically within the band.
+      baseline = (bandTop + blockHeight) / 2 - fontSize * 0.82;
+      for (let i = 0; i < textLines.length; i++) {
+        const line = textLines[i];
+        storyPage.drawText(line.text, {
+          x: blockX + (line.indent ? indentX : 0),
+          y: baseline - i * lineStep,
+          size: fontSize,
+          font: fonts.text,
+          color: INK,
+        });
+      }
 
-        const bottomMargin = pageHeight * 0.07;
-        let yPos = bottomMargin + (textLines.length - 1) * lineStep;
-        for (const line of textLines) {
-          const lineWidth = font.widthOfTextAtSize(line, fontSize);
-          const x = (pageWidth - lineWidth) / 2;
-          for (const [dx, dy] of haloDirs) {
-            storyPage.drawText(line, {
-              x: x + dx,
-              y: yPos + dy,
-              size: fontSize,
-              font,
-              color: haloColour,
-              opacity: haloOpacity,
-            });
-          }
-          storyPage.drawText(line, {
-            x,
-            y: yPos,
-            size: fontSize,
-            font,
-            color: textColour,
-          });
-          yPos -= lineStep;
-        }
-      } else {
-        let yPos = pageHeight * 0.35;
-        for (const line of textLines) {
-          storyPage.drawText(line, {
-            x: pageWidth * 0.1,
-            y: yPos,
-            size: fontSize,
-            font,
-            color: rgb(0.1, 0.1, 0.1),
-          });
-          yPos -= lineStep;
-        }
+      // QA: shape checks on this page's typeset block.
+      if (hardLineCount > MAX_VERSE_LINES) {
+        qa.push({ where: `page ${page.page}`, severity: 'warn', check: `${hardLineCount} verse lines (cap ${MAX_VERSE_LINES}); copy should be shortened upstream` });
+      }
+      const longest = Math.max(...lineWidths);
+      const shortest = Math.min(...lineWidths);
+      if (textLines.length > 1 && shortest < longest * 0.35) {
+        qa.push({ where: `page ${page.page}`, severity: 'warn', check: 'ragged block: shortest line under 35% of longest' });
+      }
+      if (longest > type.maxWidth + 1) {
+        qa.push({ where: `page ${page.page}`, severity: 'warn', check: 'a line exceeds the 78% measure (unbreakable word?)' });
+      }
+      qa.push({ where: `page ${page.page}`, severity: 'pass', check: `type tier ${fontSize}pt for ${hardLineCount} verse line(s), fixed tier` });
+      if (blockWidth > pageWidth - safeInset * 2) {
+        qa.push({ where: `page ${page.page}`, severity: 'fail', check: 'text block crosses the safe area' });
       }
     }
-  }
-  
-  return await pdfDoc.save();
-}
 
-function wrapText(text: string, font: { widthOfTextAtSize: (t: string, s: number) => number }, fontSize: number, maxWidth: number): string[] {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let currentLine = '';
-  
-  for (const word of words) {
-    const testLine = currentLine + (currentLine ? ' ' : '') + word;
-    const textWidth = font.widthOfTextAtSize(testLine, fontSize);
-    
-    if (textWidth <= maxWidth) {
-      currentLine = testLine;
-    } else {
-      if (currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        lines.push(word);
-      }
-    }
+    // Folio: page number, bottom outer corner, inside the safe area.
+    const folio = `${page.page}`;
+    const folioSize = Math.max(9, Math.round(pageWidth * 0.019));
+    const folioWidth = fonts.text.widthOfTextAtSize(folio, folioSize);
+    storyPage.drawText(folio, {
+      x: pageWidth - safeInset - folioWidth,
+      y: safeInset * 0.55,
+      size: folioSize,
+      font: fonts.text,
+      color: INK,
+      opacity: 0.6,
+    });
   }
-  
-  if (currentLine) {
-    lines.push(currentLine);
-  }
-  
-  return lines;
+
+  return { bytes: await pdfDoc.save(), qa };
 }
 
 serve(async (req) => {
@@ -434,9 +564,10 @@ serve(async (req) => {
     }
 
     // Generate both web and print PDFs
-    const webPdfBytes = await createPDF(config, pages, false);
-    const printPdfBytes = await createPDF(config, pages, true);
-    
+    const web = await createPDF(config, pages, false);
+    const print = await createPDF(config, pages, true);
+    const qa = [...web.qa, ...print.qa.filter((p) => p.severity !== 'pass')];
+
     // Convert to base64 for JSON response
     // Convert in bounded chunks; spreading the entire illustrated PDF overflows the call stack.
     const toBase64 = (bytes: Uint8Array): string => {
@@ -446,9 +577,9 @@ serve(async (req) => {
       }
       return btoa(binary);
     };
-    const base64WebPdf = toBase64(webPdfBytes);
-    const base64PrintPdf = toBase64(printPdfBytes);
-    
+    const base64WebPdf = toBase64(web.bytes);
+    const base64PrintPdf = toBase64(print.bytes);
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -457,7 +588,8 @@ serve(async (req) => {
         webFilename: `${config.children?.join('-') || 'story'}-web.pdf`,
         printFilename: `${config.children?.join('-') || 'story'}-print.pdf`,
         pageCount: pages.length + 1, // +1 for cover
-        dimensions: (PAGE_SIZES as Record<string, unknown>)[config.pageSize] || PAGE_SIZES['A5 portrait']
+        dimensions: (PAGE_SIZES as Record<string, unknown>)[config.pageSize] || PAGE_SIZES['A5 portrait'],
+        qa,
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
