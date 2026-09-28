@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
+import { castDetailLines, fallbackPageText, speciesRule, storySubject } from "./castText.ts"
 import { contractViolations, lineBudget, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
 
 serve(async (req) => {
@@ -63,15 +64,14 @@ Story Details:
 - Theme: ${config.themePreset || config.themeCustom || 'Custom'}
 - Color Palette: ${config.palette.join(', ')}
 - Image Style: ${typeof config.imageStyle === 'string' ? config.imageStyle : config.imageStyle.other}
-- Main human child: ${config.children.length ? config.children.join(' and ') : 'a child protagonist'} (human child)
-- Pet companion: ${config.personal?.pets || 'a friendly pet dog named Ivy'} (animal, not human)
+${castDetailLines(config).join('\n')}
 
 
 Personal Touches to Include Naturally:
 - Town: ${config.personal.town || 'their hometown'}
 - Favorite Toy: ${config.personal.favouriteToy || 'their favorite toy'}
 - Favorite Color: ${config.personal.favouriteColour || 'their favorite color'}
-- Pets: ${config.personal.pets || 'friendly animals'}
+${config.personal.pets ? `- Pets: ${config.personal.pets}` : ''}
 ${config.personal.dedication ? `- Special Note: ${config.personal.dedication}` : ''}
 
 Page Requirements:
@@ -93,7 +93,7 @@ Important Instructions:
 - STRICTLY follow the reading level requirements above
 - Use the specified narration style: ${config.narrationStyle}
 - Include the child's name(s) naturally in the story
-- Keep species consistent: the child is human; Ivy is a dog (animal). Do not depict the child as a dog or the dog as a human.
+- ${speciesRule(config)}
 - Incorporate ALL personal details where appropriate and natural
 - Keep within the target word count (self-check)
 - Make the text engaging and age-appropriate
@@ -166,7 +166,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: "Write professional UK English children's story pages with published book quality. Return ONLY story text, no quotes or extra text." },
-              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write between ${range.min} and ${range.max} words. Format as newline-separated lines: ${lineRule}. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
+              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${storySubject(config)}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write between ${range.min} and ${range.max} words. Format as newline-separated lines: ${lineRule}. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
             ],
             max_completion_tokens: 600
           })
@@ -180,9 +180,7 @@ Important Instructions:
       // Final fallback with hard-coded text if all else fails
       if (!pageText || pageText.length < 10) {
         console.log(`All generation failed for page ${pageOutline.page}, using fallback`)
-        const childName = config.children[0] || 'William'
-        const petName = config.personal?.pets?.split(' ').pop() || 'Ivy'
-        pageText = `${childName} went to the ${config.setting.toLowerCase()}. ${childName} loves to play. ${petName} is a good dog. ${petName} runs fast. They play together. ${childName} is happy. ${petName} is happy too. Fun times!`
+        pageText = fallbackPageText(config)
       }
 
       const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length

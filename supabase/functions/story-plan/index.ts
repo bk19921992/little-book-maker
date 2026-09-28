@@ -98,7 +98,7 @@ Personal Details to Include:
 - Town/City: ${config.personal.town || 'a lovely town'}
 - Favorite Toy: ${config.personal.favouriteToy || 'their favorite toy'}
 - Favorite Color: ${config.personal.favouriteColour || 'bright colors'}
-- Pets: ${config.personal.pets || 'friendly animals'}
+${config.personal.pets ? `- Pets: ${config.personal.pets}` : ''}
 ${config.personal.dedication ? `- Dedication: ${config.personal.dedication}` : ''}
 
 CRITICAL READING LEVEL REQUIREMENTS:
