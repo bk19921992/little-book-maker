@@ -1,7 +1,7 @@
 // Run with: npm test  (node --test with type stripping; `deno test` also works)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { acceptedReferenceImage, buildReviewPrompt, MAX_REFERENCE_IMAGE_CHARS, styleProfile } from './prompts.ts'
+import { acceptedReferenceImage, buildReviewPrompt, interpretReviewResponse, MAX_REFERENCE_IMAGE_CHARS, styleProfile } from './prompts.ts'
 
 const config = { children: ['Mia'], characters: ['Owl'], setting: 'woods', imageStyle: 'Watercolour' }
 
@@ -52,4 +52,36 @@ test('a client reference image is accepted only as a bounded base64 image data U
   assert.equal(acceptedReferenceImage('data:text/html;base64,PGh0bWw+'), null)
   assert.equal(acceptedReferenceImage('data:image/svg+xml;base64,PHN2Zz4='), null)
   assert.equal(acceptedReferenceImage('data:image/jpeg;base64,' + 'A'.repeat(MAX_REFERENCE_IMAGE_CHARS)), null)
+})
+
+const reply = (content: string | null, extra: Record<string, unknown> = {}) =>
+  ({ choices: [{ finish_reason: 'stop', message: { content }, ...extra }] })
+
+test('reviewer: only an explicit boolean true in a complete reply passes', () => {
+  assert.deepEqual(interpretReviewResponse(200, reply('{"pass": true}')), { verdict: 'pass' })
+  assert.equal(interpretReviewResponse(200, reply('{"pass": "true"}')).verdict, 'reject')
+  assert.equal(interpretReviewResponse(200, reply('{}')).verdict, 'reject')
+  assert.equal(interpretReviewResponse(200, reply(null)).verdict, 'reject')
+  assert.equal(interpretReviewResponse(200, {}).verdict, 'reject')
+})
+
+test('reviewer: explicit failures keep their issues', () => {
+  assert.deepEqual(interpretReviewResponse(200, reply('{"pass": false, "issues": ["three eyes"]}')), { verdict: 'reject', issues: ['three eyes'] })
+  assert.deepEqual(interpretReviewResponse(200, reply('{"pass": false}')), { verdict: 'reject', issues: ['unspecified quality problem'] })
+})
+
+test('reviewer: refusals, content filters and truncated replies reject, never pass', () => {
+  assert.equal(interpretReviewResponse(200, { choices: [{ finish_reason: 'stop', message: { content: null, refusal: 'I cannot help with that' } }] }).verdict, 'reject')
+  assert.equal(interpretReviewResponse(200, reply('{"pass": true}', { finish_reason: 'content_filter' })).verdict, 'reject')
+  // A long issues list cut off mid-JSON used to throw, be caught, and ship as "skipped".
+  assert.equal(interpretReviewResponse(200, reply('{"pass": false, "issues": ["mangled hand", "text in the', { finish_reason: 'length' })).verdict, 'reject')
+  assert.equal(interpretReviewResponse(200, reply('not json')).verdict, 'reject')
+})
+
+test('reviewer: 4xx rejects; only 408, 429 and 5xx count as an outage', () => {
+  assert.equal(interpretReviewResponse(400, {}).verdict, 'reject')
+  assert.equal(interpretReviewResponse(403, {}).verdict, 'reject')
+  for (const status of [408, 429, 500, 502, 503]) {
+    assert.equal(interpretReviewResponse(status, {}).verdict, 'unavailable', String(status))
+  }
 })

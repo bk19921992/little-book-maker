@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
-import { acceptedReferenceImage, buildReviewPrompt, resolveImageStyle, type ReviewContext, type StoryConfig, styleProfile } from "./prompts.ts"
+import { acceptedReferenceImage, buildReviewPrompt, interpretReviewResponse, resolveImageStyle, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile } from "./prompts.ts"
 
 type ImagePrompt = {
   page: number
@@ -131,36 +131,39 @@ const MAX_IMAGE_ATTEMPTS = 3
 async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl: string, ctx: ReviewContext): Promise<ImageReview> {
   const reviewPrompt = buildReviewPrompt(ctx)
 
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: reviewModel,
-        messages: [{ role: 'user', content: [
-          { type: 'text', text: reviewPrompt },
-          ...(ctx.referenceDataUrl ? [{ type: 'image_url', image_url: { url: ctx.referenceDataUrl } }] : []),
-          { type: 'image_url', image_url: { url: imageDataUrl } },
-        ] }],
-        max_completion_tokens: 300,
-        response_format: { type: 'json_object' },
-      }),
-    })
-    if (!response.ok) {
-      console.error(`Review API error for ${ctx.label}: ${response.status}`)
-      return { pass: true, issues: [], skipped: true }
+  // One retry on an outage; every other outcome is decided by
+  // interpretReviewResponse (fails closed on anything but an explicit pass).
+  for (let call = 1; call <= 2; call++) {
+    let verdict: ReviewVerdict
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: reviewModel,
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: reviewPrompt },
+            ...(ctx.referenceDataUrl ? [{ type: 'image_url', image_url: { url: ctx.referenceDataUrl } }] : []),
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+          ] }],
+          // Room for a long issues list: a reply cut off mid-JSON is a reject.
+          max_completion_tokens: 600,
+          response_format: { type: 'json_object' },
+        }),
+      })
+      const body = await response.json().catch(() => null)
+      verdict = interpretReviewResponse(response.status, body)
+    } catch (networkError) {
+      verdict = { verdict: 'unavailable', reason: networkError instanceof Error ? networkError.message : String(networkError) }
     }
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content || '{}'
-    const parsed = JSON.parse(content)
-    if (parsed.pass === false) {
-      return { pass: false, issues: Array.isArray(parsed.issues) ? parsed.issues.map(String) : ['unspecified quality problem'] }
-    }
-    return { pass: true, issues: [] }
-  } catch (reviewError) {
-    console.error(`Review call failed for ${ctx.label} (allowing image, flagged skipped):`, reviewError)
-    return { pass: true, issues: [], skipped: true }
+    if (verdict.verdict === 'pass') return { pass: true, issues: [] }
+    if (verdict.verdict === 'reject') return { pass: false, issues: verdict.issues }
+    console.error(`Review unavailable for ${ctx.label} (call ${call}): ${verdict.reason}`)
+    if (call === 1) await new Promise((r) => setTimeout(r, 1500))
   }
+  // Genuine outage: keep the image but mark it UNREVIEWED. It is surfaced
+  // to the client, which re-checks it before checkout - never silently passed.
+  return { pass: true, issues: [], skipped: true }
 }
 
 // gpt-image-1 accepts reference images on the edits endpoint. Passing the first

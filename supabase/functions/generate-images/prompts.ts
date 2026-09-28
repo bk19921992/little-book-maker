@@ -122,3 +122,45 @@ export function acceptedReferenceImage(value: unknown): string | null {
   if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) return null
   return value
 }
+
+// How one reviewer API response is read. The gate fails CLOSED on anything
+// that could be a defect and open only on a genuine outage:
+//  - pass:     an explicit boolean true in a complete JSON reply;
+//  - reject:   an explicit false, a refusal or content filter, a truncated
+//              or unreadable reply, or a 4xx (e.g. the image itself refused);
+//  - unavailable: network failure, 408, 429 or 5xx. The caller retries once,
+//              then keeps the image marked UNREVIEWED (never silently
+//              passed); the app re-checks unreviewed art before checkout.
+export type ReviewVerdict =
+  | { verdict: 'pass' }
+  | { verdict: 'reject'; issues: string[] }
+  | { verdict: 'unavailable'; reason: string }
+
+export function interpretReviewResponse(httpStatus: number, body: unknown): ReviewVerdict {
+  if (httpStatus === 408 || httpStatus === 429 || httpStatus >= 500) {
+    return { verdict: 'unavailable', reason: `review API ${httpStatus}` }
+  }
+  if (httpStatus >= 400) {
+    return { verdict: 'reject', issues: [`the reviewer could not accept this image (HTTP ${httpStatus}); treat it as unverified`] }
+  }
+  const choice = (body as { choices?: { finish_reason?: string; message?: { content?: string | null; refusal?: string | null } }[] })?.choices?.[0]
+  if (!choice) return { verdict: 'reject', issues: ['the reviewer returned no verdict'] }
+  if (choice.message?.refusal || choice.finish_reason === 'content_filter') {
+    return { verdict: 'reject', issues: ['the reviewer refused to assess this image, which usually means unsuitable content'] }
+  }
+  if (choice.finish_reason && choice.finish_reason !== 'stop') {
+    return { verdict: 'reject', issues: [`the reviewer reply was cut off (${choice.finish_reason}); the image could not be verified`] }
+  }
+  let parsed: { pass?: unknown; issues?: unknown }
+  try {
+    parsed = JSON.parse(choice.message?.content || '')
+  } catch {
+    return { verdict: 'reject', issues: ['the reviewer reply was not readable JSON; the image could not be verified'] }
+  }
+  if (parsed?.pass === true) return { verdict: 'pass' }
+  if (parsed?.pass === false) {
+    const issues = Array.isArray(parsed.issues) ? parsed.issues.map(String).filter(Boolean) : []
+    return { verdict: 'reject', issues: issues.length ? issues : ['unspecified quality problem'] }
+  }
+  return { verdict: 'reject', issues: ['the reviewer gave no clear pass or fail; the image could not be verified'] }
+}
