@@ -2,22 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
-
-type StoryConfig = {
-  children?: string[]
-  characters?: string[]
-  setting?: string
-  palette?: string[]
-  imageStyle?: string | { other?: string }
-  storyType?: string
-  educationalFocus?: string
-  personal?: {
-    favouriteColour?: string
-    pets?: string
-    favouriteToy?: string
-    town?: string
-  }
-}
+import { acceptedReferenceImage, buildReviewPrompt, resolveImageStyle, type ReviewContext, type StoryConfig, styleProfile } from "./prompts.ts"
 
 type ImagePrompt = {
   page: number
@@ -40,41 +25,6 @@ function orientationWord(size: string): string {
   if (size === '1536x1024') return 'landscape'
   if (size === '1024x1024') return 'square'
   return 'portrait'
-}
-
-function resolveImageStyle(imageStyle: StoryConfig['imageStyle']): string {
-  if (!imageStyle) return "children's book illustration"
-  if (typeof imageStyle === 'string') return imageStyle
-  return imageStyle.other || "children's book illustration"
-}
-
-// A style NAME alone ("Paper cut-out") is too weak to hold the look - the
-// image model drifts back to its default soft 3D storybook render. Named
-// styles get an explicit technique description with negative constraints.
-// The closing anchor line is repeated at the END of every prompt (recency
-// effect) and again after any review-feedback block.
-const STYLE_PROFILES: Record<string, { technique: string; anchor: string }> = {
-  'paper cut-out': {
-    technique: 'flat 2D paper-cut collage: every shape is a piece of cut construction paper with crisp scissored edges, solid matte unblended colours, subtle paper-grain texture, and a gentle drop shadow ONLY where one paper layer overlaps another',
-    anchor: 'STYLE LOCK: this must look like real cut paper - flat layered construction-paper shapes with crisp cut edges and solid matte colours. NO 3D rendering, NO clay or plastic look, NO airbrushed gradients, NO painterly blending, NO glossy shading.',
-  },
-  'watercolour': {
-    technique: 'traditional watercolour painting: translucent washes of colour, visible paper texture, soft wet-on-wet edges for backgrounds with crisper brush definition on the characters',
-    anchor: 'STYLE LOCK: this must look hand-painted in watercolour - translucent washes and visible paper texture. NO 3D rendering, NO digital airbrush, NO vector-flat plastic shapes.',
-  },
-  'pencil crayon': {
-    technique: 'coloured pencil drawing: visible pencil strokes and hatching, warm slightly waxy colour, hand-drawn linework',
-    anchor: 'STYLE LOCK: this must look drawn in coloured pencil - visible strokes and hand-drawn lines. NO 3D rendering, NO digital airbrush, NO smooth vector fills.',
-  },
-}
-
-function styleProfile(imageStyle: StoryConfig['imageStyle']): { technique: string; anchor: string } | null {
-  const name = resolveImageStyle(imageStyle).trim().toLowerCase()
-  if (STYLE_PROFILES[name]) return STYLE_PROFILES[name]
-  for (const key of Object.keys(STYLE_PROFILES)) {
-    if (name.includes(key)) return STYLE_PROFILES[key]
-  }
-  return null
 }
 
 // One style bible per request, reused verbatim for every page so the child,
@@ -170,16 +120,6 @@ interface ImageReview {
   skipped?: boolean
 }
 
-interface ReviewContext {
-  label: string
-  brief: string
-  config?: StoryConfig
-  // Accepted earlier illustration used as the character source of truth. When
-  // present the reviewer compares the candidate against it, which is the only
-  // way to catch page-to-page character/toy drift - text config alone cannot.
-  referenceDataUrl?: string
-}
-
 // Vision QA gate: a review model inspects every generated image BEFORE it can
 // ship. Geometry QA (export-pdf) can measure bands and tiers but cannot see a
 // three-eyed doll - this layer catches anatomy/artifact/consistency defects.
@@ -189,33 +129,7 @@ interface ReviewContext {
 const MAX_IMAGE_ATTEMPTS = 3
 
 async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl: string, ctx: ReviewContext): Promise<ImageReview> {
-  const cfg = ctx.config || {}
-  const reviewPrompt = [
-    "You are the quality-control reviewer for a personalised children's picture book. This illustration must pass your review before it can ship to a paying customer.",
-    '',
-    'BOOK CONTEXT:',
-    `- Child protagonist: ${(cfg.children || []).join(' and ') || 'a child'} (a human child)`,
-    `- Supporting characters: ${(cfg.characters || []).join(', ') || 'as described'}`,
-    `- Setting: ${cfg.setting || 'as described'}`,
-    cfg.personal?.favouriteToy ? `- Recurring toy: ${cfg.personal.favouriteToy}` : '',
-    cfg.personal?.pets ? `- Pet: ${cfg.personal.pets}` : '',
-    `- Illustration style: ${resolveImageStyle(cfg.imageStyle)}`,
-    `- This image is: ${ctx.label}`,
-    `- Scene brief: ${ctx.brief}`,
-    '',
-    ctx.referenceDataUrl ? 'You are shown TWO images. IMAGE 1 is the accepted reference illustration from earlier in this book - it defines what the child, supporting characters and recurring toy look like. IMAGE 2 is the new candidate under review.' : '',
-    '',
-    'REJECT the candidate image if ANY of these is visible:',
-    '1. ANATOMY: for every person and animal in the scene, count their eyes, ears, arms, legs, hands and fingers. Reject if any count is wrong for that creature, or if hands are mangled or fused, faces distorted or duplicated, or extra or half-formed characters appear.',
-    '2. ARTIFACTS: any legible text, letters or numbers rendered inside the artwork (this book prints no words inside its illustrations - the title is added at export), garbled glyphs, watermarks or signatures; glitch patches; smeared or melted regions; abrupt style breaks inside the image.',
-    '3. CONSISTENCY: characters that contradict the book context (wrong species, wrong recurring toy, two different-looking versions of the same child in one image).',
-    '3b. SPECIES-FACE MATCH: every creature\'s face must belong to its species. A human-like face on an animal body (an owl, badger, rabbit or toy with a human child\'s face) or an animal muzzle on a human body is ALWAYS a reject, even if the eye and limb counts are correct.',
-    ctx.referenceDataUrl ? '4. MATCH TO REFERENCE: the child, each recurring supporting character and the recurring toy in IMAGE 2 must be recognisably the same individual as in IMAGE 1 - same face, hair, skin tone, outfit palette and toy design, allowing for pose, expression and scene-appropriate clothing changes. A redesigned character or a different-looking toy is a reject.' : '',
-    ctx.referenceDataUrl ? '5' : '4' + '. APPROPRIATENESS: anything frightening, violent or unsuitable for a bedtime story.',
-    '',
-    'Judge only what is visible. Stylisation (big heads, simple shapes, paper-cut proportions) is NOT a defect - reject only clear errors a customer would notice. Calm or empty background areas are intentional, not missing content.',
-    'Return ONLY JSON: {"pass": true} or {"pass": false, "issues": ["one specific visible problem per string"]}.',
-  ].filter(Boolean).join('\n')
+  const reviewPrompt = buildReviewPrompt(ctx)
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -261,9 +175,13 @@ async function editImageWithReference(
   referenceDataUrl: string,
 ): Promise<string> {
   const bytes = dataUrlToBytes(referenceDataUrl)
+  // A supplied reference may be an older PNG page, so label the upload with
+  // its real type rather than assuming JPEG.
+  const mimeType = referenceDataUrl.slice(5, referenceDataUrl.indexOf(';')) || 'image/jpeg'
+  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg'
   const form = new FormData()
   form.append('model', model)
-  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: 'image/jpeg' }), 'reference.jpg')
+  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: mimeType }), `reference.${extension}`)
   form.append('prompt', fullPrompt)
   form.append('n', '1')
   form.append('size', size)
@@ -359,9 +277,11 @@ serve(async (req) => {
     const errors: { page: number; error: string }[] = []
 
     // Page order matters: the first successfully generated page becomes the
-    // visual reference for every later page.
+    // visual reference for every later page. A single-page regeneration from
+    // the editor may instead supply an accepted page of the book as
+    // referenceImage, so the new page is chained to the same characters.
     const ordered = [...(prompts as ImagePrompt[])].sort((a, b) => a.page - b.page)
-    let referenceUrl: string | null = null
+    let referenceUrl: string | null = acceptedReferenceImage(body.referenceImage)
 
     for (const promptData of ordered) {
       try {

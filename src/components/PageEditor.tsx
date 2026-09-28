@@ -18,6 +18,7 @@ import {
   Download
 } from 'lucide-react';
 import { StoryConfig, StoryPage } from '../types';
+import { imageConfig, pickReferenceImage } from '../lib/imageRequest';
 import { countWords, getWordCountStatus, wordCountTargets } from '../lib/validation';
 import { toast } from 'sonner';
 import { api } from '../api';
@@ -74,16 +75,19 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     setIsRegeneratingImage(true);
     try {
       const prompt = outlinePage.imagePrompt || outlinePage.visualBrief || 'storybook illustration';
+      // Chain the new page to an accepted page of this book so it keeps the
+      // same child, pets and toy, and send only the config fields the image
+      // function reads (the full config carries every page's image).
       const response = await api.generateImages(config.pageSize, config.pageLayout, [
         {
           page: pageNumber,
           prompt,
           text: storyPage.text,
           visualBrief: outlinePage.visualBrief,
-          config,
+          config: imageConfig(config),
           seed: config.imageSeed ? config.imageSeed + pageNumber : undefined,
         },
-      ]);
+      ], false, pickReferenceImage(pages, pageNumber));
 
       const generated = response.images?.[0];
       if (generated?.url) {
