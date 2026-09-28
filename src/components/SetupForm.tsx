@@ -363,7 +363,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               <Label>Picture Style</Label>
               <Select
                 value={typeof config.imageStyle === 'string' ? config.imageStyle : 'Picture-book'}
-                onValueChange={(value: StoryConfig['imageStyle']) => onConfigChange({ imageStyle: value })}
+                onValueChange={(value) => onConfigChange({ imageStyle: value as StoryConfig['imageStyle'] })}
               >
                 <SelectTrigger>
                   <SelectValue />
