@@ -1,7 +1,7 @@
 // Run with: npm test  (node --test with type stripping; `deno test` also works)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildReviewPrompt, styleProfile } from './prompts.ts'
+import { acceptedReferenceImage, buildReviewPrompt, MAX_REFERENCE_IMAGE_CHARS, styleProfile } from './prompts.ts'
 
 const config = { children: ['Mia'], characters: ['Owl'], setting: 'woods', imageStyle: 'Watercolour' }
 
@@ -40,4 +40,16 @@ test('UI styles get their own lock, not a neighbour', () => {
 
 test('an unknown custom style has no lock', () => {
   assert.equal(styleProfile({ other: 'photorealistic oil painting' }), null)
+})
+
+test('a client reference image is accepted only as a bounded base64 image data URL', () => {
+  const jpeg = 'data:image/jpeg;base64,/9j/4AAQSkZJRg=='
+  assert.equal(acceptedReferenceImage(jpeg), jpeg)
+  assert.equal(acceptedReferenceImage('data:image/png;base64,iVBORw0KGgo='), 'data:image/png;base64,iVBORw0KGgo=')
+  assert.equal(acceptedReferenceImage(undefined), null)
+  assert.equal(acceptedReferenceImage(''), null)
+  assert.equal(acceptedReferenceImage('https://example.com/page.jpg'), null)
+  assert.equal(acceptedReferenceImage('data:text/html;base64,PGh0bWw+'), null)
+  assert.equal(acceptedReferenceImage('data:image/svg+xml;base64,PHN2Zz4='), null)
+  assert.equal(acceptedReferenceImage('data:image/jpeg;base64,' + 'A'.repeat(MAX_REFERENCE_IMAGE_CHARS)), null)
 })

@@ -1,4 +1,5 @@
 import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
+import type { ImageConfig } from './lib/imageRequest';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
 
@@ -67,14 +68,16 @@ class APIClient {
   async generateImages(
     pageSize: PageSizePreset,
     pageLayout: PageLayout,
-    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[],
-    includeCover: boolean = false
+    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig | ImageConfig; seed?: number }[],
+    includeCover: boolean = false,
+    referenceImage?: string
   ): Promise<ImageGenerateResponse> {
     return this.invokeFunction<ImageGenerateResponse>('generate-images', {
       pageSize,
       pageLayout,
       prompts,
       includeCover,
+      referenceImage,
     });
   }
 

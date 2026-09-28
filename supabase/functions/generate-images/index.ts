@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
-import { buildReviewPrompt, resolveImageStyle, type ReviewContext, type StoryConfig, styleProfile } from "./prompts.ts"
+import { acceptedReferenceImage, buildReviewPrompt, resolveImageStyle, type ReviewContext, type StoryConfig, styleProfile } from "./prompts.ts"
 
 type ImagePrompt = {
   page: number
@@ -175,9 +175,13 @@ async function editImageWithReference(
   referenceDataUrl: string,
 ): Promise<string> {
   const bytes = dataUrlToBytes(referenceDataUrl)
+  // A supplied reference may be an older PNG page, so label the upload with
+  // its real type rather than assuming JPEG.
+  const mimeType = referenceDataUrl.slice(5, referenceDataUrl.indexOf(';')) || 'image/jpeg'
+  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg'
   const form = new FormData()
   form.append('model', model)
-  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: 'image/jpeg' }), 'reference.jpg')
+  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: mimeType }), `reference.${extension}`)
   form.append('prompt', fullPrompt)
   form.append('n', '1')
   form.append('size', size)
@@ -273,9 +277,11 @@ serve(async (req) => {
     const errors: { page: number; error: string }[] = []
 
     // Page order matters: the first successfully generated page becomes the
-    // visual reference for every later page.
+    // visual reference for every later page. A single-page regeneration from
+    // the editor may instead supply an accepted page of the book as
+    // referenceImage, so the new page is chained to the same characters.
     const ordered = [...(prompts as ImagePrompt[])].sort((a, b) => a.page - b.page)
-    let referenceUrl: string | null = null
+    let referenceUrl: string | null = acceptedReferenceImage(body.referenceImage)
 
     for (const promptData of ordered) {
       try {

@@ -107,3 +107,18 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
     'Return ONLY JSON: {"pass": true} or {"pass": false, "issues": ["one specific visible problem per string"]}.',
   ].filter(Boolean).join('\n')
 }
+
+// Largest reference image accepted from a client (a base64 data URL). A
+// gpt-image-1 JPEG page is well under 1 MB of base64.
+export const MAX_REFERENCE_IMAGE_CHARS = 8_000_000
+
+// Optional client-supplied reference: an already-accepted page of this book,
+// sent when one page is regenerated on its own so it keeps the same child,
+// pets and toy. Only base64 image data URLs are accepted - never a remote URL
+// the function would have to fetch.
+export function acceptedReferenceImage(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  if (value.length > MAX_REFERENCE_IMAGE_CHARS) return null
+  if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) return null
+  return value
+}
