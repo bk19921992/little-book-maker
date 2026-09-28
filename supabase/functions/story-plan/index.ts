@@ -4,6 +4,7 @@ import { getCorsHeaders } from "../_shared/cors.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
 import { moderateFreeText } from "../_shared/moderation.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
+import { wordRange } from "../_shared/textContract.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -64,6 +65,11 @@ serve(async (req) => {
     }
 
     // Generate style bible
+    // Per-page word targets come from the shared text contract. In auto mode
+    // the format is chosen in this same call, so plan for the smaller
+    // capacity; story-write re-applies the contract for the chosen format.
+    const planRange = wordRange(config.readingLevel, config.formatMode === 'auto' ? undefined : config.pageSize)
+
     const styleBible = {
       palette: config.palette,
       heroDescription: config.children.length > 0 
@@ -97,11 +103,11 @@ ${config.personal.dedication ? `- Dedication: ${config.personal.dedication}` : '
 
 CRITICAL READING LEVEL REQUIREMENTS:
 ${config.readingLevel === 'Toddler 2–3' ? 
-  '- Write 5-25 words per page\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words\n- Example: "Big red ball. Ball is round. Ball bounces high. Fun, fun, fun!"' :
+  `- Write ${planRange.min}-${planRange.max} words per page\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words\n- Example: "Big red ball. Ball is round. Ball bounces high. Fun, fun, fun!"` :
 config.readingLevel === 'Early 4–5' ?
-  '- Write 20-50 words per page\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language\n- Focus on everyday experiences\n- Use descriptive but simple words\n- Example: "The little girl ran fast. She ran to the big tree. The tree had green leaves. Pretty, pretty leaves!"' :
+  `- Write ${planRange.min}-${planRange.max} words per page\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language\n- Focus on everyday experiences\n- Use descriptive but simple words\n- Example: "The little girl ran fast. She ran to the big tree. The tree had green leaves. Pretty, pretty leaves!"` :
 config.readingLevel === 'Primary 6–8' ?
-  '- Write 40-90 words per page\n- Use 4-8 word sentences\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression\n- Use slightly more complex vocabulary\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with black spots."' :
+  `- Write ${planRange.min}-${planRange.max} words per page\n- Use 4-8 word sentences\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression\n- Use slightly more complex vocabulary\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with black spots."` :
   '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate'}
 
 Create exactly ${config.lengthPages} pages. Each page should have:

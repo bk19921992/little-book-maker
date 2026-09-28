@@ -4,7 +4,8 @@ import type { PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import * as fontkit from "https://esm.sh/@pdf-lib/fontkit@1.1.1";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-import { layoutBand, MAX_VERSE_LINES, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
+import { layoutBand, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
+import { formatLineCapacity } from "../_shared/textContract.ts";
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -390,8 +391,11 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       }
 
       // QA: shape checks on this page's typeset block.
-      if (hardLineCount > MAX_VERSE_LINES) {
-        qa.push({ where: `page ${page.page}`, severity: 'warn', check: `${hardLineCount} verse lines (cap ${MAX_VERSE_LINES}); copy should be shortened upstream` });
+      // Same line budget story-write enforces (the band's measured capacity
+      // for this format); the old fixed cap of 4 warned on every 5-6 line page.
+      const verseLineCap = formatLineCapacity(config.pageSize);
+      if (hardLineCount > verseLineCap) {
+        qa.push({ where: `page ${page.page}`, severity: 'warn', check: `${hardLineCount} verse lines (cap ${verseLineCap} for ${config.pageSize}); copy should be shortened upstream` });
       }
       const longest = Math.max(...lineWidths);
       const shortest = Math.min(...lineWidths);

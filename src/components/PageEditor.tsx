@@ -19,7 +19,8 @@ import {
 } from 'lucide-react';
 import { StoryConfig, StoryPage } from '../types';
 import { imageConfig, pickReferenceImage } from '../lib/imageRequest';
-import { countWords, getWordCountStatus, wordCountTargets } from '../lib/validation';
+import { countWords, getPageTextStatus, wordCountTargets } from '../lib/validation';
+import { packLines } from '../../supabase/functions/_shared/textContract.ts';
 import { toast } from 'sonner';
 import { api } from '../api';
 
@@ -41,7 +42,8 @@ export const PageEditor: React.FC<PageEditorProps> = ({
 
   const pages = config.pages || [];
   const currentPage = pages.find(p => p.page === selectedPage);
-  const targets = wordCountTargets[config.readingLevel];
+  const targets = wordCountTargets(config.readingLevel, config.pageSize);
+  const currentTextStatus = currentPage ? getPageTextStatus(currentPage.text, config.readingLevel, config.pageSize) : null;
 
   const updatePageText = (pageNumber: number, text: string) => {
     const updatedPages = pages.map(page =>
@@ -108,8 +110,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
   };
 
   const getPageStatus = (page: StoryPage) => {
-    const wordCount = countWords(page.text);
-    const wordStatus = getWordCountStatus(wordCount, config.readingLevel);
+    const wordStatus = getPageTextStatus(page.text, config.readingLevel, config.pageSize);
     const hasImage = !!page.imageUrl || page.imageLocked;
     
     return {
@@ -204,9 +205,9 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                         {countWords(currentPage.text)} / {targets.min}-{targets.max} words
                       </Badge>
                       <Badge 
-                        variant={getWordCountStatus(countWords(currentPage.text), config.readingLevel).status === 'good' ? 'default' : 'destructive'}
+                        variant={currentTextStatus?.status === 'good' ? 'default' : 'destructive'}
                       >
-                        {getWordCountStatus(countWords(currentPage.text), config.readingLevel).status}
+                        {currentTextStatus?.status}
                       </Badge>
                     </div>
                   </CardTitle>
@@ -222,11 +223,26 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                   <div className="flex justify-between text-sm text-muted-foreground">
                     <span>Target: {targets.min}-{targets.max} words for {config.readingLevel}</span>
                     <span 
-                      className={getWordCountStatus(countWords(currentPage.text), config.readingLevel).color}
+                      className={currentTextStatus?.color}
                     >
                       Current: {countWords(currentPage.text)} words
                     </span>
                   </div>
+                  {currentTextStatus && currentTextStatus.issues.length > 0 && (
+                    <Alert>
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription className="space-y-2">
+                        <p>This page won't fit the printed text band as written: {currentTextStatus.issues.join('; ')}.</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => updatePageText(currentPage.page, packLines(currentPage.text))}
+                        >
+                          Fit lines
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </CardContent>
               </Card>
 

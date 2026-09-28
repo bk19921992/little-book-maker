@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BAND_CAP, layoutBand, typesetVerse } from './typeset.ts';
-import { loadNunito, pagePoints } from './testFont.ts';
+import { loadNunito, PAGES, pagePoints } from './testFont.ts';
+import { formatLineCapacity, MAX_LINE_CHARS } from '../_shared/textContract.ts';
 
 const font = await loadNunito();
 
@@ -64,5 +65,27 @@ test('portrait and square type sizes are unchanged by short-side sizing', () => 
   for (const [size, pt] of expected) {
     const [w, h] = pagePoints(size, true);
     assert.equal(layoutBand(FIVE_LINES, font, w, h, true).fontSize, pt, size);
+  }
+});
+
+// Worst plausible line for width: wide letters (m, w) at the character cap.
+function wideLine(seed: number): string {
+  const pool = ['Grandma', 'whispered', 'wonderful', 'mammoth', 'meadow', 'window', 'marmalade', 'somewhere', 'Mum', 'owl', 'woke'];
+  let s = '';
+  for (let i = seed; s.length < MAX_LINE_CHARS; i++) s = s ? `${s} ${pool[i % pool.length]}` : pool[i % pool.length];
+  return s.slice(0, MAX_LINE_CHARS).trimEnd();
+}
+
+test('the text contract fits every format: capacity lines at the character cap, no wraps, no overflow', () => {
+  for (const size of Object.keys(PAGES) as (keyof typeof PAGES)[]) {
+    for (const includeBleed of [true, false]) {
+      const [w, h] = pagePoints(size, includeBleed);
+      const text = Array.from({ length: formatLineCapacity(size) }, (_, i) => wideLine(i)).join('\n');
+      const band = layoutBand(text, font, w, h, includeBleed);
+      const where = `${size} ${includeBleed ? 'print' : 'web'}`;
+      assert.equal(band.bandOverflow, false, `${where} overflowed at ${band.fontSize}pt`);
+      assert.equal(band.textLines.length, formatLineCapacity(size), `${where} soft-wrapped`);
+      assert.ok(band.fontSize >= 14, `${where} below 14pt`);
+    }
   }
 });

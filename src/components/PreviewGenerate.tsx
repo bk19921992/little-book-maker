@@ -106,7 +106,13 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       toast.info(`Writing ${config.lengthPages} pages...`);
       
       // Update progress incrementally during writing
-      const writeResponse = await api.writeStory(config, planResponse.outline);
+      // Send the resolved format: story-write sizes each page's copy to the
+      // text band of the page shape actually being printed. (`config` here is
+      // this render's snapshot, before the auto-format update above lands.)
+      const writeResponse = await api.writeStory(
+        { ...config, pageSize: effectivePageSize, pageLayout: effectivePageLayout },
+        planResponse.outline
+      );
       
       onConfigChange({
         pages: writeResponse.pages,

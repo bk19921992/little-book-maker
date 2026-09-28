@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
+import { contractViolations, lineBudget, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -38,6 +39,11 @@ serve(async (req) => {
     }
 
     const pages = []
+    // Copy budget for this book's format: the band's measured capacity (see
+    // _shared/textContract.ts). The client sends the resolved page size.
+    const range = wordRange(config.readingLevel, config.pageSize)
+    const maxLines = lineBudget(config.readingLevel, config.pageSize)
+    const lineRule = `at most ${maxLines} lines, each at most ${MAX_LINE_WORDS} words and ${MAX_LINE_CHARS} characters`
 
     // Generate story text for all pages in parallel for speed
     console.log(`Generating ${outline.pages.length} pages in parallel...`)
@@ -75,11 +81,11 @@ Page Requirements:
 
 CRITICAL READING LEVEL REQUIREMENTS FOR ${config.readingLevel}:
 ${config.readingLevel === 'Toddler 2–3' ? 
-  '- Write 5-25 words per page total\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort and learning\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words only\n- Be descriptive but simple\n- Example: "Big red ball. Ball is round. Ball bounces up and down. Up, up, up! Down, down, down! Fun ball!"' :
+  `- Write ${range.min}-${range.max} words per page total\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort and learning\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words only\n- Be descriptive but simple\n- Example: "Big red ball. Ball is round. Ball bounces up and down. Up, up, up! Down, down, down! Fun ball!"` :
 config.readingLevel === 'Early 4–5' ?
-  '- Write 20-50 words per page total\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language that toddlers love\n- Focus on everyday experiences and emotions\n- Use descriptive but simple words\n- Create engaging, flowing text\n- Example: "The little boy ran fast. He ran to the big tree. The tree had pretty green leaves. So many leaves! He touched the soft grass. Green, soft grass!"' :
+  `- Write ${range.min}-${range.max} words per page total\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language that toddlers love\n- Focus on everyday experiences and emotions\n- Use descriptive but simple words\n- Create engaging, flowing text\n- Example: "The little boy ran fast. He ran to the big tree. The tree had pretty green leaves. So many leaves! He touched the soft grass. Green, soft grass!"` :
 config.readingLevel === 'Primary 6–8' ?
-  '- Write 40-90 words per page total\n- Use 4-8 word sentences with varied structure\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression and character development\n- Use slightly more complex vocabulary but keep it accessible\n- Create engaging narratives with emotional connection\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with tiny black spots. She watched it dance from flower to flower."' :
+  `- Write ${range.min}-${range.max} words per page total\n- Use 4-8 word sentences with varied structure\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression and character development\n- Use slightly more complex vocabulary but keep it accessible\n- Create engaging narratives with emotional connection\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with tiny black spots. She watched it dance from flower to flower."` :
   '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate for the age group'}
 
 Important Instructions:
@@ -94,8 +100,8 @@ Important Instructions:
 - No page numbers, titles, or extra formatting
 - The text should flow naturally with the overall story arc
 - Reflect the chosen theme and color palette in descriptions when natural
-- FORMAT (critical for typesetting): write the page as short newline-separated lines. Each line at most 7 words, one thought per line. Never put a long sentence or a whole paragraph on one line - long lines wrap badly when typeset.
-- Line budget: at most ${config.readingLevel === 'Toddler 2–3' ? '4' : '6'} lines on the page. Fewer, shorter lines always beats more, longer ones.`
+- FORMAT (critical for typesetting): write the page as short newline-separated lines, one thought per line: ${lineRule}. Never put a long sentence or a whole paragraph on one line - long lines wrap badly when typeset.
+- Fewer, shorter lines always beats more, longer ones.`
 
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -139,7 +145,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `You write professional children's book pages in UK English with the quality of published books. Return ONLY the story text and ensure word-count target is met exactly.` },
-              { role: 'user', content: `${writingPrompt}\n\nWrite between ${config.readingLevel === 'Toddler 2–3' ? '5 and 25' : config.readingLevel === 'Early 4–5' ? '20 and 50' : '40 and 90'} words (aim ${pageOutline.wordCount || pageOutline.wordsTarget || 100}). Format as newline-separated lines of at most 7 words each.` }
+              { role: 'user', content: `${writingPrompt}\n\nWrite between ${range.min} and ${range.max} words. Format as newline-separated lines: ${lineRule}.` }
             ],
             max_completion_tokens: 600
           })
@@ -160,7 +166,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: "Write professional UK English children's story pages with published book quality. Return ONLY story text, no quotes or extra text." },
-              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write exactly ${pageOutline.wordCount || 70} words. Format as newline-separated lines of at most 7 words each. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
+              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${config.children.join(' and ') || 'a child'} and their pet dog ${config.personal?.pets || 'Ivy'}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write between ${range.min} and ${range.max} words. Format as newline-separated lines: ${lineRule}. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
             ],
             max_completion_tokens: 600
           })
@@ -180,18 +186,8 @@ Important Instructions:
       }
 
       const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
-      const target = pageOutline.wordCount || pageOutline.wordsTarget || 40
-      const [min, max] = (
-        () => {
-          switch (config.readingLevel) {
-            case 'Toddler 2–3': return [5, 25]
-            // 42 = 6 typeset lines x 7 words: the export band's hard capacity
-            case 'Early 4–5': return [20, 42]
-            case 'Primary 6–8': return [40, 42]
-            default: return [Math.round(target*0.9), Math.min(Math.round(target*1.1), 42)]
-          }
-        }
-      )()
+      const { min, max } = range
+      const target = Math.min(Math.max(pageOutline.wordCount || pageOutline.wordsTarget || max, min), max)
       const words = countWords(pageText)
       if (words < min || words > max) {
         console.log(`Adjusting page ${pageOutline.page} from ${words} words to within ${min}-${max}`)
@@ -202,7 +198,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
-              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Keep the format: newline-separated lines of at most 7 words each, at most ${config.readingLevel === 'Toddler 2–3' ? '4' : '6'} lines. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Keep the format: newline-separated lines, ${lineRule}. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -214,17 +210,11 @@ Important Instructions:
       }
       // Line-format enforcement (typesetting contract): the export typesets
       // hard lines and soft-wraps anything too long, which swells the paper
-      // band past its cap. Prompts alone do not hold the 7-word line limit,
-      // so verify programmatically and rebreak with up to 2 targeted passes.
-      const MAX_LINE_WORDS = 7
-      const maxLines = config.readingLevel === 'Toddler 2–3' ? 4 : 6
-      const lineWords = (l: string) => l.split(/\s+/).filter(Boolean).length
-      const needsRebreak = (t: string) => {
-        const lines = t.split('\n').map((l) => l.trim()).filter(Boolean)
-        return lines.length > maxLines || lines.some((l) => lineWords(l) > MAX_LINE_WORDS)
-      }
+      // band past its cap. Prompts alone do not hold the limits, so verify
+      // programmatically and rebreak with up to 3 targeted passes.
+      const needsRebreak = (t: string) => contractViolations(t, config.readingLevel, config.pageSize).length > 0
       for (let attempt = 0; attempt < 3 && needsRebreak(pageText); attempt++) {
-        console.log(`Rebreaking page ${pageOutline.page} into <=${MAX_LINE_WORDS}-word lines (attempt ${attempt + 1})`)
+        console.log(`Rebreaking page ${pageOutline.page} (attempt ${attempt + 1}): ${contractViolations(pageText, config.readingLevel, config.pageSize).join('; ')}`)
         const rebreak = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
@@ -232,7 +222,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: 'You reformat children\'s story pages for typesetting. You never drop meaning.' },
-              { role: 'user', content: `Rewrite this children's book page as at most ${maxLines} newline-separated lines where EVERY line has at most ${MAX_LINE_WORDS} words. Both limits are hard. You may reword and compress freely to fit them, but keep the story beats, all proper nouns, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `Rewrite this children's book page as newline-separated lines: ${lineRule}. All limits are hard. You may reword and compress freely to fit them, but keep the story beats, all proper nouns, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -246,18 +236,19 @@ Important Instructions:
         }
       }
       if (needsRebreak(pageText)) {
-        // Deterministic last resort: LLM word-counting is unreliable, so
-        // repack the word stream into <=7-word lines in code. Line-length is
-        // then guaranteed; line COUNT holds whenever the page is <=42 words
-        // (the adjust pass above targets that). Rhyme placement degrades on
-        // this path - it is the safety net, not the norm.
-        const allWords = pageText.split(/\s+/).filter(Boolean)
-        const packed: string[] = []
-        for (let i = 0; i < allWords.length; i += MAX_LINE_WORDS) {
-          packed.push(allWords.slice(i, i + MAX_LINE_WORDS).join(' '))
-        }
-        pageText = packed.join('\n')
+        // Deterministic last resort: LLM word- and character-counting is
+        // unreliable, so repack the word stream in code. Line length is then
+        // guaranteed; line COUNT holds whenever the copy is within the word
+        // range (the adjust pass above targets that). Rhyme placement
+        // degrades on this path - it is the safety net, not the norm.
+        pageText = packLines(pageText)
         console.log(`Mechanical rebreak applied to page ${pageOutline.page} (LLM rebreak did not converge)`)
+        const remaining = contractViolations(pageText, config.readingLevel, config.pageSize)
+        if (remaining.length) {
+          // Only unusually long words land here. Export then steps the type
+          // tier down; if even the floor tier cannot fit, its QA fails the page.
+          console.warn(`Page ${pageOutline.page} still exceeds the text contract after repack: ${remaining.join('; ')}`)
+        }
       }
       console.log(`Final text length for page ${pageOutline.page}:`, countWords(pageText))
 

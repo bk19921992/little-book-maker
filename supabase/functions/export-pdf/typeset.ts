@@ -8,7 +8,6 @@ export interface MeasuringFont {
 
 export const SAFE = 0.07;                       // safe-area inset, share of page width
 export const TEXT_MEASURE = 0.78;               // max line measure, share of page width
-export const MAX_VERSE_LINES = 4;
 export const BAND_CAP = 0.40;                 // hard cap on band height, share of page height
 
 // Typographic normalisation for every rendered string: curly apostrophes and

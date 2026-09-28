@@ -1,11 +1,10 @@
-import { StoryConfig, ReadingLevel, ValidationError, WordCountTargets } from '../types';
+import type { StoryConfig, ReadingLevel, ValidationError, PageSizePreset } from '../types';
+import { contractViolations, wordRange } from '../../supabase/functions/_shared/textContract.ts';
 
-// Word count targets by reading level
-export const wordCountTargets: WordCountTargets = {
-  'Toddler 2–3': { min: 5, max: 25 },
-  'Early 4–5': { min: 20, max: 50 },
-  'Primary 6–8': { min: 40, max: 90 },
-};
+// Word count targets by reading level and page size: the same text contract
+// story-write enforces, so an edited page fits the printed text band.
+export const wordCountTargets = (readingLevel: ReadingLevel, pageSize?: PageSizePreset) =>
+  wordRange(readingLevel, pageSize);
 
 // Validate story configuration
 export const validateStoryConfig = (config: StoryConfig): ValidationError[] => {
@@ -46,10 +45,11 @@ export const validateStoryConfig = (config: StoryConfig): ValidationError[] => {
 export const validatePageContent = (
   text: string,
   readingLevel: ReadingLevel,
-  pageNumber: number
+  pageNumber: number,
+  pageSize?: PageSizePreset
 ): { isValid: boolean; message?: string; wordCount: number } => {
   const wordCount = countWords(text);
-  const targets = wordCountTargets[readingLevel];
+  const targets = wordCountTargets(readingLevel, pageSize);
   
   const tolerance = 15; // ±15 words tolerance
   const minWords = targets.min - tolerance;
@@ -83,9 +83,10 @@ export const countWords = (text: string): number => {
 // Get word count status for display
 export const getWordCountStatus = (
   wordCount: number,
-  readingLevel: ReadingLevel
+  readingLevel: ReadingLevel,
+  pageSize?: PageSizePreset
 ): { status: 'low' | 'good' | 'high'; color: string } => {
-  const targets = wordCountTargets[readingLevel];
+  const targets = wordCountTargets(readingLevel, pageSize);
   
   if (wordCount < targets.min) {
     return { status: 'low', color: 'text-destructive' };
@@ -98,10 +99,27 @@ export const getWordCountStatus = (
   return { status: 'good', color: 'text-story-nature' };
 };
 
+// Whole-page text status for the editor: word count plus the line contract
+// (line count, words and characters per line). 'high' means the page will not
+// fit the printed text band as written.
+export const getPageTextStatus = (
+  text: string,
+  readingLevel: ReadingLevel,
+  pageSize?: PageSizePreset
+): { status: 'low' | 'good' | 'high'; color: string; issues: string[] } => {
+  const wordStatus = getWordCountStatus(countWords(text), readingLevel, pageSize);
+  const issues = contractViolations(text, readingLevel, pageSize);
+  if (wordStatus.status === 'good' && issues.length) {
+    return { status: 'high', color: 'text-destructive', issues };
+  }
+  return { ...wordStatus, issues };
+};
+
 // Validate that all pages are ready for export
 export const validatePagesForExport = (
   pages: { text: string; imageUrl?: string; imageLocked?: boolean }[],
-  readingLevel: ReadingLevel
+  readingLevel: ReadingLevel,
+  pageSize?: PageSizePreset
 ): ValidationError[] => {
   const errors: ValidationError[] = [];
 
@@ -109,7 +127,7 @@ export const validatePagesForExport = (
     const pageNumber = index + 1;
     
     // Check text content
-    const textValidation = validatePageContent(page.text, readingLevel, pageNumber);
+    const textValidation = validatePageContent(page.text, readingLevel, pageNumber, pageSize);
     if (!textValidation.isValid) {
       errors.push({ field: `page${pageNumber}Text`, message: textValidation.message! });
     }
