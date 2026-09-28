@@ -164,3 +164,139 @@ export function interpretReviewResponse(httpStatus: number, body: unknown): Revi
   }
   return { verdict: 'reject', issues: ['the reviewer gave no clear pass or fail; the image could not be verified'] }
 }
+
+export type ImagePrompt = {
+  page: number
+  prompt?: string
+  text?: string
+  visualBrief?: string
+  config?: StoryConfig
+  seed?: number
+}
+
+// gpt-image-1 only supports these sizes; map each page preset onto the closest one.
+export const OPENAI_SIZES: Record<string, '1024x1536' | '1536x1024' | '1024x1024'> = {
+  'A5 portrait': '1024x1536',
+  'A4 portrait': '1024x1536',
+  '210×210 mm square': '1024x1024',
+  'A4 landscape': '1536x1024',
+}
+
+function orientationWord(size: string): string {
+  if (size === '1536x1024') return 'landscape'
+  if (size === '1024x1024') return 'square'
+  return 'portrait'
+}
+
+// One style bible per request, reused verbatim for every page so the child,
+// characters, palette and rendering style stay consistent across the book.
+export function buildStyleBible(config: StoryConfig | undefined, size: string, pageLayout: string): string {
+  const c = config || {}
+  const mainChild = c.children && c.children.length
+    ? c.children.join(' and ')
+    : 'the child protagonist'
+  const characters = c.characters && c.characters.length
+    ? c.characters.join(', ')
+    : 'the supporting characters from the story'
+  const setting = c.setting || 'the story setting'
+  const palette = c.palette && c.palette.length
+    ? c.palette.join(', ')
+    : 'warm, gentle colors'
+  const favouriteColour = c.personal?.favouriteColour
+  const pets = c.personal?.pets
+
+  const profile = styleProfile(c.imageStyle)
+  const lines = [
+    profile
+      ? `Rendering style: ${resolveImageStyle(c.imageStyle)} - ${profile.technique}. This exact technique must be consistent across every page of this book.`
+      : `Rendering style: ${resolveImageStyle(c.imageStyle)}, consistent across every page of this book.`,
+    `Main child: ${mainChild} (human child). The same child, with the same face, hair, clothing and proportions, must appear on every page they feature in.`,
+    `Supporting characters: ${characters}. Draw each animal species with its accurate natural markings and face (an owl has a feathered face and beak, a badger has black-and-white face stripes - never a human-like face on an animal), and keep each character's appearance identical on every page.`,
+    pets ? `Pet companion: ${pets} (animal, not human). Keep the pet the same species, breed and coloring on every page.` : '',
+    `Setting: ${setting}.`,
+    `Colour palette: ${palette}${favouriteColour ? `, featuring the child's favourite colour ${favouriteColour}` : ''}.`,
+    `Mood: gentle, warm, cozy and child-friendly, with soft lighting.`,
+    `Composition: ${orientationWord(size)} storybook composition with important elements away from the edges (safe for print trim), no text, letters, numbers, captions or watermarks anywhere in the image.`,
+    pageLayout === 'overlay'
+      ? 'This page prints with a solid text band across the bottom: keep the bottom third of the scene calm, simple and uncluttered (sky, floor, grass, bedding) and keep every face and important subject fully inside the upper two-thirds - nothing important may cross the bottom-third line.'
+      : 'This page prints with the artwork above a text band: keep every face and important subject inside the upper two-thirds of the image, well away from the bottom edge - the print crop trims the bottom of the artwork.',
+    `Species rule: the child is always human; pets and animal characters are always animals. Never blend the two.`,
+  ]
+
+  return lines.filter(Boolean).join('\n')
+}
+
+export function pageScene(promptData: ImagePrompt): string {
+  return promptData.prompt || promptData.visualBrief || 'a warm storybook scene'
+}
+
+// The image prompt for one story page. With a reference image (an accepted
+// earlier page) the prompt asks for the same characters in a new scene.
+export function buildPagePrompt(promptData: ImagePrompt, styleBible: string, styleAnchor: string, hasReference: boolean): string {
+  const scene = pageScene(promptData)
+  if (hasReference) {
+    return [
+      `This is page ${promptData.page} of the same children's picture book as the reference image.`,
+      'Keep the EXACT same characters from the reference image: the same child (same face, hair, skin tone and clothing), the same animals (same species, breed and colouring), and the same recurring props (toys, blankets, furniture).',
+      'Use the same illustration style, linework, lighting and colour palette as the reference image.',
+      '',
+      'STYLE BIBLE (must match every other page exactly):',
+      styleBible,
+      '',
+      `NEW SCENE FOR THIS PAGE (page ${promptData.page}):`,
+      `Scene: ${scene}`,
+      promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
+      '',
+      'Illustrate exactly this scene in a new composition. Do not copy the reference image\'s scene - only its characters, props, style and palette.',
+      'The image must contain no text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
+      styleAnchor,
+    ].filter(Boolean).join('\n')
+  }
+  return [
+    'High-quality children\'s book illustration for one page of a personalised bedtime story.',
+    '',
+    'STYLE BIBLE (must match every other page exactly):',
+    styleBible,
+    '',
+    `THIS PAGE (page ${promptData.page}):`,
+    `Scene: ${scene}`,
+    promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
+    promptData.text ? `Story text on this page: "${promptData.text}"` : '',
+    '',
+    'Illustrate exactly what this page\'s story text describes, while keeping the characters, style, palette and setting from the style bible perfectly consistent with the other pages.',
+    styleAnchor,
+  ].filter(Boolean).join('\n')
+}
+
+// The dedicated cover's prompt: the characters in the lower half, calm space
+// on top for the printed title.
+export function buildCoverPrompt(styleBible: string, styleAnchor: string, hasReference: boolean): string {
+  return [
+    hasReference
+      ? "This is the FRONT COVER of the same children's picture book as the reference image."
+      : "Front cover illustration for a personalised children's picture book.",
+    hasReference
+      ? 'Keep the EXACT same characters, style, linework, lighting and colour palette as the reference image.'
+      : '',
+    '',
+    'STYLE BIBLE (must match the inside pages exactly):',
+    styleBible,
+    '',
+    'COVER COMPOSITION (follow exactly):',
+    '- One iconic, heartwarming scene with the main child and the most important supporting character(s) together.',
+    '- The characters and the action occupy the LOWER HALF of the image; every face stays fully below the halfway line.',
+    '- The TOP HALF is calm, simple and uncluttered (sky, soft wall, gentle background, treetops) with NO faces, characters or busy detail above the halfway line - the printed book title sits in that space.',
+    '- No text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
+    styleAnchor,
+  ].filter(Boolean).join('\n')
+}
+
+export const COVER_REVIEW_LABEL = 'the front cover of the book (the top half is intentionally calm for the printed title; the characters sit in the lower half)'
+export const COVER_REVIEW_BRIEF = 'front cover: one iconic heartwarming scene with the main child and the most important supporting character(s)'
+
+// Retry hygiene: only the LATEST rejection is fed back (stacking notes
+// bloats the prompt and dilutes the scene), and the style lock is repeated
+// AFTER the feedback so it stays the final word.
+export function withReviewFeedback(basePrompt: string, issues: string[], styleAnchor: string): string {
+  return basePrompt + `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${issues.join('; ')}. The new image must not have these problems.${styleAnchor ? '\n\n' + styleAnchor : ''}`
+}

@@ -2,68 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
-import { acceptedReferenceImage, buildReviewPrompt, interpretReviewResponse, resolveImageStyle, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile } from "./prompts.ts"
-
-type ImagePrompt = {
-  page: number
-  prompt?: string
-  text?: string
-  visualBrief?: string
-  config?: StoryConfig
-  seed?: number
-}
-
-// gpt-image-1 only supports these sizes; map each page preset onto the closest one.
-const OPENAI_SIZES: Record<string, '1024x1536' | '1536x1024' | '1024x1024'> = {
-  'A5 portrait': '1024x1536',
-  'A4 portrait': '1024x1536',
-  '210×210 mm square': '1024x1024',
-  'A4 landscape': '1536x1024',
-}
-
-function orientationWord(size: string): string {
-  if (size === '1536x1024') return 'landscape'
-  if (size === '1024x1024') return 'square'
-  return 'portrait'
-}
-
-// One style bible per request, reused verbatim for every page so the child,
-// characters, palette and rendering style stay consistent across the book.
-function buildStyleBible(config: StoryConfig | undefined, size: string, pageLayout: string): string {
-  const c = config || {}
-  const mainChild = c.children && c.children.length
-    ? c.children.join(' and ')
-    : 'the child protagonist'
-  const characters = c.characters && c.characters.length
-    ? c.characters.join(', ')
-    : 'the supporting characters from the story'
-  const setting = c.setting || 'the story setting'
-  const palette = c.palette && c.palette.length
-    ? c.palette.join(', ')
-    : 'warm, gentle colors'
-  const favouriteColour = c.personal?.favouriteColour
-  const pets = c.personal?.pets
-
-  const profile = styleProfile(c.imageStyle)
-  const lines = [
-    profile
-      ? `Rendering style: ${resolveImageStyle(c.imageStyle)} - ${profile.technique}. This exact technique must be consistent across every page of this book.`
-      : `Rendering style: ${resolveImageStyle(c.imageStyle)}, consistent across every page of this book.`,
-    `Main child: ${mainChild} (human child). The same child, with the same face, hair, clothing and proportions, must appear on every page they feature in.`,
-    `Supporting characters: ${characters}. Draw each animal species with its accurate natural markings and face (an owl has a feathered face and beak, a badger has black-and-white face stripes - never a human-like face on an animal), and keep each character's appearance identical on every page.`,
-    pets ? `Pet companion: ${pets} (animal, not human). Keep the pet the same species, breed and coloring on every page.` : '',
-    `Setting: ${setting}.`,
-    `Colour palette: ${palette}${favouriteColour ? `, featuring the child's favourite colour ${favouriteColour}` : ''}.`,
-    `Mood: gentle, warm, cozy and child-friendly, with soft lighting.`,
-    `Composition: ${orientationWord(size)} storybook composition with important elements away from the edges (safe for print trim), no text, letters, numbers, captions or watermarks anywhere in the image.`,
-    pageLayout === 'overlay'
-      ? 'This page prints with a solid text band across the bottom: keep the bottom third of the scene calm, simple and uncluttered (sky, floor, grass, bedding) and keep every face and important subject fully inside the upper two-thirds - nothing important may cross the bottom-third line.'
-      : 'This page prints with the artwork above a text band: keep every face and important subject inside the upper two-thirds of the image, well away from the bottom edge - the print crop trims the bottom of the artwork.',
-    `Species rule: the child is always human; pets and animal characters are always animals. Never blend the two.`,
-  ]
-
-  return lines.filter(Boolean).join('\n')
-}
+import { buildItems, runStep, summarise, type AttemptWorker } from "./jobs.ts"
+import { SupabaseJobStore } from "./jobStore.ts"
+import { acceptedReferenceImage, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
 
 function parseImageResponse(result: any): string {
   const b64 = result?.data?.[0]?.b64_json
@@ -207,6 +148,54 @@ async function editImageWithReference(
   return parseImageResponse(await response.json())
 }
 
+// What a job stores once for all its items.
+type JobRequest = {
+  pageSize: string
+  pageLayout: string
+  size: string
+  config?: StoryConfig
+}
+
+const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// One generate -> review attempt for one job item: the same prompts, edit
+// fallback and review as the single-request path below.
+function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
+  return async ({ request, item, reference, feedback }) => {
+    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
+    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
+    const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
+    const styleBible = buildStyleBible(request.config, request.size, request.pageLayout || 'split')
+    const styleAnchor = styleProfile(request.config?.imageStyle)?.anchor || ''
+    const isCover = item.page === null || !item.prompt
+    const base = isCover
+      ? buildCoverPrompt(styleBible, styleAnchor, !!reference)
+      : buildPagePrompt(item.prompt!, styleBible, styleAnchor, !!reference)
+    const prompt = feedback?.length ? withReviewFeedback(base, feedback, styleAnchor) : base
+    const label = isCover ? 'cover' : `page ${item.page}`
+    console.log(`Job attempt ${item.attempts + 1} for ${label} with model ${model} (${request.size}, ${quality}${reference ? ', with reference' : ''})`)
+
+    let url: string
+    if (reference) {
+      try {
+        url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
+      } catch (editError) {
+        console.error(`Reference edit failed for ${label}, falling back to plain generation:`, editError)
+        url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
+      }
+    } else {
+      url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
+    }
+    const review = await reviewImage(openaiKey, reviewModel, url, {
+      label: isCover ? COVER_REVIEW_LABEL : label,
+      brief: isCover ? COVER_REVIEW_BRIEF : pageScene(item.prompt!),
+      config: request.config,
+      referenceDataUrl: reference || undefined,
+    })
+    return { url, review }
+  }
+}
+
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
   if (req.method === 'OPTIONS') {
@@ -253,6 +242,25 @@ serve(async (req) => {
       return new Response(JSON.stringify({ reviews }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
+    const json = (payload: unknown, status = 200) =>
+      new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+
+    // Durable job API (see jobs.ts). start: charge usage once and queue the
+    // book; step: one generate->review attempt on the next item; status: all
+    // items with their images, for resuming after a reload.
+    if (body.action === 'step' || body.action === 'status') {
+      if (typeof body.jobId !== 'string' || !JOB_ID.test(body.jobId)) return json({ error: 'Unknown illustration job.' }, 400)
+      const store = new SupabaseJobStore<JobRequest, ImagePrompt>(serviceClient())
+      if (body.action === 'step') {
+        const result = await runStep(store, jobWorker(openaiKey), body.jobId, user.id)
+        return result ? json(result) : json({ error: 'Unknown illustration job.' }, 404)
+      }
+      const job = await store.getJob(body.jobId, user.id)
+      if (!job) return json({ error: 'Unknown illustration job.' }, 404)
+      const items = await store.listItemsWithImages(body.jobId)
+      return json({ jobStatus: job.status, items: items.map(summarise) })
+    }
+
     if (!Array.isArray(prompts) || prompts.length === 0) {
       throw new Error('prompts must be a non-empty array')
     }
@@ -263,6 +271,27 @@ serve(async (req) => {
     const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'image', prompts.length + (includeCover ? 1 : 0))
     if (limitMessage) {
       return tooManyRequestsResponse(corsHeaders, limitMessage)
+    }
+
+    if (body.action === 'start') {
+      const store = new SupabaseJobStore<JobRequest, ImagePrompt>(serviceClient())
+      const request: JobRequest = {
+        pageSize,
+        pageLayout: pageLayout || 'split',
+        size: Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536',
+        config: body.config || prompts[0]?.config,
+      }
+      // The config is stored once on the job, not on every item.
+      const pagePrompts: ImagePrompt[] = (prompts as ImagePrompt[]).map((p) => ({
+        page: Number(p.page), prompt: p.prompt, text: p.text, visualBrief: p.visualBrief,
+      }))
+      if (pagePrompts.some((p) => !Number.isInteger(p.page)) || new Set(pagePrompts.map((p) => p.page)).size !== pagePrompts.length) {
+        return json({ error: 'Each page must have a unique page number.' }, 400)
+      }
+      const items = buildItems(pagePrompts, !!includeCover)
+      const jobId = await store.createJob(user.id, request, acceptedReferenceImage(body.referenceImage), items)
+      console.log('Illustration job started: user', user.id, 'job', jobId, 'items', items.length)
+      return json({ jobId, items: items.map(summarise) })
     }
 
     console.log('Generate images request: user', user.id, 'pages', prompts.length)
@@ -288,42 +317,9 @@ serve(async (req) => {
 
     for (const promptData of ordered) {
       try {
-        const scene = promptData.prompt || promptData.visualBrief || 'a warm storybook scene'
+        const scene = pageScene(promptData)
 
-        let fullPrompt: string
-        if (referenceUrl) {
-          fullPrompt = [
-            `This is page ${promptData.page} of the same children's picture book as the reference image.`,
-            'Keep the EXACT same characters from the reference image: the same child (same face, hair, skin tone and clothing), the same animals (same species, breed and colouring), and the same recurring props (toys, blankets, furniture).',
-            'Use the same illustration style, linework, lighting and colour palette as the reference image.',
-            '',
-            'STYLE BIBLE (must match every other page exactly):',
-            styleBible,
-            '',
-            `NEW SCENE FOR THIS PAGE (page ${promptData.page}):`,
-            `Scene: ${scene}`,
-            promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
-            '',
-            'Illustrate exactly this scene in a new composition. Do not copy the reference image\'s scene - only its characters, props, style and palette.',
-            'The image must contain no text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
-            styleAnchor,
-          ].filter(Boolean).join('\n')
-        } else {
-          fullPrompt = [
-            'High-quality children\'s book illustration for one page of a personalised bedtime story.',
-            '',
-            'STYLE BIBLE (must match every other page exactly):',
-            styleBible,
-            '',
-            `THIS PAGE (page ${promptData.page}):`,
-            `Scene: ${scene}`,
-            promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
-            promptData.text ? `Story text on this page: "${promptData.text}"` : '',
-            '',
-            'Illustrate exactly what this page\'s story text describes, while keeping the characters, style, palette and setting from the style bible perfectly consistent with the other pages.',
-            styleAnchor,
-          ].filter(Boolean).join('\n')
-        }
+        const fullPrompt = buildPagePrompt(promptData, styleBible, styleAnchor, !!referenceUrl)
 
         console.log(`Generating image for page ${promptData.page} with model ${model} (${size}, ${quality}${referenceUrl ? ', with reference' : ''})`)
 
@@ -339,9 +335,7 @@ serve(async (req) => {
           // Retry hygiene: only the LATEST rejection is fed back (stacking
           // notes bloats the prompt and dilutes the scene), and the style
           // lock is repeated AFTER the feedback so it stays the final word.
-          const attemptPrompt = attempt > 1
-            ? basePrompt + `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${review.issues.join('; ')}. The new image must not have these problems.${styleAnchor ? '\n\n' + styleAnchor : ''}`
-            : basePrompt
+          const attemptPrompt = attempt > 1 ? withReviewFeedback(basePrompt, review.issues, styleAnchor) : basePrompt
           if (attempt > 1) {
             console.log(`Regenerating page ${promptData.page} after review rejection (attempt ${attempt}): ${review.issues.join('; ')}`)
           }
@@ -396,24 +390,7 @@ serve(async (req) => {
     let coverReview: ImageReview | undefined
     if (includeCover) {
       try {
-        const coverPrompt = [
-          referenceUrl
-            ? "This is the FRONT COVER of the same children's picture book as the reference image."
-            : "Front cover illustration for a personalised children's picture book.",
-          referenceUrl
-            ? 'Keep the EXACT same characters, style, linework, lighting and colour palette as the reference image.'
-            : '',
-          '',
-          'STYLE BIBLE (must match the inside pages exactly):',
-          styleBible,
-          '',
-          'COVER COMPOSITION (follow exactly):',
-          '- One iconic, heartwarming scene with the main child and the most important supporting character(s) together.',
-          '- The characters and the action occupy the LOWER HALF of the image; every face stays fully below the halfway line.',
-          '- The TOP HALF is calm, simple and uncluttered (sky, soft wall, gentle background, treetops) with NO faces, characters or busy detail above the halfway line - the printed book title sits in that space.',
-          '- No text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
-          styleAnchor,
-        ].filter(Boolean).join('\n')
+        const coverPrompt = buildCoverPrompt(styleBible, styleAnchor, !!referenceUrl)
         console.log('Generating dedicated cover image')
         // Same vision gate as the inside pages: a rejected cover is
         // regenerated with feedback, and a cover that never passes is dropped
@@ -421,9 +398,7 @@ serve(async (req) => {
         // shipping a defective front cover.
         coverReview = { pass: false, issues: ['not yet reviewed'] }
         for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
-          const fullCoverPrompt = attempt > 1
-            ? coverPrompt + `\n\nQUALITY REVIEW REJECTED THE PREVIOUS ATTEMPT: ${coverReview.issues.join('; ')}. The new image must not have these problems.${styleAnchor ? '\n\n' + styleAnchor : ''}`
-            : coverPrompt
+          const fullCoverPrompt = attempt > 1 ? withReviewFeedback(coverPrompt, coverReview.issues, styleAnchor) : coverPrompt
           if (attempt > 1) {
             console.log(`Regenerating cover after review rejection (attempt ${attempt}): ${coverReview.issues.join('; ')}`)
           }
@@ -438,8 +413,8 @@ serve(async (req) => {
             coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
           }
           coverReview = await reviewImage(openaiKey, reviewModel, coverUrl, {
-            label: 'the front cover of the book (the top half is intentionally calm for the printed title; the characters sit in the lower half)',
-            brief: 'front cover: one iconic heartwarming scene with the main child and the most important supporting character(s)',
+            label: COVER_REVIEW_LABEL,
+            brief: COVER_REVIEW_BRIEF,
             config: prompts[0]?.config,
             referenceDataUrl: referenceUrl || undefined,
           })
