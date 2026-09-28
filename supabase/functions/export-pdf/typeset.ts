@@ -100,19 +100,22 @@ export function typesetVerse(raw: string, font: MeasuringFont, fontSize: number,
 }
 
 // Fixed type tiers picked by verse line count - never scale-to-fit. Sizes are
-// a share of the page width so they scale across A5, A4 and square formats,
-// and every page of a book lands on one of the same three sizes.
+// a share of the page's SHORTER side so they scale across A5, A4 and square
+// formats, and every page of a book lands on one of the same sizes. (Sizing
+// from the width made A4 landscape type ~31pt, so even four lines overflowed
+// a band that is capped by the much shorter page height. Portrait and square
+// pages are unaffected: their shorter side is the width.)
 // TIER_SHARES is a largest-to-smallest ladder: when long copy would push the
 // paper band past BAND_CAP, the page steps DOWN this ladder one fixed tier at
 // a time (never arbitrary scale-to-fit) until the band fits. The floor tier
 // is the last rung; if copy still does not fit, the band is clamped at the
 // cap and QA fails the page so it surfaces upstream.
 export const TIER_SHARES = [0.052, 0.046, 0.041, 0.038, 0.034];
-export function verseTier(hardLineCount: number, pageWidth: number, includeBleed: boolean, tierOverride?: number) {
+export function verseTier(hardLineCount: number, pageWidth: number, pageHeight: number, includeBleed: boolean, tierOverride?: number) {
   const base = hardLineCount <= 2 ? 0 : hardLineCount === 3 ? 1 : hardLineCount === 4 ? 2 : 3;
   const idx = Math.min(tierOverride ?? base, TIER_SHARES.length - 1);
   const share = TIER_SHARES[idx];
-  const fontSize = Math.max(12, Math.round(pageWidth * share)) + (includeBleed ? 2 : 0);
+  const fontSize = Math.max(12, Math.round(Math.min(pageWidth, pageHeight) * share)) + (includeBleed ? 2 : 0);
   return {
     fontSize,
     lineStep: Math.round(fontSize * 1.4),
@@ -145,7 +148,7 @@ export function layoutBand(rawText: string, font: MeasuringFont, pageWidth: numb
   const minBand = pageHeight * 0.24;
   const maxBand = pageHeight * BAND_CAP;
 
-  let type = verseTier(hardLineCount, pageWidth, includeBleed);
+  let type = verseTier(hardLineCount, pageWidth, pageHeight, includeBleed);
   let fontSize = type.fontSize;
   let lineStep = type.lineStep;
   let indentX = fontSize * 1.5;
@@ -156,7 +159,7 @@ export function layoutBand(rawText: string, font: MeasuringFont, pageWidth: numb
   let bandHeight = textLines.length ? Math.max(minBand, blockHeight + padY * 2 + safeInset * 0.5) : minBand;
 
   while (bandHeight > maxBand && type.tierIndex < TIER_SHARES.length - 1 && textLines.length) {
-    type = verseTier(hardLineCount, pageWidth, includeBleed, type.tierIndex + 1);
+    type = verseTier(hardLineCount, pageWidth, pageHeight, includeBleed, type.tierIndex + 1);
     fontSize = type.fontSize;
     lineStep = type.lineStep;
     indentX = fontSize * 1.5;

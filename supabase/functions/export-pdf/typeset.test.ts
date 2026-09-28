@@ -44,3 +44,25 @@ test('the band is clamped at the cap and overflow is flagged, never grown', () =
   assert.equal(band.bandOverflow, true);
   assert.equal(band.bandHeight, h * BAND_CAP);
 });
+
+const FIVE_LINES = SIX_LINES.split('\n').slice(0, 5).join('\n');
+
+test('A4 landscape print: five typical lines fit the band (type sized from the short side)', () => {
+  const [w, h] = pagePoints('A4 landscape', true);
+  const band = layoutBand(FIVE_LINES, font, w, h, true);
+  assert.equal(band.bandOverflow, false, `band overflowed at ${band.fontSize}pt`);
+  assert.equal(band.textLines.length, 5);
+});
+
+test('portrait and square type sizes are unchanged by short-side sizing', () => {
+  // Expected sizes measured on the pre-change code (baf4594), print variant.
+  const expected: [Parameters<typeof pagePoints>[0], number][] = [
+    ['A5 portrait', 19],
+    ['A4 portrait', 25],
+    ['210×210 mm square', 25],
+  ];
+  for (const [size, pt] of expected) {
+    const [w, h] = pagePoints(size, true);
+    assert.equal(layoutBand(FIVE_LINES, font, w, h, true).fontSize, pt, size);
+  }
+});
