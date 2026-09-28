@@ -13,6 +13,7 @@ export type FormatMode = 'auto' | 'manual';
 export interface StoryConfig {
   children: string[];               // may be empty
   coverImageUrl?: string;             // dedicated cover illustration, when generated
+  coverImageReview?: 'passed' | 'unreviewed';
   storyType: string;                // preset or custom
   themePreset?: string | null;      // eg 'Calm pastels'
   themeCustom?: string | null;
@@ -74,6 +75,7 @@ export interface StoryPage {
   text: string;
   imageUrl?: string;
   imageLocked?: boolean;
+  imageReview?: 'passed' | 'unreviewed'; // 'unreviewed': QA reviewer was down; re-checked before checkout
 }
 
 // UI State Types
@@ -132,12 +134,6 @@ export interface PlanResponse {
 
 export interface WriteResponse {
   pages: StoryPage[];
-}
-
-export interface ImageGenerateResponse {
-  images: { page: number; url: string }[];
-  cover?: { url: string };
-  errors?: { page: number; error: string }[];
 }
 
 export interface ExportResponse {

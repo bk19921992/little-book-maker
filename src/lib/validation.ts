@@ -1,5 +1,5 @@
 import type { StoryConfig, ReadingLevel, ValidationError, PageSizePreset } from '../types';
-import { contractViolations, wordRange } from '../../supabase/functions/_shared/textContract.ts';
+import { contractViolations, lineBudget, packLines, wordRange } from '../../supabase/functions/_shared/textContract.ts';
 
 // Word count targets by reading level and page size: the same text contract
 // story-write enforces, so an edited page fits the printed text band.
@@ -147,4 +147,29 @@ export const validatePagesForExport = (
 // Helper to format validation errors for display
 export const formatValidationErrors = (errors: ValidationError[]): string[] => {
   return errors.map(error => error.message);
+};
+// What the editor should tell the customer about a page that will not fit
+// the printed text band, and whether "Fit lines" (re-breaking the lines,
+// no rewording) would fix it. Null when the page fits.
+export const pageFitAdvice = (
+  text: string,
+  readingLevel: ReadingLevel,
+  pageSize?: PageSizePreset
+): { message: string; canFitLines: boolean } | null => {
+  if (!contractViolations(text, readingLevel, pageSize).length) return null;
+  const words = countWords(text);
+  const { max } = wordRange(readingLevel, pageSize);
+  if (words > max) {
+    return {
+      message: `This page has ${words} words, but its printed text area holds ${max}. Please shorten it by ${words - max} word${words - max === 1 ? '' : 's'}.`,
+      canFitLines: false,
+    };
+  }
+  const fixable = contractViolations(packLines(text), readingLevel, pageSize).length === 0;
+  return {
+    message: fixable
+      ? `Some lines are too long for the printed page (up to ${lineBudget(readingLevel, pageSize)} short lines fit). Fit lines re-breaks them without changing your words.`
+      : 'A few very long words make this page too wide for the printed text area. Please use shorter words or fewer of them.',
+    canFitLines: fixable,
+  };
 };

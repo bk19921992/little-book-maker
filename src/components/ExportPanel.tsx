@@ -20,6 +20,7 @@ import { StoryConfig } from '../types';
 import { api } from '../api';
 import { toast } from 'sonner';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
+import { recheckUnreviewedImages } from '../lib/reviewGate';
 
 // Print stays hidden until Phase 5 - the server refuses orders while the flag is off too.
 const PRINT_ENABLED = import.meta.env.VITE_PRINT_ENABLED === 'true';
@@ -40,6 +41,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onReset,
 }) => {
   const [isExporting, setIsExporting] = useState(false);
+  const [isCheckingImages, setIsCheckingImages] = useState(false);
+  const [imageCheckMessage, setImageCheckMessage] = useState<string | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<PrintProvider>('PEECHO');
   const [printResult, setPrintResult] = useState<{
@@ -84,8 +87,30 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     }
   };
 
-  const handleExportClick = () => {
-    // Billing (free first export or payment) is settled with the server first.
+  const handleExportClick = async () => {
+    // Illustrations the QA reviewer could not check when they were made are
+    // re-checked BEFORE checkout, so nobody pays for (or exports) unverified
+    // art. Then billing (free first export or payment) is settled with the
+    // server as before.
+    setImageCheckMessage(null);
+    setIsCheckingImages(true);
+    try {
+      const { updates, blockMessage } = await recheckUnreviewedImages(api, config);
+      if (Object.keys(updates).length) onConfigChange(updates);
+      if (blockMessage) {
+        setImageCheckMessage(blockMessage);
+        toast.error(blockMessage);
+        return;
+      }
+    } catch (error) {
+      const message = "We couldn't check your illustrations just now. Please try again in a moment.";
+      console.error('Image re-check failed', error);
+      setImageCheckMessage(message);
+      toast.error(message);
+      return;
+    } finally {
+      setIsCheckingImages(false);
+    }
     setShowExportCheckout(true);
   };
 
@@ -224,6 +249,13 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             </p>
           </div>
 
+          {imageCheckMessage && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{imageCheckMessage}</AlertDescription>
+            </Alert>
+          )}
+
           {config.exports?.webPdfUrl && (
             <Alert>
               <CheckCircle className="h-4 w-4" />
@@ -253,9 +285,14 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               </Button>
               <Button
                 onClick={handleExportClick}
-                disabled={isExporting}
+                disabled={isExporting || isCheckingImages}
               >
-                {isExporting ? (
+                {isCheckingImages ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Checking illustrations...
+                  </>
+                ) : isExporting ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     Preparing PDFs...

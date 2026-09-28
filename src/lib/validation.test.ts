@@ -19,3 +19,18 @@ test('a compliant page is good with no issues', () => {
   const text = 'Mia and Pip ran down the lane,\npast the bakery and the church.\nThe wind was cold and strong,\nso they held their scarves tight.';
   assert.deepEqual(getPageTextStatus(text, 'Early 4–5', 'A5 portrait'), { status: 'good', color: 'text-story-nature', issues: [] });
 });
+
+test('fit advice: too many words asks for shortening and offers no Fit lines', async () => {
+  const { pageFitAdvice } = await import('./validation.ts');
+  const long = Array.from({ length: 36 }, (_, i) => `word${i % 5}`).join(' ');
+  const advice = pageFitAdvice(long, 'Early 4–5', 'A4 landscape')!;
+  assert.equal(advice.canFitLines, false);
+  assert.match(advice.message, /36 words.*holds 30.*shorten it by 6 words/);
+});
+
+test('fit advice: fixable line breaks offer Fit lines; a fitting page gets none', async () => {
+  const { pageFitAdvice } = await import('./validation.ts');
+  const oneLongLine = 'Mia and the wise old owl walked slowly through the enchanted forest listening to the leaves';
+  assert.equal(pageFitAdvice(oneLongLine, 'Early 4–5', 'A5 portrait')!.canFitLines, true);
+  assert.equal(pageFitAdvice('Mia ran home.\nThe owl flew too.', 'Early 4–5', 'A5 portrait'), null);
+});

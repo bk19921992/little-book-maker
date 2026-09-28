@@ -1,5 +1,6 @@
-import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
+import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
 import type { ImageConfig } from './lib/imageRequest';
+import type { ImageJobItem, ImageJobStep } from './lib/imageJob';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
 
@@ -65,20 +66,33 @@ class APIClient {
     return this.invokeFunction<WriteResponse>('story-write', { config, outline });
   }
 
-  async generateImages(
+  // Durable illustration job (see supabase/functions/generate-images/jobs.ts):
+  // start queues the book and charges usage once; each step is one
+  // generate->review attempt; status returns every item with its image.
+  async startImageJob(
     pageSize: PageSizePreset,
     pageLayout: PageLayout,
-    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig | ImageConfig; seed?: number }[],
-    includeCover: boolean = false,
+    prompts: { page: number; prompt: string; text?: string; visualBrief?: string }[],
+    includeCover: boolean,
+    config: ImageConfig,
     referenceImage?: string
-  ): Promise<ImageGenerateResponse> {
-    return this.invokeFunction<ImageGenerateResponse>('generate-images', {
-      pageSize,
-      pageLayout,
-      prompts,
-      includeCover,
-      referenceImage,
-    });
+  ): Promise<{ jobId: string; items: ImageJobItem[] }> {
+    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, referenceImage });
+  }
+
+  async stepImageJob(jobId: string): Promise<ImageJobStep> {
+    return this.invokeFunction('generate-images', { action: 'step', jobId });
+  }
+
+  async imageJobStatus(jobId: string): Promise<{ jobStatus: 'running' | 'done'; items: ImageJobItem[] }> {
+    return this.invokeFunction('generate-images', { action: 'status', jobId });
+  }
+
+  // Re-run the image QA gate over existing images (no generation, no usage).
+  async reviewImages(
+    items: { url: string; label: string; brief?: string; config?: ImageConfig; reference?: string }[]
+  ): Promise<{ reviews: { label: string; pass: boolean; issues: string[]; skipped?: boolean }[] }> {
+    return this.invokeFunction('generate-images', { reviewImages: items });
   }
 
   async exportPDF(
