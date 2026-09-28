@@ -4,6 +4,7 @@ import type { PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import * as fontkit from "https://esm.sh/@pdf-lib/fontkit@1.1.1";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
+import { layoutBand, MAX_VERSE_LINES, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -32,10 +33,6 @@ function mmToPdfPoints(mm: number): number {
 // below. Dark ink on paper always passes contrast; no strokes or halos.
 const PAPER = rgb(1, 0.976, 0.941);      // #FFF9F0
 const INK = rgb(0.169, 0.149, 0.133);    // #2B2622
-const SAFE = 0.07;                       // safe-area inset, share of page width
-const TEXT_MEASURE = 0.78;               // max line measure, share of page width
-const MAX_VERSE_LINES = 4;
-const BAND_CAP = 0.40;                 // hard cap on band height, share of page height
 
 const FONT_URLS = {
   text: "https://cdn.jsdelivr.net/fontsource/fonts/nunito@latest/latin-600-normal.ttf",
@@ -77,16 +74,6 @@ async function embedFonts(pdfDoc: PDFDocument): Promise<EmbeddedFonts> {
   }
 }
 
-// Typographic normalisation for every rendered string: curly apostrophes and
-// quotes, proper ellipsis and em dashes.
-function normaliseTypography(s: string): string {
-  return s
-    .replace(/\.{3}/g, '…')
-    .replace(/--/g, '—')
-    .replace(/'/g, '\u2019')
-    .replace(/"([^"]*)"/g, '\u201C$1\u201D');
-}
-
 function sentenceCase(s: string): string {
   const t = s.trim();
   return t ? t[0].toLowerCase() + t.slice(1) : t;
@@ -109,107 +96,6 @@ interface StoryPage {
   imageUrl?: string;
   imageLocked?: boolean;
   layout?: string;
-}
-
-interface TypesetLine {
-  text: string;
-  indent: boolean; // continuation of a soft-wrapped verse line
-}
-
-// Pick the break point for an overlong verse line: prefer the last clause
-// boundary (comma, semicolon, conjunction) that fits; otherwise the last word
-// boundary that fits.
-function chooseBreak(line: string, font: PDFFont, fontSize: number, maxWidth: number): number {
-  const words = line.split(' ');
-  const candidates: { cut: number; clause: boolean }[] = [];
-  let acc = '';
-  for (let i = 0; i < words.length - 1; i++) {
-    acc = acc ? `${acc} ${words[i]}` : words[i];
-    if (font.widthOfTextAtSize(acc, fontSize) <= maxWidth) {
-      const clause = /[,;:]$/.test(words[i]) || /^(and|or|but|so|then)$/i.test(words[i + 1] || '');
-      candidates.push({ cut: acc.length, clause });
-    } else {
-      break;
-    }
-  }
-  if (!candidates.length) {
-    return line.indexOf(' ') > 0 ? line.indexOf(' ') : line.length;
-  }
-  const restWidth = (cut: number) => font.widthOfTextAtSize(line.slice(cut).trimStart(), fontSize);
-  const lastFit = candidates[candidates.length - 1];
-  // If even the fullest break leaves an overflowing remainder, this is a
-  // three-or-more-segment wrap: fill greedily so the middle lines stay full.
-  if (restWidth(lastFit.cut) > maxWidth) {
-    return lastFit.cut;
-  }
-  // Two-segment break: balance the halves like a typesetter would, with a
-  // 15% preference for clause boundaries.
-  let best = lastFit;
-  let bestScore = Infinity;
-  for (const c of candidates) {
-    const firstW = font.widthOfTextAtSize(line.slice(0, c.cut), fontSize);
-    let score = Math.abs(firstW - restWidth(c.cut));
-    if (c.clause) score *= 0.85;
-    if (score < bestScore) {
-      bestScore = score;
-      best = c;
-    }
-  }
-  return best.cut;
-}
-
-// Verse-aware typesetting. Hard newlines in the story text are sacred: one
-// source line is one typeset line whenever it fits the measure. Only an
-// overlong line is soft-wrapped, at a clause boundary where possible, with a
-// hanging indent on the continuation (standard poetry convention).
-function typesetVerse(raw: string, font: PDFFont, fontSize: number, maxWidth: number): TypesetLine[] {
-  const hardLines = raw
-    .split('\n')
-    .map((l) => normaliseTypography(l.replace(/\s+/g, ' ').trim()))
-    .filter(Boolean);
-  const out: TypesetLine[] = [];
-  for (const hardLine of hardLines) {
-    if (font.widthOfTextAtSize(hardLine, fontSize) <= maxWidth) {
-      out.push({ text: hardLine, indent: false });
-      continue;
-    }
-    let rest = hardLine;
-    let first = true;
-    while (rest) {
-      if (font.widthOfTextAtSize(rest, fontSize) <= maxWidth) {
-        out.push({ text: rest, indent: !first });
-        break;
-      }
-      const cut = chooseBreak(rest, font, fontSize, maxWidth);
-      out.push({ text: rest.slice(0, cut).trimEnd(), indent: !first });
-      rest = rest.slice(cut).trimStart();
-      first = false;
-    }
-  }
-  return out;
-}
-
-// Fixed type tiers picked by verse line count - never scale-to-fit. Sizes are
-// a share of the page width so they scale across A5, A4 and square formats,
-// and every page of a book lands on one of the same three sizes.
-// TIER_SHARES is a largest-to-smallest ladder: when long copy would push the
-// paper band past BAND_CAP, the page steps DOWN this ladder one fixed tier at
-// a time (never arbitrary scale-to-fit) until the band fits. The floor tier
-// is the last rung; if copy still does not fit, the band is clamped at the
-// cap and QA fails the page so it surfaces upstream.
-const TIER_SHARES = [0.052, 0.046, 0.041, 0.038, 0.034];
-function verseTier(hardLineCount: number, pageWidth: number, includeBleed: boolean, tierOverride?: number) {
-  const base = hardLineCount <= 2 ? 0 : hardLineCount === 3 ? 1 : hardLineCount === 4 ? 2 : 3;
-  const idx = Math.min(tierOverride ?? base, TIER_SHARES.length - 1);
-  const share = TIER_SHARES[idx];
-  const fontSize = Math.max(12, Math.round(pageWidth * share)) + (includeBleed ? 2 : 0);
-  return {
-    fontSize,
-    lineStep: Math.round(fontSize * 1.4),
-    maxWidth: pageWidth * TEXT_MEASURE,
-    tierIndex: idx,
-    baseIndex: base,
-  };
 }
 
 interface StoryConfigInput {
@@ -404,37 +290,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
 
     const overlay = config.pageLayout === 'overlay';
     const rawText = page.text || '';
-    const hardLineCount = rawText.split('\n').map((l) => l.trim()).filter(Boolean).length || 1;
-
-    // Paper band across the bottom: sized to the text block, floored at 24%
-    // and HARD-CAPPED at 40% of the page height. Long copy steps the type
-    // down the fixed tier ladder (see verseTier) instead of growing the band.
-    const minBand = pageHeight * 0.24;
-    const maxBand = pageHeight * BAND_CAP;
-
-    let type = verseTier(hardLineCount, pageWidth, includeBleed);
-    let fontSize = type.fontSize;
-    let lineStep = type.lineStep;
-    let indentX = fontSize * 1.5;
-    let padY = fontSize * 0.9;
-    let textLines = rawText.trim() ? typesetVerse(rawText, fonts.text, fontSize, type.maxWidth) : [];
-    let lineWidths = textLines.map((l) => fonts.text.widthOfTextAtSize(l.text, fontSize) + (l.indent ? indentX : 0));
-    let blockHeight = textLines.length ? (textLines.length - 1) * lineStep + fontSize : 0;
-    let bandHeight = textLines.length ? Math.max(minBand, blockHeight + padY * 2 + safeInset * 0.5) : minBand;
-
-    while (bandHeight > maxBand && type.tierIndex < TIER_SHARES.length - 1 && textLines.length) {
-      type = verseTier(hardLineCount, pageWidth, includeBleed, type.tierIndex + 1);
-      fontSize = type.fontSize;
-      lineStep = type.lineStep;
-      indentX = fontSize * 1.5;
-      padY = fontSize * 0.9;
-      textLines = typesetVerse(rawText, fonts.text, fontSize, type.maxWidth);
-      lineWidths = textLines.map((l) => fonts.text.widthOfTextAtSize(l.text, fontSize) + (l.indent ? indentX : 0));
-      blockHeight = textLines.length ? (textLines.length - 1) * lineStep + fontSize : 0;
-      bandHeight = Math.max(minBand, blockHeight + padY * 2 + safeInset * 0.5);
-    }
-    const bandOverflow = bandHeight > maxBand;
-    if (bandOverflow) bandHeight = maxBand;
+    const band = layoutBand(rawText, fonts.text, pageWidth, pageHeight, includeBleed);
+    const { type, fontSize, lineStep, indentX, padY, textLines, lineWidths, blockHeight, bandOverflow, hardLineCount } = band;
+    const bandHeight = band.bandHeight;
     const bandTop = bandHeight;
 
     // Text block geometry: common left axis, centred as a block.
