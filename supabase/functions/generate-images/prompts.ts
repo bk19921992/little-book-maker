@@ -41,6 +41,21 @@ export const STYLE_PROFILES: Record<string, { technique: string; anchor: string 
     technique: 'coloured pencil drawing: visible pencil strokes and hatching, warm slightly waxy colour, hand-drawn linework',
     anchor: 'STYLE LOCK: this must look drawn in coloured pencil - visible strokes and hand-drawn lines. NO 3D rendering, NO digital airbrush, NO smooth vector fills.',
   },
+  // Keys below match the setup form's style names ("Crayon", "Picture-book",
+  // "Cartoon line art"); 'pencil crayon' above still wins for custom text
+  // that says pencil crayon, because keys are tried in order.
+  'crayon': {
+    technique: 'wax crayon drawing: soft waxy strokes with visible texture where the paper grain shows through, bold simple shapes, warm hand-drawn outlines',
+    anchor: 'STYLE LOCK: this must look drawn with wax crayons on paper - visible waxy strokes and paper grain. NO 3D rendering, NO digital airbrush, NO smooth vector fills, NO photographic detail.',
+  },
+  'picture-book': {
+    technique: 'classic 2D picture-book illustration: gouache-style flat colour with soft texture, clean confident outlines, simple rounded shapes and gentle shading',
+    anchor: 'STYLE LOCK: this must look like a hand-illustrated 2D picture book - flat gouache-style colour and clean outlines. NO 3D rendering, NO CGI or Pixar-style look, NO clay or plastic shading, NO photorealism.',
+  },
+  'cartoon line art': {
+    technique: 'clean 2D cartoon line art: bold even black outlines with flat colour fills and minimal shading, simple expressive shapes',
+    anchor: 'STYLE LOCK: this must look like 2D cartoon line art - bold clean outlines and flat colour fills. NO 3D rendering, NO painterly texture, NO gradients, NO photorealism.',
+  },
 }
 
 export function styleProfile(imageStyle: StoryConfig['imageStyle']): { technique: string; anchor: string } | null {
