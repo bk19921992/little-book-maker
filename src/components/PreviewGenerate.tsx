@@ -13,6 +13,9 @@ import { resolveAutoFormat } from '../lib/format';
 import { imageConfig } from '../lib/imageRequest';
 import { applyJobItems, runImageJob } from '../lib/imageJob';
 import { clearCheckpoint, saveCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
+import { saveBook } from '../lib/savedBooks';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/context/AuthContext';
 
 interface PreviewGenerateProps {
   config: StoryConfig;
@@ -43,6 +46,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   // Set while an illustration job is unfinished, so a lost connection can
   // be resumed without starting (or paying for) the book again.
+  const { user } = useAuth();
   const [pendingJob, setPendingJob] = useState<{ jobId: string; book: StoryConfig } | null>(null);
 
   const updateProgress = (newProgress: number) => {
@@ -204,13 +208,21 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           `The illustration${result.failedPages.length > 1 ? 's' : ''} for page${result.failedPages.length > 1 ? 's' : ''} ${result.failedPages.join(', ')} didn't pass our quality check. You can regenerate ${result.failedPages.length > 1 ? 'them' : 'it'} from the editor.`
         );
       }
-      onConfigChange({
+      const finishedBook: StoryConfig = {
         ...book,
         pages: result.pages,
         coverImageUrl: result.coverImageUrl,
         coverImageReview: result.coverImageReview,
-      });
+      };
+      onConfigChange(finishedBook);
       clearCheckpoint();
+      // Keep the finished book on the customer's account (My books).
+      if (user) {
+        saveBook(supabase, user.id, finishedBook).catch((saveError) => {
+          console.error('Saving the book failed', saveError);
+          toast.warning("Your book is ready, but we couldn't save it to your account yet. We'll try again as you edit.");
+        });
+      }
       setPendingJob(null);
       updateProgress(100);
       setCurrentStep('complete');

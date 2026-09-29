@@ -58,7 +58,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
             {mode === 'sign-in' ? 'Sign in to continue' : 'Create your account'}
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            Sign in to make a story. Download your finished book before leaving - completed books are not saved to your account yet.
+            Sign in to make a story. Every book you make is saved to your account - find them any time under My books.
           </p>
         </CardHeader>
         <CardContent>

@@ -6,6 +6,7 @@ import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { layoutBand, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
+import { storeBookPdfs } from "../_shared/bookStorage.ts";
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -492,23 +493,39 @@ serve(async (req) => {
     const print = await createPDF(config, pages, true, coverImage);
     const qa = [...web.qa, ...print.qa.filter((p) => p.severity !== 'pass')];
 
-    // Convert to base64 for JSON response
-    // Convert in bounded chunks; spreading the entire illustrated PDF overflows the call stack.
-    const toBase64 = (bytes: Uint8Array): string => {
-      let binary = '';
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      }
-      return btoa(binary);
-    };
-    const base64WebPdf = toBase64(web.bytes);
-    const base64PrintPdf = toBase64(print.bytes);
+    // Keep the PDFs on the customer's account (a paid book survives a closed
+    // tab, and printers fetch the print PDF from storage) and return short
+    // download links. If storage fails, fall back to inline PDFs so an export
+    // is never lost.
+    let webPdfUrl: string;
+    let printPdfUrl: string;
+    let saved = false;
+    try {
+      const title = config.children?.length ? `${config.children.join(' & ')}'s Story` : 'My Story';
+      const links = await storeBookPdfs(serviceClient(), user.id, storyId, { web: web.bytes, print: print.bytes }, title);
+      webPdfUrl = links.webUrl;
+      printPdfUrl = links.printUrl;
+      saved = true;
+    } catch (storageError) {
+      console.error('Storing PDFs failed; returning them inline instead:', storageError);
+      // Convert in bounded chunks; spreading the entire illustrated PDF overflows the call stack.
+      const toBase64 = (bytes: Uint8Array): string => {
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 8192) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        }
+        return btoa(binary);
+      };
+      webPdfUrl = `data:application/pdf;base64,${toBase64(web.bytes)}`;
+      printPdfUrl = `data:application/pdf;base64,${toBase64(print.bytes)}`;
+    }
 
     return new Response(
       JSON.stringify({
         success: true,
-        webPdfUrl: `data:application/pdf;base64,${base64WebPdf}`,
-        printPdfUrl: `data:application/pdf;base64,${base64PrintPdf}`,
+        webPdfUrl,
+        printPdfUrl,
+        saved,
         webFilename: `${config.children?.join('-') || 'story'}-web.pdf`,
         printFilename: `${config.children?.join('-') || 'story'}-print.pdf`,
         pageCount: pages.length + 1, // +1 for cover

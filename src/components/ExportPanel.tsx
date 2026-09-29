@@ -21,6 +21,9 @@ import { api } from '../api';
 import { toast } from 'sonner';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
 import { recheckUnreviewedImages } from '../lib/reviewGate';
+import { saveBook, withDownloadName } from '../lib/savedBooks';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/context/AuthContext';
 
 // Print stays hidden until Phase 5 - the server refuses orders while the flag is off too.
 const PRINT_ENABLED = import.meta.env.VITE_PRINT_ENABLED === 'true';
@@ -40,6 +43,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onBack,
   onReset,
 }) => {
+  const { user } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
   const [isCheckingImages, setIsCheckingImages] = useState(false);
   const [imageCheckMessage, setImageCheckMessage] = useState<string | null>(null);
@@ -111,6 +115,15 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     } finally {
       setIsCheckingImages(false);
     }
+    // Save the book to the account before the customer pays, so a paid book
+    // survives a closed tab. A save failure is not a reason to block them.
+    if (user && config.storyId) {
+      try {
+        await saveBook(supabase, user.id, config);
+      } catch (saveError) {
+        console.error('Saving the book before checkout failed', saveError);
+      }
+    }
     setShowExportCheckout(true);
   };
 
@@ -160,7 +173,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
   const downloadFile = (url: string, filename: string) => {
     const link = document.createElement('a');
-    link.href = url;
+    // Stored PDFs come back as signed storage links: ask the server for an
+    // attachment so the browser downloads instead of leaving the app.
+    link.href = withDownloadName(url, filename);
     link.download = filename;
     document.body.appendChild(link);
     link.click();
