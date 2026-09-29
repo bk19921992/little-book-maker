@@ -260,7 +260,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              Generate professionally typeset PDFs that include all text, illustrations, bleed and trim marks.
+              Generate professionally typeset PDFs of your book: one for reading on screen, and a print-ready one with 3 mm bleed.
             </p>
           </div>
 

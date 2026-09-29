@@ -7,6 +7,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { layoutBand, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
+import { dpiCheck, effectiveDpi, printBoxes } from "./printSpec.ts";
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -184,7 +185,16 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // Prefer the dedicated cover illustration (generated with clear title
   // space); fall back to the first story image for older books.
   const coverImageUrl = coverImage || coverImagePage?.imageUrl;
+  // Print pages carry TrimBox/BleedBox so printers know the finished size.
+  const markPrintBoxes = (page: ReturnType<typeof pdfDoc.addPage>) => {
+    if (!includeBleed) return;
+    const { trim, bleed } = printBoxes(pageWidth, pageHeight);
+    page.setBleedBox(bleed.x, bleed.y, bleed.width, bleed.height);
+    page.setTrimBox(trim.x, trim.y, trim.width, trim.height);
+  };
+
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
+  markPrintBoxes(coverPage);
   coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
 
   if (coverImageUrl) {
@@ -202,6 +212,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
           height: drawH,
         });
         qa.push({ where: 'cover', severity: 'pass', check: coverImage ? 'dedicated cover illustration, full-bleed, title space reserved' : 'cover illustration present, full-bleed (page art fallback)' });
+        if (includeBleed) qa.push(dpiCheck('cover', effectiveDpi(img, { width: drawW, height: drawH })));
       } catch (coverError) {
         console.error('Failed to embed cover image', coverError);
         qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration failed to embed' });
@@ -288,6 +299,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // ---- Story pages ----
   for (const page of pages) {
     const storyPage = pdfDoc.addPage([pageWidth, pageHeight]);
+    markPrintBoxes(storyPage);
     storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
 
     const overlay = config.pageLayout === 'overlay';
@@ -320,6 +332,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
               width: drawW,
               height: drawH,
             });
+            if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: drawW, height: drawH })));
           } else {
             // Split: cover-crop the artwork into the region above the band,
             // edge to edge.
@@ -334,6 +347,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
             });
             // Mask any artwork spilling into the band (centre crop overflow).
             storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: bandTop, color: PAPER });
+            if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: drawW, height: drawH })));
           }
           imagePlaced = true;
         } catch (imageError) {
