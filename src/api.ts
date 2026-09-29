@@ -23,7 +23,7 @@ const extractFunctionError = async (error: unknown): Promise<string> => {
 
 // API client for communicating with Supabase edge functions
 class APIClient {
-  private async invokeFunction<T>(functionName: string, body: unknown): Promise<T> {
+  private async invokeFunction<T>(functionName: string, body: unknown, retryOnSendFailure = true): Promise<T> {
     try {
       if (supabaseConfigError) {
         throw new Error(supabaseConfigError);
@@ -35,7 +35,7 @@ class APIClient {
         console.error(`Error calling ${functionName}:`, error);
         const msg = error.message || 'Edge Function error';
         // Retry once if the request failed to send (common transient issue)
-        if (msg.includes('Failed to send a request to the Edge Function')) {
+        if (retryOnSendFailure && msg.includes('Failed to send a request to the Edge Function')) {
           console.warn(`[${functionName}] Retry after transient send failure...`);
           await new Promise((r) => setTimeout(r, 600));
           const retry = await supabase.functions.invoke(functionName, { body });
@@ -77,7 +77,7 @@ class APIClient {
     config: ImageConfig,
     referenceImage?: string
   ): Promise<{ jobId: string; items: ImageJobItem[] }> {
-    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, referenceImage });
+    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, referenceImage }, false);
   }
 
   async stepImageJob(jobId: string): Promise<ImageJobStep> {
