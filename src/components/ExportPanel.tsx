@@ -21,6 +21,9 @@ import { api } from '../api';
 import { toast } from 'sonner';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
 import { recheckUnreviewedImages } from '../lib/reviewGate';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { validateAddress, type ShippingAddress } from '../../supabase/functions/create-print-order/print.ts';
 import { saveBook, withDownloadName } from '../lib/savedBooks';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
@@ -35,7 +38,6 @@ interface ExportPanelProps {
   onReset: () => void;
 }
 
-type PrintProvider = 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO';
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
   config,
@@ -48,7 +50,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const [isCheckingImages, setIsCheckingImages] = useState(false);
   const [imageCheckMessage, setImageCheckMessage] = useState<string | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<PrintProvider>('PEECHO');
+  const [address, setAddress] = useState<ShippingAddress>({ name: '', email: user?.email || '', line1: '', line2: '', city: '', postcode: '', country: 'GB' });
+  const [addressErrors, setAddressErrors] = useState<string[]>([]);
   const [printResult, setPrintResult] = useState<{
     ok: boolean;
     provider: string;
@@ -133,28 +136,20 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   };
 
   const createPrintOrder = async () => {
-    if (!config.exports?.printPdfUrl) {
-      toast.error('Please export PDFs first');
-      return;
-    }
-
+    if (!config.storyId) return;
     setIsPrinting(true);
     try {
-      const response = await api.createPrintOrder(
-        selectedProvider,
-        config.exports.printPdfUrl,
-        config.pageSize
-      );
-
+      const response = await api.createPrintOrder(config.storyId, address);
       setPrintResult(response);
-
       if (response.ok) {
-        toast.success(`Print order created with ${response.provider}`);
+        toast.success('Your printed book is ordered!');
       } else {
-        toast.error(response.error ?? 'Failed to create print order');
+        toast.error(response.error ?? "We couldn't place the order. Please try again.");
       }
     } catch (error) {
-      toast.error('Failed to create print order');
+      const message = error instanceof Error ? error.message : "We couldn't place the order. Please try again.";
+      setPrintResult({ ok: false, provider: 'PEECHO', error: message });
+      toast.error(message);
       console.error('Print error:', error);
     } finally {
       setIsPrinting(false);
@@ -162,7 +157,15 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     }
   };
 
+  // Check the delivery address first (the same rules the server applies),
+  // then take payment, then place the order.
   const handlePrintClick = () => {
+    const checked = validateAddress(address);
+    if ('errors' in checked) {
+      setAddressErrors(checked.errors);
+      return;
+    }
+    setAddressErrors([]);
     setShowPrintCheckout(true);
   };
 
@@ -335,43 +338,68 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </CardHeader>
         <CardContent className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Choose a print partner and we'll pass your print-ready PDF straight to their ordering system.
+            We print and post a paperback of your book. Generate your PDFs first, then tell us where to send it.
           </p>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2">
-              <Printer className="w-5 h-5 text-primary/70" />
-              <span className="font-semibold">Professional Print Order</span>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Select value={selectedProvider} onValueChange={(value: PrintProvider) => setSelectedProvider(value)}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Choose provider" />
-                </SelectTrigger>
+          {config.pageSize !== 'A5 portrait' && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                Printed books currently look best at A5. At {config.pageSize} the pictures print less sharply.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              ['name', 'Full name', 'Sam Smith'],
+              ['email', 'Email for delivery updates', 'you@example.com'],
+              ['line1', 'Address line 1', '1 High Street'],
+              ['line2', 'Address line 2 (optional)', ''],
+              ['city', 'Town or city', 'Leeds'],
+              ['postcode', 'Postcode', 'LS1 1AA'],
+            ] as const).map(([field, label, placeholder]) => (
+              <div key={field} className="space-y-1">
+                <Label htmlFor={`ship-${field}`}>{label}</Label>
+                <Input
+                  id={`ship-${field}`}
+                  value={address[field] || ''}
+                  placeholder={placeholder}
+                  autoComplete={field === 'name' ? 'name' : field === 'email' ? 'email' : field === 'postcode' ? 'postal-code' : field === 'city' ? 'address-level2' : field === 'line1' ? 'address-line1' : 'address-line2'}
+                  onChange={(e) => setAddress({ ...address, [field]: e.target.value })}
+                />
+              </div>
+            ))}
+            <div className="space-y-1">
+              <Label htmlFor="ship-country">Country</Label>
+              <Select value={address.country} onValueChange={(country) => setAddress({ ...address, country })}>
+                <SelectTrigger id="ship-country"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PEECHO">Peecho</SelectItem>
-                  <SelectItem value="BOOKVAULT">BookVault</SelectItem>
-                  <SelectItem value="LULU">Lulu</SelectItem>
-                  <SelectItem value="GELATO">Gelato</SelectItem>
+                  <SelectItem value="GB">United Kingdom</SelectItem>
+                  <SelectItem value="IE">Ireland</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                onClick={handlePrintClick}
-                disabled={!config.exports?.printPdfUrl || isPrinting}
-              >
-                {isPrinting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating order...
-                  </>
-                ) : (
-                  <>
-                    <Printer className="w-4 h-4 mr-2" />
-                    Checkout
-                  </>
-                )}
-              </Button>
             </div>
+          </div>
+
+          {addressErrors.length > 0 && (
+            <p className="text-sm text-destructive">Please check: {addressErrors.join(', ')}.</p>
+          )}
+
+          <div className="flex justify-end">
+            <Button onClick={handlePrintClick} disabled={!config.exports?.printPdfUrl || isPrinting}>
+              {isPrinting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Placing your order...
+                </>
+              ) : (
+                <>
+                  <Printer className="w-4 h-4 mr-2" />
+                  Order printed book
+                </>
+              )}
+            </Button>
           </div>
 
           {printResult && (
@@ -381,8 +409,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                 {printResult.ok ? (
                   <div className="space-y-2">
                     <p>
-                      Order created with <strong>{printResult.provider}</strong>.
-                      {printResult.orderId && ` Reference: ${printResult.orderId}.`}
+                      Your book is ordered and on its way to the printer.
+                      {printResult.orderId && ` Order reference: ${printResult.orderId}.`}
                     </p>
                     {printResult.checkoutUrl && (
                       <Button variant="link" asChild className="px-0">
@@ -393,7 +421,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     )}
                   </div>
                 ) : (
-                  <p>{printResult.error || 'We couldn’t create the order. Please try again or choose a different provider.'}</p>
+                  <p>{printResult.error || 'We couldn’t place the order. Please try again - your payment is kept for this book.'}</p>
                 )}
               </AlertDescription>
             </Alert>
@@ -424,7 +452,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Printer className="w-4 h-4" />
-              Print handling checkout
+              Printed book checkout
             </DialogTitle>
           </DialogHeader>
           <CheckoutSheet

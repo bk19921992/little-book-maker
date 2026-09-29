@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
-import { CURRENCY, PRICES } from "./pricing.ts"
+import { CURRENCY, isPricedItem, priceFor } from "./pricing.ts"
 
 // What an entitlement is granted from: the fields of a Stripe PaymentIntent
 // this code relies on (billing-intent sets the metadata when it creates it).
@@ -23,10 +23,10 @@ export function paymentProblem(pi: PaymentIntentLike, expected: Expected = {}): 
   const meta = pi.metadata || {}
   const item = meta.item
   if (pi.status !== 'succeeded') return `Payment status: ${pi.status}`
-  if (!item || !(item in PRICES)) return 'Payment is not for a known item'
+  if (!isPricedItem(item)) return 'Payment is not for a known item'
   if (!meta.user_id) return 'Payment has no account attached'
   if (item !== 'subscription' && !meta.story_id) return 'Payment has no book attached'
-  if (pi.amount !== PRICES[item]) return 'Payment amount does not match the item'
+  if (pi.amount !== priceFor(item)) return 'Payment amount does not match the item'
   if ((pi.currency || '').toLowerCase() !== CURRENCY) return 'Payment currency does not match'
   if (expected.userId && meta.user_id !== expected.userId) return 'Payment does not belong to this account'
   if (expected.item && item !== expected.item) return 'Payment does not match the item'

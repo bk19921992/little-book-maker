@@ -51,11 +51,13 @@ interface BillingConfirmResponse {
 
 const formatPrice = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 
-const itemPrice = (item: CheckoutSheetProps['item']) =>
-  item === 'export' ? PRICES.exportSingle : item === 'print' ? PRICES.printHandling : PRICES.subscriptionMonthly;
+// A printed book's price is set on the server (PRINT_PRICE_PENCE), so it is
+// shown once the server has created the payment.
+const itemPrice = (item: CheckoutSheetProps['item']): number | null =>
+  item === 'export' ? PRICES.exportSingle : item === 'print' ? null : PRICES.subscriptionMonthly;
 
 const itemDescription = (item: CheckoutSheetProps['item']) =>
-  item === 'export' ? 'PDF export' : item === 'print' ? 'Print handling fee' : 'Monthly subscription';
+  item === 'export' ? 'PDF export' : item === 'print' ? 'Printed book, delivered' : 'Monthly subscription';
 
 // Confirm a payment (or the free first export) with the server, which checks
 // it with Stripe and records the entitlement. stripe-webhook records it too,
@@ -159,7 +161,9 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
         <div className="space-y-2">
           <div className="flex justify-between items-center">
             <span className="text-sm font-medium">{itemDescription(item)}</span>
-            <span className="font-semibold">{formatPrice(intent?.amount ?? itemPrice(item))}</span>
+            <span className="font-semibold">
+              {intent ? formatPrice(intent.amount) : itemPrice(item) !== null ? formatPrice(itemPrice(item)!) : 'Price on the next step'}
+            </span>
           </div>
           {item === 'export' && (
             <p className="text-sm text-muted-foreground">

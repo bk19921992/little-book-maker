@@ -1,5 +1,6 @@
 import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
 import type { ImageConfig } from './lib/imageRequest';
+import type { ShippingAddress } from '../supabase/functions/create-print-order/print.ts';
 import type { ImageJobItem, ImageJobStep } from './lib/imageJob';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
@@ -111,16 +112,11 @@ class APIClient {
     });
   }
 
-  async createPrintOrder(
-    provider: 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO',
-    pdfUrl: string,
-    pageSize: PageSizePreset
-  ): Promise<PrintOrderResponse> {
-    return this.invokeFunction<PrintOrderResponse>('create-print-order', {
-      provider,
-      pdfUrl,
-      pageSize,
-    });
+  // Order the printed book for a paid, exported book. The server uses the
+  // stored print PDF and requires the print payment; retries are safe (one
+  // payment buys exactly one order).
+  async createPrintOrder(storyId: string, address: ShippingAddress): Promise<PrintOrderResponse> {
+    return this.invokeFunction<PrintOrderResponse>('create-print-order', { storyId, address });
   }
 
   // Mock data for development

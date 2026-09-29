@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@14.21.0";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-import { CURRENCY, isPricedItem, PRICES } from "../_shared/pricing.ts";
+import { CURRENCY, isPricedItem, priceFor } from "../_shared/pricing.ts";
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -61,7 +61,14 @@ serve(async (req) => {
       }
     }
 
-    const amount = PRICES[item];
+    const amount = priceFor(item);
+    if (amount === null) {
+      // Print without PRINT_PRICE_PENCE: never charge a made-up price.
+      return new Response(
+        JSON.stringify({ error: "Printing isn't available yet." }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
 
     const stripeKey = Deno.env.get('STRIPE_SECRET_KEY');
     if (!stripeKey) {
