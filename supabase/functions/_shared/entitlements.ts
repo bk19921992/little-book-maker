@@ -26,7 +26,10 @@ export function paymentProblem(pi: PaymentIntentLike, expected: Expected = {}): 
   if (!isPricedItem(item)) return 'Payment is not for a known item'
   if (!meta.user_id) return 'Payment has no account attached'
   if (item !== 'subscription' && !meta.story_id) return 'Payment has no book attached'
-  if (pi.amount !== priceFor(item)) return 'Payment amount does not match the item'
+  // A server-created intent remains valid if the catalogue price changes while payment is pending.
+  const recordedAmount = meta.application === 'story-sprout' && /^\d+$/.test(meta.amount_pence || '')
+    ? Number(meta.amount_pence) : priceFor(item)
+  if (!Number.isInteger(recordedAmount) || recordedAmount === null || recordedAmount < 100 || pi.amount !== recordedAmount) return 'Payment amount does not match the item'
   if ((pi.currency || '').toLowerCase() !== CURRENCY) return 'Payment currency does not match'
   if (expected.userId && meta.user_id !== expected.userId) return 'Payment does not belong to this account'
   if (expected.item && item !== expected.item) return 'Payment does not match the item'

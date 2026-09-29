@@ -5,6 +5,7 @@ import { validateStoryConfig } from "../_shared/validation.ts"
 import { moderateFreeText } from "../_shared/moderation.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 import { wordRange } from "../_shared/textContract.ts"
+import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -21,7 +22,7 @@ serve(async (req) => {
       throw authError
     }
 
-    const { config } = await req.json()
+    const { config, storyId } = await req.json()
 
     const validationError = validateStoryConfig(config)
     if (validationError) {
@@ -49,6 +50,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
+
+    if (!await claimBook(serviceClient(), user.id, storyId)) return bookPaymentRequired(corsHeaders)
 
     const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'story', 1)
     if (limitMessage) {

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
+import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 import { buildItems, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
@@ -267,6 +268,9 @@ serve(async (req) => {
     if (prompts.length > 20) {
       throw new Error('prompts must contain at most 20 pages')
     }
+
+    if (body.action !== 'start') throw new Error('Unknown illustration action')
+    if (!await claimBook(serviceClient(), user.id, body.storyId)) return bookPaymentRequired(corsHeaders)
 
     const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'image', prompts.length + (includeCover ? 1 : 0))
     if (limitMessage) {

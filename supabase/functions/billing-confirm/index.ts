@@ -4,6 +4,7 @@ import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { isPricedItem } from "../_shared/pricing.ts";
 import { grantEntitlement, paymentProblem } from "../_shared/entitlements.ts";
+import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts";
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -40,29 +41,9 @@ serve(async (req) => {
 
     // Free first export: granted once per user, recorded as an entitlement.
     if (item === 'export' && !paymentRef) {
-      const { data: existing, error: readError } = await service
-        .from('entitlements')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('item', 'export')
-        .limit(1);
-      if (readError) throw readError;
-
-      if (existing && existing.length > 0) {
-        throw new Error('Free export already used');
-      }
-
-      const { error: insertError } = await service.from('entitlements').insert({
-        user_id: user.id,
-        story_id: storyId,
-        item: 'export',
-        payment_intent_id: `free-${user.id}`,
-      });
-      if (insertError) throw insertError;
-
-      console.log('Free first export recorded: user', user.id);
+      if (!await claimBook(service, user.id, storyId)) return bookPaymentRequired(corsHeaders);
       return new Response(
-        JSON.stringify({ success: true, approved: true, free: true }),
+        JSON.stringify({ success: true, approved: true }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }

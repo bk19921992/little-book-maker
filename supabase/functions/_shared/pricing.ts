@@ -4,7 +4,7 @@
 export const CURRENCY = 'gbp'
 
 export const PRICES: Record<string, number> = {
-  export: 200, // £2.00 per book PDF (first export free, once per account)
+  export: 299, // £2.99 per additional book; first book and its PDF are free
   subscription: 900, // £9.00 (disabled until SUBSCRIPTIONS_ENABLED=true)
 }
 

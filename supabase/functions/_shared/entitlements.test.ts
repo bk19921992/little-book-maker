@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { paymentProblem, type PaymentIntentLike } from './entitlements.ts'
 
 const pi = (over: Partial<PaymentIntentLike> = {}, meta: Record<string, string> = {}): PaymentIntentLike => ({
-  id: 'pi_1', status: 'succeeded', amount: 200, currency: 'gbp',
+  id: 'pi_1', status: 'succeeded', amount: 299, currency: 'gbp',
   metadata: { user_id: 'u1', story_id: 's1', item: 'export', ...meta }, ...over,
 })
 
@@ -26,4 +26,10 @@ test('a payment is bound to its account and its book', () => {
   assert.match(paymentProblem(pi(), { storyId: 'other-book' })!, /different book/)
   assert.match(paymentProblem(pi({ metadata: { item: 'export', story_id: 's1' } }))!, /no account/)
   assert.match(paymentProblem(pi({ metadata: { item: 'export', user_id: 'u1' } }))!, /no book/)
+})
+
+test('server-recorded amount survives a later price change; forged amount fails', () => {
+  const prior = pi({ amount: 200 }, { application: 'story-sprout', amount_pence: '200' })
+  assert.equal(paymentProblem(prior), null)
+  assert.match(paymentProblem(pi({ amount: 201 }, { application: 'story-sprout', amount_pence: '200' }))!, /amount/)
 })

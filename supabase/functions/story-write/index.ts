@@ -1,6 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
+import { serviceClient } from "../_shared/auth.ts"
+import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
 import { castDetailLines, fallbackPageText, speciesRule, storySubject } from "./castText.ts"
 import { contractViolations, lineBudget, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
@@ -20,7 +22,7 @@ serve(async (req) => {
       throw authError
     }
 
-    const { config, outline } = await req.json()
+    const { config, outline, storyId } = await req.json()
 
     const validationError = validateStoryConfig(config)
     if (validationError) {
@@ -29,6 +31,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
+
+    if (!await claimBook(serviceClient(), user.id, storyId)) return bookPaymentRequired(corsHeaders)
 
     console.log('Story write request: user', user.id, 'pages', outline?.pages?.length)
 

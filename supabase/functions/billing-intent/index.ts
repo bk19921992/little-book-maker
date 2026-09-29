@@ -44,21 +44,20 @@ serve(async (req) => {
 
     // First export is free, once per user, tracked server-side.
     if (item === 'export') {
-      const { data: existing, error: entitlementError } = await service
-        .from('entitlements')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('item', 'export')
-        .limit(1);
+      const { data: sameStory, error: sameStoryError } = await service.from('entitlements')
+        .select('id').eq('user_id', user.id).eq('story_id', storyId).eq('item', 'export').limit(1);
+      if (sameStoryError) throw sameStoryError;
+      if (sameStory?.length) return new Response(
+        JSON.stringify({ approved: true, alreadyOwned: true, free: true, amount: 0, currency: CURRENCY }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+      const { data: existing, error: entitlementError } = await service.from('entitlements')
+        .select('id').eq('user_id', user.id).eq('item', 'export').limit(1);
       if (entitlementError) throw entitlementError;
-
-      if (!existing || existing.length === 0) {
-        console.log('Free first export approved: user', user.id);
-        return new Response(
-          JSON.stringify({ clientSecret: null, approved: true, free: true, amount: 0, currency: CURRENCY }),
-          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        );
-      }
+      if (!existing?.length) return new Response(
+        JSON.stringify({ clientSecret: null, approved: true, free: true, amount: 0, currency: CURRENCY }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
     }
 
     const amount = priceFor(item);
@@ -86,6 +85,8 @@ serve(async (req) => {
         user_id: user.id,
         story_id: typeof storyId === 'string' ? storyId : '',
         item,
+        amount_pence: String(amount),
+        application: 'story-sprout',
       },
     });
 

@@ -12,6 +12,8 @@ import { toast } from 'sonner';
 import { resolveAutoFormat } from '../lib/format';
 import { imageConfig } from '../lib/imageRequest';
 import { applyJobItems, runImageJob } from '../lib/imageJob';
+import { CheckoutSheet } from './CheckoutSheet';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { clearCheckpoint, saveCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
 import { saveBook } from '../lib/savedBooks';
 import { supabase } from '@/integrations/supabase/client';
@@ -47,6 +49,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   // Set while an illustration job is unfinished, so a lost connection can
   // be resumed without starting (or paying for) the book again.
   const { user } = useAuth();
+  const [showBookCheckout, setShowBookCheckout] = useState(false);
   const [pendingJob, setPendingJob] = useState<{ jobId: string; book: StoryConfig } | null>(null);
 
   const updateProgress = (newProgress: number) => {
@@ -95,7 +98,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
 
       // Step 1: Plan the story
       toast.info('Planning your story...');
-      const planResponse = await api.planStory(config);
+      const planResponse = await api.planStory(config, storyId);
 
       // Auto format mode: the planner (or a per-book fallback heuristic) picks
       // the shape and layout for this particular story. Resolve it now and use
@@ -132,7 +135,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // this render's snapshot, before the auto-format update above lands.)
       const writeResponse = await api.writeStory(
         { ...config, pageSize: effectivePageSize, pageLayout: effectivePageLayout },
-        planResponse.outline
+        planResponse.outline,
+        storyId
       );
       
       onConfigChange({
@@ -170,13 +174,14 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         outline: planResponse.outline,
         pages: writeResponse.pages,
       };
-      const { jobId } = await api.startImageJob(effectivePageSize, effectivePageLayout, imagePrompts, true, imageConfig(book));
+      const { jobId } = await api.startImageJob(effectivePageSize, effectivePageLayout, imagePrompts, true, imageConfig(book), storyId);
       saveCheckpoint(jobId, book);
       await illustrate(jobId, book);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate story';
       setError(errorMessage);
-      toast.error(errorMessage);
+      if (errorMessage.includes('Payment required to create another book.')) setShowBookCheckout(true);
+      else toast.error(errorMessage);
       setCurrentStep('idle');
       setProgress(0);
       setEstimatedTimeRemaining('');
@@ -552,6 +557,18 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={showBookCheckout} onOpenChange={setShowBookCheckout}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Create another book</DialogTitle></DialogHeader>
+          <CheckoutSheet
+            item="export"
+            storyId={config.storyId}
+            onSuccess={() => { setShowBookCheckout(false); void generateStory(); }}
+            onCancel={() => setShowBookCheckout(false)}
+          />
+        </DialogContent>
+      </Dialog>
 
       {/* Action Buttons */}
       <div className="flex justify-between">

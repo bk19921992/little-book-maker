@@ -85,7 +85,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
       const reference = pickReferenceImage(pages.filter((p) => p.imageReview !== 'unreviewed'), pageNumber);
       const { jobId } = await api.startImageJob(config.pageSize, config.pageLayout, [
         { page: pageNumber, prompt, text: storyPage.text, visualBrief: outlinePage.visualBrief },
-      ], false, imageConfig(config), reference);
+      ], false, imageConfig(config), config.storyId || '', reference);
       const result = applyJobItems(pages, await runImageJob(api, jobId));
 
       if (result.failedPages.length) {

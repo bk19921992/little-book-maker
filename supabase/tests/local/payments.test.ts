@@ -17,7 +17,7 @@ async function stripeSignature(payload: string, secret: string) {
 }
 
 function paymentIntent(userId: string, over: Record<string, unknown> = {}, meta: Record<string, string> = {}) {
-  return { id: `pi_${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`, object: 'payment_intent', status: 'succeeded', amount: 200, currency: 'gbp',
+  return { id: `pi_${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`, object: 'payment_intent', status: 'succeeded', amount: 299, currency: 'gbp',
     metadata: { user_id: userId, story_id: 'book-1', item: 'export', ...meta }, ...over }
 }
 async function send(pi: Record<string, unknown>, opts: { type?: string; secret?: string } = {}) {

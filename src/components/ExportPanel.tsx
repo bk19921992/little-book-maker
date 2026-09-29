@@ -435,7 +435,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CreditCard className="w-4 h-4" />
-              Complete export purchase
+              Download this book PDF
             </DialogTitle>
           </DialogHeader>
           <CheckoutSheet

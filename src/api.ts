@@ -59,12 +59,12 @@ class APIClient {
     }
   }
 
-  async planStory(config: StoryConfig): Promise<PlanResponse> {
-    return this.invokeFunction<PlanResponse>('story-plan', { config });
+  async planStory(config: StoryConfig, storyId: string): Promise<PlanResponse> {
+    return this.invokeFunction<PlanResponse>('story-plan', { config, storyId });
   }
 
-  async writeStory(config: StoryConfig, outline: StoryOutline): Promise<WriteResponse> {
-    return this.invokeFunction<WriteResponse>('story-write', { config, outline });
+  async writeStory(config: StoryConfig, outline: StoryOutline, storyId: string): Promise<WriteResponse> {
+    return this.invokeFunction<WriteResponse>('story-write', { config, outline, storyId });
   }
 
   // Durable illustration job (see supabase/functions/generate-images/jobs.ts):
@@ -76,9 +76,10 @@ class APIClient {
     prompts: { page: number; prompt: string; text?: string; visualBrief?: string }[],
     includeCover: boolean,
     config: ImageConfig,
+    storyId: string,
     referenceImage?: string
   ): Promise<{ jobId: string; items: ImageJobItem[] }> {
-    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, referenceImage }, false);
+    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, storyId, referenceImage }, false);
   }
 
   async stepImageJob(jobId: string): Promise<ImageJobStep> {

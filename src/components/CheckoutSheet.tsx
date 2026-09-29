@@ -57,7 +57,7 @@ const itemPrice = (item: CheckoutSheetProps['item']): number | null =>
   item === 'export' ? PRICES.exportSingle : item === 'print' ? null : PRICES.subscriptionMonthly;
 
 const itemDescription = (item: CheckoutSheetProps['item']) =>
-  item === 'export' ? 'PDF export' : item === 'print' ? 'Printed book, delivered' : 'Monthly subscription';
+  item === 'export' ? 'Another book and PDF' : item === 'print' ? 'Printed book, delivered' : 'Monthly subscription';
 
 // Confirm a payment (or the free first export) with the server, which checks
 // it with Stripe and records the entitlement. stripe-webhook records it too,
@@ -167,7 +167,7 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
           </div>
           {item === 'export' && (
             <p className="text-sm text-muted-foreground">
-              Your first PDF export is free. After that, each export costs £2.
+              Your first book PDF is free. Another book costs £2.99 before creation.
             </p>
           )}
         </div>

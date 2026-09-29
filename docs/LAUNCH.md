@@ -25,7 +25,7 @@ the owner.
 supabase link --project-ref njzndvftkdasbmsgspwp
 # Record the two migrations that are already applied by hand:
 supabase migration repair --status applied 20260927090000 20260928120000
-supabase db push      # applies saved_books (+ Storage bucket) and print_orders
+supabase db push      # applies saved_books (+ Storage bucket), print_orders and claim_first_book
 ```
 
 Then in the dashboard check: table `books` and `print_orders` exist with RLS
@@ -75,14 +75,14 @@ printing is live.
 ## 5. Smoke test (test mode)
 
 1. Sign up, make a 6-page book. It appears under **My books**.
-2. Export: the first export is free; download the PDF (it should download,
+2. Export: the first book and its PDF are free; download the PDF (it should download,
    not open in place of the app).
-3. Export the same book again with test card `4242 4242 4242 4242`; the
-   `entitlements` table gets a row with the `pi_...` id.
+3. Download the same book again: no card or new charge; the original
+   entitlement still applies.
 4. Pay for another export and close the tab straight after "Pay": the
    webhook still records the entitlement (Stripe -> Webhooks shows a 200).
 5. Reload the site, open the book from My books, export again: no new charge.
-6. Check Stripe -> Payments shows GBP amounts of £2.00.
+6. Check Stripe -> Payments shows GBP amounts of £2.99. Verify a second book cannot start planning, writing or image generation before payment.
 
 ## 6. Printing (when ready)
 
