@@ -2,12 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@14.21.0";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-
-const PRICES: Record<string, number> = {
-  export: 200,   // pence, £2.00
-  print: 500,    // pence, £5.00 (disabled until Phase 5)
-  subscription: 900, // pence, £9.00
-};
+import { CURRENCY, isPricedItem, PRICES } from "../_shared/pricing.ts";
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -26,7 +21,7 @@ serve(async (req) => {
 
     const { item, storyId } = await req.json();
 
-    if (!item || !(item in PRICES)) {
+    if (!isPricedItem(item)) {
       throw new Error(`Invalid item type: ${item}`);
     }
     if (item !== 'subscription' && (!storyId || typeof storyId !== 'string' || storyId.length > 100)) {
@@ -60,7 +55,7 @@ serve(async (req) => {
       if (!existing || existing.length === 0) {
         console.log('Free first export approved: user', user.id);
         return new Response(
-          JSON.stringify({ clientSecret: null, approved: true, free: true, amount: 0, currency: 'gbp' }),
+          JSON.stringify({ clientSecret: null, approved: true, free: true, amount: 0, currency: CURRENCY }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
         );
       }
@@ -76,8 +71,10 @@ serve(async (req) => {
     const stripe = new Stripe(stripeKey, { apiVersion: '2023-10-16' });
     const paymentIntent = await stripe.paymentIntents.create({
       amount,
-      currency: 'gbp',
-      automatic_payment_methods: { enabled: true },
+      currency: CURRENCY,
+      // Cards and wallets (Apple Pay, Google Pay, Link) only: a redirect-based
+      // method would navigate away and lose the unsaved book in the tab.
+      automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
       metadata: {
         user_id: user.id,
         story_id: typeof storyId === 'string' ? storyId : '',
@@ -91,7 +88,7 @@ serve(async (req) => {
       JSON.stringify({
         clientSecret: paymentIntent.client_secret,
         amount,
-        currency: 'gbp',
+        currency: CURRENCY,
         paymentIntentId: paymentIntent.id,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

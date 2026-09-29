@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "https://deno.land/std@0.168.0/http/server.ts": "./serve.ts",
+    "https://esm.sh/@supabase/supabase-js@2": "npm:@supabase/supabase-js@2",
+    "https://esm.sh/stripe@14.21.0": "npm:stripe@14.21.0",
+    "https://esm.sh/pdf-lib@1.17.1": "npm:pdf-lib@1.17.1",
+    "https://esm.sh/@pdf-lib/fontkit@1.1.1": "npm:@pdf-lib/fontkit@1.1.1",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
+  }
+}

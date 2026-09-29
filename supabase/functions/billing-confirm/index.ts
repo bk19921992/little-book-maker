@@ -2,12 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@14.21.0";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-
-const PRICES: Record<string, number> = {
-  export: 200,
-  print: 500,
-  subscription: 900,
-};
+import { isPricedItem } from "../_shared/pricing.ts";
+import { grantEntitlement, paymentProblem } from "../_shared/entitlements.ts";
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -26,7 +22,7 @@ serve(async (req) => {
 
     const { item, paymentRef, storyId } = await req.json();
 
-    if (!item || !(item in PRICES)) {
+    if (!isPricedItem(item)) {
       throw new Error(`Invalid item type: ${item}`);
     }
     if (item !== 'subscription' && (!storyId || typeof storyId !== 'string' || storyId.length > 100)) {
@@ -84,34 +80,17 @@ serve(async (req) => {
     const stripe = new Stripe(stripeKey, { apiVersion: '2023-10-16' });
     const paymentIntent = await stripe.paymentIntents.retrieve(paymentRef);
 
-    if (paymentIntent.status !== 'succeeded') {
-      throw new Error(`Payment status: ${paymentIntent.status}`);
-    }
-    if (paymentIntent.amount !== PRICES[item]) {
-      console.error('Amount mismatch:', paymentIntent.id, paymentIntent.amount, PRICES[item]);
-      throw new Error('Payment amount does not match the item');
-    }
-    if (paymentIntent.metadata?.user_id !== user.id) {
-      console.error('Payment user mismatch:', paymentIntent.id);
-      throw new Error('Payment does not belong to this account');
-    }
-    if (paymentIntent.metadata?.item !== item) {
-      throw new Error('Payment does not match the item');
+    // Same rules as stripe-webhook: succeeded, priced, GBP, this account,
+    // this item and this book.
+    const problem = paymentProblem(paymentIntent, { userId: user.id, item, storyId });
+    if (problem) {
+      console.error('Payment rejected:', paymentIntent.id, problem);
+      throw new Error(problem);
     }
 
-    // Record the entitlement; the unique payment_intent_id stops reuse.
-    const { error: insertError } = await service.from('entitlements').insert({
-      user_id: user.id,
-      story_id: typeof storyId === 'string' ? storyId : '',
-      item,
-      payment_intent_id: paymentIntent.id,
-    });
-    if (insertError) {
-      if (insertError.code === '23505') {
-        throw new Error('This payment has already been used');
-      }
-      throw insertError;
-    }
+    // Idempotent: if stripe-webhook already recorded this payment, confirm
+    // succeeds instead of reporting it as "already used".
+    await grantEntitlement(service, paymentIntent);
 
     console.log('Payment verified and entitlement recorded:', paymentIntent.id, 'item', item, 'user', user.id);
 
