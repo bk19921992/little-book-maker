@@ -11,7 +11,7 @@ import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
 import { resolveAutoFormat } from '../lib/format';
 import { imageConfig } from '../lib/imageRequest';
-import { applyJobItems, runImageJob } from '../lib/imageJob';
+import { applyJobItems, runImageJob, type ImageJobItem } from '../lib/imageJob';
 import { CheckoutSheet } from './CheckoutSheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { clearCheckpoint, saveCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
@@ -41,38 +41,15 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   onResumeHandled,
 }) => {
   const [currentStep, setCurrentStep] = useState<GenerationStep>('idle');
-  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [startTime, setStartTime] = useState<number>(0);
-  const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
+  // Real illustration progress: pictures finished so far, shown as they land.
+  const [illustrations, setIllustrations] = useState<{ total: number; finished: ImageJobItem[] }>({ total: 0, finished: [] });
   // Set while an illustration job is unfinished, so a lost connection can
   // be resumed without starting (or paying for) the book again.
   const { user } = useAuth();
   const [showBookCheckout, setShowBookCheckout] = useState(false);
   const [pendingJob, setPendingJob] = useState<{ jobId: string; book: StoryConfig } | null>(null);
-
-  const updateProgress = (newProgress: number) => {
-    setProgress(newProgress);
-    // Simple estimation based on typical generation times
-    if (newProgress > 0 && newProgress < 100) {
-      const estimates = {
-        5: '2-3 minutes', // planning
-        25: '1-2 minutes', // writing  
-        70: '30-60 seconds', // images
-        100: 'Complete!'
-      };
-      const currentEstimate = Object.entries(estimates)
-        .reverse()
-        .find(([threshold]) => newProgress >= parseInt(threshold));
-      
-      if (currentEstimate) {
-        setEstimatedTimeRemaining(currentEstimate[1]);
-      }
-    } else {
-      setEstimatedTimeRemaining('');
-    }
-  };
 
   const generateStory = async () => {
     try {
@@ -86,10 +63,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       }
 
       setError(null);
-      setStartTime(Date.now());
       setCurrentStep('planning');
       setIsGenerating(true);
-      updateProgress(5);
 
       // Give this book an id up front - billing, export and (later) saving
       // key off it. Without it checkout cannot run and export refuses.
@@ -117,19 +92,20 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         toast.info(`AI picked ${resolved.pageSize} with ${resolved.pageLayout === 'overlay' ? 'full-page pictures' : 'split pages'} for this story`);
       }
 
+      // The planner's title suggestion, unless the customer already named the book.
+      const title = config.title?.trim() ? config.title : planResponse.title || undefined;
       onConfigChange({
+        title,
         styleBible: planResponse.styleBible,
         outline: planResponse.outline,
         ...formatUpdates,
       });
 
-      updateProgress(25);
       setCurrentStep('writing');
 
       // Step 2: Write the story (optimized for speed)
       toast.info(`Writing ${config.lengthPages} pages...`);
       
-      // Update progress incrementally during writing
       // Send the resolved format: story-write sizes each page's copy to the
       // text band of the page shape actually being printed. (`config` here is
       // this render's snapshot, before the auto-format update above lands.)
@@ -143,7 +119,6 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         pages: writeResponse.pages,
       });
 
-      updateProgress(70);
       setCurrentStep('images');
 
       // Step 3: Illustrations, as a durable server-side job: one image
@@ -167,6 +142,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       const book: StoryConfig = {
         ...config,
         ...formatUpdates,
+        title,
         storyId,
         pageSize: effectivePageSize,
         pageLayout: effectivePageLayout,
@@ -183,8 +159,6 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       if (errorMessage.includes('Payment required to create another book.')) setShowBookCheckout(true);
       else toast.error(errorMessage);
       setCurrentStep('idle');
-      setProgress(0);
-      setEstimatedTimeRemaining('');
     }
     setIsGenerating(false);
   };
@@ -194,24 +168,24 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const illustrate = async (jobId: string, book: StoryConfig) => {
     const pages = book.pages || [];
     const total = pages.length + 1; // + cover
-    let finished = 0;
     setPendingJob({ jobId, book });
     setCurrentStep('images');
-    setProgress(70);
-    setEstimatedTimeRemaining(`0 of ${total} illustrations finished`);
+    setIllustrations({ total, finished: [] });
     try {
       const items = await runImageJob(api, jobId, {
-        onItem: () => {
-          finished += 1;
-          setProgress(70 + Math.round((finished / total) * 29));
-          setEstimatedTimeRemaining(`${finished} of ${total} illustrations finished`);
-        },
+        onItem: (item) => setIllustrations((prev) => ({
+          total,
+          finished: [...prev.finished.filter((f) => f.key !== item.key), item],
+        })),
       });
       const result = applyJobItems(pages, items);
       if (result.failedPages.length) {
         toast.warning(
-          `The illustration${result.failedPages.length > 1 ? 's' : ''} for page${result.failedPages.length > 1 ? 's' : ''} ${result.failedPages.join(', ')} didn't pass our quality check. You can regenerate ${result.failedPages.length > 1 ? 'them' : 'it'} from the editor.`
+          `The illustration${result.failedPages.length > 1 ? 's' : ''} for page${result.failedPages.length > 1 ? 's' : ''} ${result.failedPages.join(', ')} didn't pass our quality check. Retry ${result.failedPages.length > 1 ? 'them' : 'it'} in the editor, or print ${result.failedPages.length > 1 ? 'those pages' : 'that page'} without a picture.`
         );
+      }
+      if (result.coverFailed) {
+        toast.warning("The cover picture didn't pass our quality check, so the cover will use the first page's picture.");
       }
       const finishedBook: StoryConfig = {
         ...book,
@@ -229,9 +203,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         });
       }
       setPendingJob(null);
-      updateProgress(100);
       setCurrentStep('complete');
-      setEstimatedTimeRemaining('Complete!');
       toast.success('Your story is ready!');
     } catch (err) {
       // The job and its finished pictures are safe on the server; keep the
@@ -257,7 +229,6 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   useEffect(() => {
     if (!resume) return;
     onResumeHandled?.();
-    setStartTime(Date.now());
     setIsGenerating(true);
     toast.info('Picking up your illustrations where they left off...');
     illustrate(resume.jobId, resume.config).finally(() => setIsGenerating(false));
@@ -427,21 +398,6 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Progress</span>
-                <div className="text-right">
-                  <span>{progress}%</span>
-                  {estimatedTimeRemaining && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {estimatedTimeRemaining}
-                    </div>
-                  )}
-                </div>
-              </div>
-              <Progress value={progress} className="h-3" />
-            </div>
-
             <div className="grid gap-4">
               {/* Planning Step */}
               <div className="flex items-center gap-3">
@@ -486,14 +442,43 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                 ) : (
                   <div className="w-5 h-5 rounded-full border-2 border-muted" />
                 )}
-                <div>
+                <div className="flex-1">
                   <div className="font-medium">Creating Illustrations</div>
                   <div className="text-sm text-muted-foreground">
-                    Generating beautiful {typeof config.imageStyle === 'string' ? config.imageStyle.toLowerCase() : 'custom'} artwork
+                    {illustrations.total > 0 && (currentStep === 'images' || currentStep === 'complete')
+                      ? `${illustrations.finished.length} of ${illustrations.total} pictures finished (including the cover)`
+                      : `Drawing your ${typeof config.imageStyle === 'string' ? config.imageStyle.toLowerCase() : 'custom'} pictures`}
                   </div>
+                  {currentStep === 'images' && illustrations.total > 0 && (
+                    <Progress
+                      value={(illustrations.finished.length / illustrations.total) * 100}
+                      className="h-2 mt-2"
+                      aria-label="Pictures finished"
+                    />
+                  )}
                 </div>
               </div>
             </div>
+
+            {/* Pictures appear here as each one is finished. */}
+            {illustrations.finished.length > 0 && currentStep === 'images' && (
+              <ul className="grid grid-cols-3 sm:grid-cols-5 gap-3" aria-label="Finished pictures">
+                {[...illustrations.finished]
+                  .sort((a, b) => (a.page ?? 0) - (b.page ?? 0))
+                  .map((item) => (
+                    <li key={item.key} className="space-y-1">
+                      {item.status === 'done' && item.url ? (
+                        <img src={item.url} alt="" className="w-full aspect-square object-cover rounded-md border bg-white" />
+                      ) : (
+                        <div className="w-full aspect-square rounded-md border border-dashed border-destructive/60 flex items-center justify-center text-center text-xs text-destructive p-1">
+                          Illustration failed
+                        </div>
+                      )}
+                      <div className="text-xs text-muted-foreground text-center">{item.page === null ? 'Cover' : `Page ${item.page}`}</div>
+                    </li>
+                  ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       )}
@@ -522,12 +507,17 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                   <div className="flex items-center justify-between">
                     <Badge variant="outline" className="text-sm font-medium">Page {page.page}</Badge>
                     <div className="flex items-center gap-2">
-                      {page.imageUrl && (
+                      {page.imageUrl ? (
                         <Badge variant="secondary" className="flex items-center gap-1">
                           <Image className="w-3 h-3" />
                           Illustration ready
                         </Badge>
-                      )}
+                      ) : page.imageFailed ? (
+                        <Badge variant="destructive" className="flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" />
+                          Illustration failed - retry in the editor
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
                   
