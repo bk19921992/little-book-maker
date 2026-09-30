@@ -1,78 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
+import { getCorsHeaders } from "../_shared/cors.ts"
+import { tooManyRequestsResponse } from "../_shared/usage.ts"
+import { buildItems, runStep, summarise, type AttemptWorker } from "./jobs.ts"
+import { SupabaseJobStore } from "./jobStore.ts"
+import { acceptedReferenceImage, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-type StoryConfig = {
-  children?: string[]
-  characters?: string[]
-  setting?: string
-  palette?: string[]
-  imageStyle?: string | { other?: string }
-  storyType?: string
-  educationalFocus?: string
-  personal?: {
-    favouriteColour?: string
-    pets?: string
-    favouriteToy?: string
-    town?: string
+function parseImageResponse(result: any): string {
+  const b64 = result?.data?.[0]?.b64_json
+  if (!b64) {
+    throw new Error('OpenAI image API returned no image data')
   }
-}
-
-type ImagePrompt = {
-  page: number
-  prompt?: string
-  text?: string
-  visualBrief?: string
-  config?: StoryConfig
-  seed?: number
-}
-
-// gpt-image-1 only supports these sizes; map each page preset onto the closest one.
-const OPENAI_SIZES: Record<string, '1024x1536' | '1024x1024'> = {
-  'A5 portrait': '1024x1536',
-  'A4 portrait': '1024x1536',
-  '210×210 mm square': '1024x1024',
-}
-
-function resolveImageStyle(imageStyle: StoryConfig['imageStyle']): string {
-  if (!imageStyle) return "children's book illustration"
-  if (typeof imageStyle === 'string') return imageStyle
-  return imageStyle.other || "children's book illustration"
-}
-
-// One style bible per request, reused verbatim for every page so the child,
-// characters, palette and rendering style stay consistent across the book.
-function buildStyleBible(config: StoryConfig | undefined): string {
-  const c = config || {}
-  const mainChild = c.children && c.children.length
-    ? c.children.join(' and ')
-    : 'the child protagonist'
-  const characters = c.characters && c.characters.length
-    ? c.characters.join(', ')
-    : 'the supporting characters from the story'
-  const setting = c.setting || 'the story setting'
-  const palette = c.palette && c.palette.length
-    ? c.palette.join(', ')
-    : 'warm, gentle colors'
-  const favouriteColour = c.personal?.favouriteColour
-  const pets = c.personal?.pets
-
-  const lines = [
-    `Rendering style: ${resolveImageStyle(c.imageStyle)}, consistent across every page of this book.`,
-    `Main child: ${mainChild} (human child). The same child, with the same face, hair, clothing and proportions, must appear on every page they feature in.`,
-    `Supporting characters: ${characters}. Keep each character's appearance identical on every page.`,
-    pets ? `Pet companion: ${pets} (animal, not human). Keep the pet the same species, breed and coloring on every page.` : '',
-    `Setting: ${setting}.`,
-    `Colour palette: ${palette}${favouriteColour ? `, featuring the child's favourite colour ${favouriteColour}` : ''}.`,
-    `Mood: gentle, warm, cozy and child-friendly, with soft lighting.`,
-    `Composition: portrait storybook composition with important elements away from the edges (safe for print trim), no text, letters, numbers, captions or watermarks anywhere in the image.`,
-    `Species rule: the child is always human; pets and animal characters are always animals. Never blend the two.`,
-  ]
-
-  return lines.filter(Boolean).join('\n')
+  return `data:image/jpeg;base64,${b64}`
 }
 
 async function generateOneImage(
@@ -103,89 +42,239 @@ async function generateOneImage(
     throw new Error(`OpenAI image API error ${response.status}: ${errorText}`)
   }
 
-  const result = await response.json()
-  const b64 = result?.data?.[0]?.b64_json
-  if (!b64) {
-    throw new Error('OpenAI image API returned no image data')
+  return parseImageResponse(await response.json())
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const parts = dataUrl.split(',', 2)
+  const binary = atob(parts[1])
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
   }
-  return `data:image/jpeg;base64,${b64}`
+  return bytes
+}
+
+interface ImageReview {
+  pass: boolean
+  issues: string[]
+  skipped?: boolean
+}
+
+// Vision QA gate: a review model inspects every generated image BEFORE it can
+// ship. Geometry QA (export-pdf) can measure bands and tiers but cannot see a
+// three-eyed doll - this layer catches anatomy/artifact/consistency defects.
+// A reviewer API outage never blocks the pipeline (marked skipped, surfaced in
+// the response); a found defect DOES - the page is regenerated with the
+// rejection reasons fed back, up to MAX_IMAGE_ATTEMPTS total tries.
+const MAX_IMAGE_ATTEMPTS = 3
+
+async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl: string, ctx: ReviewContext): Promise<ImageReview> {
+  const reviewPrompt = buildReviewPrompt(ctx)
+
+  // One retry on an outage; every other outcome is decided by
+  // interpretReviewResponse (fails closed on anything but an explicit pass).
+  for (let call = 1; call <= 2; call++) {
+    let verdict: ReviewVerdict
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: reviewModel,
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: reviewPrompt },
+            ...(ctx.referenceDataUrl ? [{ type: 'image_url', image_url: { url: ctx.referenceDataUrl } }] : []),
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+          ] }],
+          // Room for a long issues list: a reply cut off mid-JSON is a reject.
+          max_completion_tokens: 600,
+          response_format: { type: 'json_object' },
+        }),
+      })
+      const body = await response.json().catch(() => null)
+      verdict = interpretReviewResponse(response.status, body)
+    } catch (networkError) {
+      verdict = { verdict: 'unavailable', reason: networkError instanceof Error ? networkError.message : String(networkError) }
+    }
+    if (verdict.verdict === 'pass') return { pass: true, issues: [] }
+    if (verdict.verdict === 'reject') return { pass: false, issues: verdict.issues }
+    console.error(`Review unavailable for ${ctx.label} (call ${call}): ${verdict.reason}`)
+    if (call === 1) await new Promise((r) => setTimeout(r, 1500))
+  }
+  // Genuine outage: keep the image but mark it UNREVIEWED. It is surfaced
+  // to the client, which re-checks it before checkout - never silently passed.
+  return { pass: true, issues: [], skipped: true }
+}
+
+// gpt-image-1 accepts reference images on the edits endpoint. Passing the first
+// page's illustration anchors the child, animals and recurring props visually,
+// which holds their identity far better than a text-only description.
+async function editImageWithReference(
+  openaiKey: string,
+  model: string,
+  size: string,
+  quality: string,
+  fullPrompt: string,
+  referenceDataUrl: string,
+): Promise<string> {
+  const bytes = dataUrlToBytes(referenceDataUrl)
+  // A supplied reference may be an older PNG page, so label the upload with
+  // its real type rather than assuming JPEG.
+  const mimeType = referenceDataUrl.slice(5, referenceDataUrl.indexOf(';')) || 'image/jpeg'
+  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg'
+  const form = new FormData()
+  form.append('model', model)
+  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: mimeType }), `reference.${extension}`)
+  form.append('prompt', fullPrompt)
+  form.append('n', '1')
+  form.append('size', size)
+  form.append('quality', quality)
+  form.append('output_format', 'jpeg')
+
+  const response = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${openaiKey}`,
+    },
+    body: form,
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`OpenAI image edits API error ${response.status}: ${errorText}`)
+  }
+
+  return parseImageResponse(await response.json())
+}
+
+// What a job stores once for all its items.
+type JobRequest = {
+  pageSize: string
+  pageLayout: string
+  size: string
+  config?: StoryConfig
+  startPrompts?: ImagePrompt[]
+  includeCover?: boolean
+  startReference?: string | null
+}
+
+const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// One generate -> review attempt for one job item: the same prompts, edit
+// fallback and review as the single-request path below.
+function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
+  return async ({ request, item, reference, feedback }) => {
+    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
+    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
+    const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
+    const styleBible = buildStyleBible(request.config, request.size, request.pageLayout || 'split')
+    const styleAnchor = styleProfile(request.config?.imageStyle)?.anchor || ''
+    const isCover = item.page === null || !item.prompt
+    const base = isCover
+      ? buildCoverPrompt(styleBible, styleAnchor, !!reference)
+      : buildPagePrompt(item.prompt!, styleBible, styleAnchor, !!reference)
+    const prompt = feedback?.length ? withReviewFeedback(base, feedback, styleAnchor) : base
+    const label = isCover ? 'cover' : `page ${item.page}`
+    console.log(`Job attempt ${item.attempts + 1} for ${label} with model ${model} (${request.size}, ${quality}${reference ? ', with reference' : ''})`)
+
+    let url: string
+    if (reference) {
+      try {
+        url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
+      } catch (editError) {
+        console.error(`Reference edit failed for ${label}, falling back to plain generation:`, editError)
+        url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
+      }
+    } else {
+      url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
+    }
+    const review = await reviewImage(openaiKey, reviewModel, url, {
+      label: isCover ? COVER_REVIEW_LABEL : label,
+      brief: isCover ? COVER_REVIEW_BRIEF : pageScene(item.prompt!),
+      config: request.config,
+      referenceDataUrl: reference || undefined,
+    })
+    return { url, review }
+  }
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
-    const { pageSize, prompts } = await req.json()
-    console.log('Generate images request received:', { pageSize, pageCount: prompts?.length })
+    let user
+    try {
+      user = await requireUser(req)
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders)
+      throw authError
+    }
 
-    const openaiKey = Deno.env.get('OPENAI_API_KEY')
-    if (!openaiKey) {
-      throw new Error('OPENAI_API_KEY is required. Add it to your Supabase function secrets.')
+    const body = await req.json()
+    const { pageSize, pageLayout, prompts, includeCover } = body
+
+    const json = (payload: unknown, status = 200) =>
+      new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+
+    // Durable job API (see jobs.ts). start: charge usage once and queue the
+    // book; step: one generate->review attempt on the next item; status: all
+    // items with their images, for resuming after a reload.
+    if (body.action === 'step' || body.action === 'status') {
+      if (typeof body.jobId !== 'string' || !JOB_ID.test(body.jobId)) return json({ error: 'Unknown illustration job.' }, 400)
+      const store = new SupabaseJobStore<JobRequest, ImagePrompt>(serviceClient())
+      if (body.action === 'step') {
+        const openaiKey = Deno.env.get('OPENAI_API_KEY')
+        if (!openaiKey) throw new Error('OPENAI_API_KEY is required.')
+        const result = await runStep(store, jobWorker(openaiKey), body.jobId, user.id)
+        return result ? json(result) : json({ error: 'Unknown illustration job.' }, 404)
+      }
+      const job = await store.getJob(body.jobId, user.id)
+      if (!job) return json({ error: 'Unknown illustration job.' }, 404)
+      const items = await store.listItemsWithImages(body.jobId)
+      return json({ jobStatus: job.status, items: items.map(summarise) })
+    }
+
+    if (body.action !== 'start') {
+      return json({ error: 'Please reload the latest Story Sprout app to create illustrations.' }, 409)
     }
 
     if (!Array.isArray(prompts) || prompts.length === 0) {
-      throw new Error('prompts must be a non-empty array')
+      return json({ error: 'prompts must be a non-empty array' }, 400)
+    }
+    if (prompts.length > 20) {
+      return json({ error: 'prompts must contain at most 20 pages' }, 400)
     }
 
-    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
-    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'low'
-    const size = Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536'
-
-    // All pages in one request share the same config, so build the style bible once.
-    const styleBible = buildStyleBible(prompts[0]?.config)
-    console.log('Style bible:', styleBible)
-
-    const images: { page: number; url: string }[] = []
-    const errors: { page: number; error: string }[] = []
-
-    for (const promptData of prompts as ImagePrompt[]) {
-      try {
-        const scene = promptData.prompt || promptData.visualBrief || 'a warm storybook scene'
-        const fullPrompt = [
-          'High-quality children\'s book illustration for one page of a personalised bedtime story.',
-          '',
-          'STYLE BIBLE (must match every other page exactly):',
-          styleBible,
-          '',
-          `THIS PAGE (page ${promptData.page}):`,
-          `Scene: ${scene}`,
-          promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
-          promptData.text ? `Story text on this page: "${promptData.text}"` : '',
-          '',
-          'Illustrate exactly what this page\'s story text describes, while keeping the characters, style, palette and setting from the style bible perfectly consistent with the other pages.',
-        ].filter(Boolean).join('\n')
-
-        console.log(`Generating image for page ${promptData.page} with model ${model} (${size}, ${quality})`)
-        const url = await generateOneImage(openaiKey, model, size, quality, fullPrompt)
-        images.push({ page: promptData.page, url })
-        console.log(`Generated illustration for page ${promptData.page}`)
-      } catch (pageError) {
-        // Never substitute stock photos: a failed page is reported so the UI can
-        // ask the user to retry instead of shipping unrelated imagery.
-        console.error(`Image generation failed for page ${promptData.page}:`, pageError)
-        errors.push({
-          page: promptData.page,
-          error: pageError instanceof Error ? pageError.message : String(pageError),
-        })
-      }
+    if (typeof body.requestId !== 'string' || !JOB_ID.test(body.requestId)) return json({ error: 'A valid illustration request ID is required.' }, 400)
+    const store = new SupabaseJobStore<JobRequest, ImagePrompt>(serviceClient())
+    const startReference = acceptedReferenceImage(body.referenceImage)
+    const request: JobRequest = {
+      pageSize,
+      pageLayout: pageLayout || 'split',
+      size: Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536',
+      config: body.config || prompts[0]?.config,
+      // Idempotency must bind the key to its precise image work.
+      startPrompts: prompts, includeCover: !!includeCover, startReference,
     }
-
-    if (images.length === 0) {
-      return new Response(
-        JSON.stringify({
-          error: `Illustration generation failed for every page. ${errors[0]?.error || ''}`.trim(),
-          errors,
-        }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      )
+    // Store only page prompts in the job. The exact start input, including
+    // client reference, is also bound into request for idempotency checking.
+    const pagePrompts: ImagePrompt[] = (prompts as ImagePrompt[]).map((p) => ({
+      page: Number(p.page), prompt: p.prompt, text: p.text, visualBrief: p.visualBrief,
+    }))
+    if (pagePrompts.some((p) => !Number.isInteger(p.page)) || new Set(pagePrompts.map((p) => p.page)).size !== pagePrompts.length) {
+      return json({ error: 'Each page must have a unique page number.' }, 400)
     }
-
-    return new Response(
-      JSON.stringify({ images, errors: errors.length ? errors : undefined }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-    )
+    const items = buildItems(pagePrompts, !!includeCover)
+    const parsedLimit = parseInt(Deno.env.get('DAILY_IMAGE_LIMIT') || '100', 10)
+    const limit = Number.isSafeInteger(parsedLimit) && parsedLimit >= 0 ? parsedLimit : 100
+    const result = await store.startOnce(user.id, body.requestId, request, startReference, items, limit)
+    if (result.limitReached) return tooManyRequestsResponse(corsHeaders, `You've reached today's illustration limit of ${limit}. Please come back tomorrow.`)
+    console.log('Illustration job started: user', user.id, 'job', result.jobId, 'replayed', result.replayed, 'items', items.length)
+    return json({ jobId: result.jobId, items: items.map(summarise), replayed: result.replayed })
   } catch (error) {
     console.error('Generate images error:', error)
     return new Response(

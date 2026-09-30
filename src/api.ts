@@ -1,27 +1,29 @@
-import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
+import type { ImageJobItem, ImageJobStep } from './lib/imageJob';
+import type { ImageConfig } from './lib/imageRequest';
+import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 
 // API client for communicating with Supabase edge functions
 class APIClient {
-  private async invokeFunction<T>(functionName: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
+  private async invokeFunction<T>(functionName: string, body: unknown, headers: Record<string, string> = {}, retryOnSendFailure = true): Promise<T> {
     try {
       if (supabaseConfigError) {
         throw new Error(supabaseConfigError);
       }
 
-      console.log(`Calling ${functionName} with:`, body)
+      if (functionName !== 'generate-images') console.log(`Calling ${functionName} with:`, body)
       const { data, error } = await supabase.functions.invoke(functionName, {
         body,
         headers,
       });
 
-      console.log(`${functionName} response:`, { data, error })
+      if (functionName !== 'generate-images') console.log(`${functionName} response:`, { data, error })
 
       if (error) {
         console.error(`Error calling ${functionName}:`, error);
         const msg = error.message || 'Edge Function error';
         // Retry once if the request failed to send (common transient issue)
-        if (msg.includes('Failed to send a request to the Edge Function')) {
+        if (retryOnSendFailure && msg.includes('Failed to send a request to the Edge Function')) {
           console.warn(`[${functionName}] Retry after transient send failure...`);
           await new Promise((r) => setTimeout(r, 600));
           const retry = await supabase.functions.invoke(functionName, { body, headers });
@@ -52,14 +54,16 @@ class APIClient {
     return this.invokeFunction<WriteResponse>('story-write', { config, outline });
   }
 
-  async generateImages(
-    pageSize: PageSizePreset,
-    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[]
-  ): Promise<ImageGenerateResponse> {
-    return this.invokeFunction<ImageGenerateResponse>('generate-images', {
-      pageSize,
-      prompts,
-    });
+  async startImageJob(requestId: string, pageSize: PageSizePreset, prompts: { page: number; prompt: string; text?: string; visualBrief?: string }[], config: ImageConfig, referenceImage?: string): Promise<{ jobId: string; items: ImageJobItem[] }> {
+    return this.invokeFunction('generate-images', { action: 'start', requestId, pageSize, pageLayout: 'split', prompts, includeCover: false, config, referenceImage }, {}, false);
+  }
+
+  async stepImageJob(jobId: string): Promise<ImageJobStep> {
+    return this.invokeFunction('generate-images', { action: 'step', jobId });
+  }
+
+  async imageJobStatus(jobId: string): Promise<{ jobStatus: 'running' | 'done'; items: ImageJobItem[] }> {
+    return this.invokeFunction('generate-images', { action: 'status', jobId });
   }
 
   async exportPDF(

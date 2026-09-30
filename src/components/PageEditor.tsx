@@ -21,12 +21,18 @@ import { StoryConfig, StoryPage } from '../types';
 import { countWords, getWordCountStatus, wordCountTargets } from '../lib/validation';
 import { toast } from 'sonner';
 import { api } from '../api';
+import { imageConfig, pickReferenceImage } from '../lib/imageRequest';
+import { applyJobItems, runImageJob } from '../lib/imageJob';
+import { saveEditorRedo, clearEditorRedo, type PendingEditorRedo } from '../lib/editorRedo';
 
 interface PageEditorProps {
   config: StoryConfig;
   onConfigChange: (updates: Partial<StoryConfig>) => void;
   onNext: () => void;
   onBack: () => void;
+  userId: string;
+  pendingRedo?: PendingEditorRedo | null;
+  onPendingRedoChange?: (redo: PendingEditorRedo | null) => void;
 }
 
 export const PageEditor: React.FC<PageEditorProps> = ({
@@ -34,9 +40,13 @@ export const PageEditor: React.FC<PageEditorProps> = ({
   onConfigChange,
   onNext,
   onBack,
+  userId,
+  pendingRedo = null,
+  onPendingRedoChange,
 }) => {
   const [selectedPage, setSelectedPage] = useState(1);
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
+
 
   const pages = config.pages || [];
   const currentPage = pages.find(p => p.page === selectedPage);
@@ -58,7 +68,14 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     onConfigChange({ pages: updatedPages });
   };
 
-  const regenerateImage = async (pageNumber: number) => {
+  const regenerateImage = async (pageNumber: number, retry = false) => {
+    if (!userId) { toast.error('Sign in before drawing an illustration.'); return; }
+    if (retry && !pendingRedo) return;
+    if (pendingRedo && !retry) {
+      toast.error('Please resume the earlier illustration before starting another.');
+      return;
+    }
+    if (retry && pendingRedo && pageNumber !== pendingRedo.pageNumber) return;
     if (!config.outline) {
       toast.error('Generate a plan before regenerating images.');
       return;
@@ -74,30 +91,36 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     setIsRegeneratingImage(true);
     try {
       const prompt = outlinePage.imagePrompt || outlinePage.visualBrief || 'storybook illustration';
-      const response = await api.generateImages(config.pageSize, [
-        {
-          page: pageNumber,
-          prompt,
-          text: storyPage.text,
-          visualBrief: outlinePage.visualBrief,
-          config,
-          seed: config.imageSeed ? config.imageSeed + pageNumber : undefined,
-        },
-      ]);
-
-      const generated = response.images?.[0];
-      if (generated?.url) {
-        const updatedPages = pages.map(page =>
-          page.page === pageNumber ? { ...page, imageUrl: generated.url } : page
-        );
-        onConfigChange({ pages: updatedPages });
+      const work = retry && pendingRedo ? pendingRedo : {
+        requestId: crypto.randomUUID(), userId, pageNumber, pageSize: config.pageSize,
+        prompts: [{ page: pageNumber, prompt, text: storyPage.text, visualBrief: outlinePage.visualBrief }],
+        imageConfig: imageConfig(config), reference: pickReferenceImage(pages, pageNumber), book: config,
+      };
+      if (!retry) {
+        try { await saveEditorRedo(work); } catch {
+          toast.error('Storage is unavailable. Illustration cannot safely start.');
+          return;
+        }
+        onPendingRedoChange?.(work);
+      }
+      const { jobId } = await api.startImageJob(work.requestId, work.pageSize,
+        work.prompts, work.imageConfig, work.reference);
+      const items = await runImageJob(api, jobId);
+      const result = applyJobItems(retry && pendingRedo ? pendingRedo.book.pages || pages : pages, items);
+      if (items.length !== 1 || (items[0].status !== 'done' && items[0].status !== 'failed')) {
+        throw new Error('Illustration job ended without a final result.');
+      }
+      if (!result.failedPages.includes(pageNumber) && result.pages.find(page => page.page === pageNumber)?.imageUrl) {
+        onConfigChange({ ...work.book, pages: result.pages });
         toast.success(`Illustration updated for page ${pageNumber}`);
       } else {
         toast.error('The image service returned no artwork. Please try again.');
       }
+      await clearEditorRedo();
+      onPendingRedoChange?.(null);
     } catch (error) {
       console.error('Image regeneration failed', error);
-      toast.error('Failed to regenerate image');
+      toast.error('Could not confirm the illustration. Press Resume earlier illustration to reconnect safely.');
     } finally {
       setIsRegeneratingImage(false);
     }
@@ -130,6 +153,13 @@ export const PageEditor: React.FC<PageEditorProps> = ({
           Fine-tune your story and make it perfect
         </p>
       </div>
+
+      {pendingRedo && (
+        <Alert><AlertDescription className="flex items-center justify-between gap-3">
+          <span>Page {pendingRedo.pageNumber} illustration is unfinished.</span>
+          <Button disabled={isRegeneratingImage} onClick={() => regenerateImage(pendingRedo.pageNumber, true)}>Resume earlier illustration</Button>
+        </AlertDescription></Alert>
+      )}
 
       <div className="grid lg:grid-cols-4 gap-8">
         {/* Page List */}
@@ -252,7 +282,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                           size="sm"
                           variant="outline"
                           onClick={() => regenerateImage(currentPage.page)}
-                          disabled={isRegeneratingImage}
+                          disabled={isRegeneratingImage || !!pendingRedo}
                         >
                           <RefreshCw className={`w-4 h-4 mr-2 ${isRegeneratingImage ? 'animate-spin' : ''}`} />
                           Regenerate
@@ -283,7 +313,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                         size="sm"
                         variant="outline"
                         onClick={() => regenerateImage(currentPage.page)}
-                        disabled={isRegeneratingImage}
+                        disabled={isRegeneratingImage || !!pendingRedo}
                         className="mt-2"
                       >
                         Generate Image

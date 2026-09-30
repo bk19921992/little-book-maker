@@ -9,21 +9,30 @@ import { StoryConfig, StoryPage, StoryOutline, StyleBible } from '../types';
 import { api } from '../api';
 import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
+import { applyJobItems, runImageJob } from '../lib/imageJob';
+import { imageConfig } from '../lib/imageRequest';
+import { saveCheckpoint, clearCheckpoint, loadCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
 
 interface PreviewGenerateProps {
   config: StoryConfig;
+  userId: string;
   onConfigChange: (updates: Partial<StoryConfig>) => void;
   onNext: () => void;
   onBack: () => void;
+  resume?: GenerationCheckpoint | null;
+  onResumeHandled?: () => void;
 }
 
 type GenerationStep = 'idle' | 'planning' | 'writing' | 'images' | 'complete';
 
 export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   config,
+  userId,
   onConfigChange,
   onNext,
   onBack,
+  resume,
+  onResumeHandled,
 }) => {
   const [currentStep, setCurrentStep] = useState<GenerationStep>('idle');
   const [progress, setProgress] = useState(0);
@@ -31,6 +40,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const [startTime, setStartTime] = useState<number>(0);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [startUncertain, setStartUncertain] = useState(false);
+  const [pendingJob, setPendingJob] = useState<GenerationCheckpoint | null>(resume || null);
 
   const updateProgress = (newProgress: number) => {
     setProgress(newProgress);
@@ -55,7 +66,14 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   };
 
   const generateStory = async () => {
+    let uncertainStart = false;
     try {
+      const existing = loadCheckpoint(userId);
+      if (existing) {
+        setPendingJob(existing);
+        setError('An illustration job is already saved. Press Resume illustrations instead.');
+        return;
+      }
       // Validate config first
       const validationErrors = validateStoryConfig(config);
       if (validationErrors.length > 0) {
@@ -99,58 +117,100 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // Step 3: Generate images (AI-powered illustrations)
       toast.info('Creating AI illustrations...');
       // Build a quick lookup for outline data
-      const outlineByPage = new Map(planResponse.outline.pages.map((p: any) => [p.page, p]));
+      const outlineByPage = new Map(planResponse.outline.pages.map((p) => [p.page, p]));
       const imagePrompts = writeResponse.pages
         .filter((p) => p && p.page !== undefined)
         .map((p) => {
-          const outline = outlineByPage.get(p.page) || {} as any;
+          const outline = outlineByPage.get(p.page) || {} as Partial<StoryOutline['pages'][number]>;
           return {
             page: p.page,
             prompt: outline.imagePrompt || outline.visualBrief || 'storybook scene',
             text: p.text,
             visualBrief: outline.visualBrief,
-            seed: config.imageSeed || undefined,
-            config: config,
           };
         });
 
-      const imageResponse = await api.generateImages(config.pageSize, imagePrompts);
-
-      if (imageResponse.errors?.length) {
-        const failedPages = imageResponse.errors.map((e) => e.page).join(', ');
-        toast.warning(
-          `Could not create illustrations for page${imageResponse.errors.length > 1 ? 's' : ''} ${failedPages}. You can retry them from the editor.`
-        );
+      const book: StoryConfig = { ...config, styleBible: planResponse.styleBible, outline: planResponse.outline, pages: writeResponse.pages };
+      const requestId = crypto.randomUUID();
+      if (!saveCheckpoint(userId, requestId, book, imagePrompts)) {
+        throw new Error('Local storage is unavailable. Illustrations cannot safely start.');
       }
-
-      // Update pages with image URLs
-      const pagesWithImages = writeResponse.pages.map(page => {
-        const imageData = imageResponse.images.find(img => img.page === page.page);
-        return {
-          ...page,
-          imageUrl: imageData?.url,
-        };
-      });
-
-      onConfigChange({
-        pages: pagesWithImages,
-      });
-
-      updateProgress(100);
-      setCurrentStep('complete');
-      setEstimatedTimeRemaining('Complete!');
-      toast.success('Your story is ready!');
-
+      setPendingJob({ v: 1, userId, requestId, config: book, prompts: imagePrompts, savedAt: Date.now() });
+      let jobId: string;
+      try {
+        ({ jobId } = await api.startImageJob(requestId, config.pageSize, imagePrompts, imageConfig(book)));
+      } catch (startError) {
+        uncertainStart = true;
+        setStartUncertain(true);
+        throw startError;
+      }
+      saveCheckpoint(userId, requestId, book, imagePrompts, jobId);
+      await illustrate(jobId, book, requestId, imagePrompts);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate story';
-      setError(errorMessage);
-      toast.error(errorMessage);
+      setError(uncertainStart ? 'Could not confirm the start. Press Resume illustrations to safely reconnect to this book.' : errorMessage);
+      toast.error(uncertainStart ? 'Illustration start is uncertain. Please use Resume illustrations.' : errorMessage);
       setCurrentStep('idle');
       setProgress(0);
       setEstimatedTimeRemaining('');
     }
     setIsGenerating(false);
   };
+
+  const illustrate = async (jobId: string, book: StoryConfig, requestId: string, prompts: GenerationCheckpoint['prompts']) => {
+    const pages = book.pages || [];
+    let finished = 0;
+    setPendingJob({ v: 1, userId, jobId, requestId, config: book, prompts, savedAt: Date.now() });
+    setCurrentStep('images');
+    setProgress(70);
+    setEstimatedTimeRemaining('Illustrations in progress');
+    try {
+      const items = await runImageJob(api, jobId, { onItem: () => {
+        finished += 1;
+        setProgress(70 + Math.round((finished / pages.length) * 29));
+        setEstimatedTimeRemaining(`${finished} of ${pages.length} illustrations finished`);
+      } });
+      const result = applyJobItems(pages, items);
+      if (items.length !== pages.length || items.some(item => item.status !== 'done' && item.status !== 'failed')) {
+        throw new Error('Illustration job ended without a final result for every page.');
+      }
+      if (result.failedPages.length) toast.warning(`Could not create illustrations for pages ${result.failedPages.join(", ")}. You can retry them from the editor.`);
+      onConfigChange({ ...book, pages: result.pages });
+      clearCheckpoint(userId);
+      setPendingJob(null);
+      setStartUncertain(false);
+      updateProgress(100);
+      setCurrentStep('complete');
+      toast.success('Your story is ready!');
+    } catch (err) {
+      console.error('Illustration job interrupted', err);
+      setError('We lost contact while drawing your pictures. Your progress is saved. Press Resume illustrations to carry on.');
+      setCurrentStep('idle');
+    }
+  };
+
+  const resumeIllustrations = async () => {
+    const pending = pendingJob || loadCheckpoint(userId);
+    if (!pending || pending.userId !== userId) return;
+    setPendingJob(pending);
+    setError(null);
+    setIsGenerating(true);
+    try {
+      const { jobId } = await api.startImageJob(pending.requestId, pending.config.pageSize, pending.prompts, imageConfig(pending.config));
+      saveCheckpoint(userId, pending.requestId, pending.config, pending.prompts, jobId);
+      await illustrate(jobId, pending.config, pending.requestId, pending.prompts);
+    } catch (err) {
+      console.error('Could not resume illustration job', err);
+      setError('Could not reconnect to your illustrations. Please try Resume illustrations again.');
+    }
+    setIsGenerating(false);
+  };
+
+  useEffect(() => {
+    if (!resume) return;
+    setPendingJob(resume);
+    onResumeHandled?.();
+  }, [resume, onResumeHandled]);
 
   const getStepStatus = (step: GenerationStep) => {
     const stepOrder: GenerationStep[] = ['planning', 'writing', 'images', 'complete'];
@@ -451,7 +511,10 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         </Button>
         
         <div className="flex gap-3">
-          {currentStep === 'idle' && (
+          {(pendingJob || startUncertain) && !isGenerating && (
+            <Button onClick={resumeIllustrations} size="lg" disabled={!pendingJob}>Resume illustrations</Button>
+          )}
+          {currentStep === 'idle' && !pendingJob && !startUncertain && (
             <Button
               onClick={generateStory}
               size="lg"

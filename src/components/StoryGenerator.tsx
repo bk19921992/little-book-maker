@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { loadCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
 import { LogOut } from 'lucide-react';
 import { useAppState } from '../state';
 import { useAuth } from '@/context/AuthContext';
@@ -8,8 +9,13 @@ import { PreviewGenerate } from './PreviewGenerate';
 import { PageEditor } from './PageEditor';
 import { ExportPanel } from './ExportPanel';
 import heroImage from '../assets/storybook-hero.jpg';
+import { loadEditorRedo, type PendingEditorRedo } from '../lib/editorRedo';
 
 export const StoryGenerator: React.FC = () => {
+  const [resume, setResume] = useState<GenerationCheckpoint | null>(null);
+  const [pendingRedo, setPendingRedo] = useState<PendingEditorRedo | null>(null);
+  const [loadingRedo, setLoadingRedo] = useState(true);
+  const [redoStorageFailed, setRedoStorageFailed] = useState(false);
   const {
     state,
     updateConfig,
@@ -18,8 +24,36 @@ export const StoryGenerator: React.FC = () => {
     resetState,
   } = useAppState();
   const { user, signOut } = useAuth();
+  const userId = user?.id;
 
   const { currentStep, config } = state;
+
+  useEffect(() => {
+    let mounted = true;
+    if (!userId) { setResume(null); setPendingRedo(null); setRedoStorageFailed(false); setLoadingRedo(false); return; }
+    setResume(loadCheckpoint(userId));
+    setLoadingRedo(true);
+    loadEditorRedo().then((redo) => {
+      if (mounted) { setRedoStorageFailed(false); setPendingRedo(redo?.userId === userId ? redo : null); }
+    }).catch(() => {
+      if (mounted) { setPendingRedo(null); setRedoStorageFailed(true); }
+    }).finally(() => { if (mounted) setLoadingRedo(false); });
+    return () => { mounted = false; };
+  }, [userId]);
+
+  const resetStory = () => {
+    if (redoStorageFailed) return;
+    if (pendingRedo) { updateConfig(pendingRedo.book); setStep('edit'); return; }
+    // Do not drop the only ID for an in-flight or lost-response image job.
+    const pending = userId ? loadCheckpoint(userId) : null;
+    if (pending) {
+      setResume(pending);
+      setStep('preview');
+      return;
+    }
+    setResume(null);
+    resetState();
+  };
 
   const handleNext = () => {
     switch (currentStep) {
@@ -136,7 +170,16 @@ export const StoryGenerator: React.FC = () => {
 
       {/* Main Content */}
       <main className="py-6 sm:py-8">
-        {currentStep === 'setup' && (
+        {currentStep === 'setup' && redoStorageFailed && (
+          <div className="max-w-4xl mx-auto px-6">Saved illustration progress is unavailable on this device. Please restore site storage before starting another book.</div>
+        )}
+        {currentStep === 'setup' && pendingRedo && (
+          <div className="max-w-4xl mx-auto px-6"><Button onClick={() => { updateConfig(pendingRedo.book); setStep('edit'); }}>Resume page {pendingRedo.pageNumber} illustration</Button></div>
+        )}
+        {currentStep === 'setup' && resume?.userId === userId && !pendingRedo && (
+          <div className="max-w-4xl mx-auto px-6"><Button onClick={() => setStep('preview')}>Resume illustrations</Button></div>
+        )}
+        {currentStep === 'setup' && !loadingRedo && !redoStorageFailed && !pendingRedo && !resume && (
           <SetupForm
             config={config}
             onConfigChange={updateConfig}
@@ -145,21 +188,27 @@ export const StoryGenerator: React.FC = () => {
           />
         )}
         
-        {currentStep === 'preview' && (
+        {currentStep === 'preview' && userId && !redoStorageFailed && !pendingRedo && (
           <PreviewGenerate
             config={config}
+            userId={userId}
             onConfigChange={updateConfig}
             onNext={handleNext}
             onBack={handleBack}
+            resume={resume?.userId === userId ? resume : null}
+            onResumeHandled={() => setResume(null)}
           />
         )}
         
-        {currentStep === 'edit' && (
+        {currentStep === 'edit' && userId && !loadingRedo && !redoStorageFailed && (
           <PageEditor
             config={config}
             onConfigChange={updateConfig}
             onNext={handleNext}
             onBack={handleBack}
+            userId={userId}
+            pendingRedo={pendingRedo}
+            onPendingRedoChange={setPendingRedo}
           />
         )}
 
@@ -167,7 +216,7 @@ export const StoryGenerator: React.FC = () => {
           <ExportPanel
             config={config}
             onConfigChange={updateConfig}
-            onReset={resetState}
+            onReset={resetStory}
             onBack={handleBack}
           />
         )}
