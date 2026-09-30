@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { StoryConfig, StoryPage } from '../types.ts';
+import { bookTitle } from '../../supabase/functions/_shared/title.ts';
 
 // Books saved on the customer's account (supabase/migrations/
 // 20260929120000_saved_books.sql). The book's setup and text live in the
@@ -29,11 +30,8 @@ type StoredConfig = Omit<StoryConfig, 'pages' | 'coverImageUrl' | 'exports'> & {
 export const imagePath = (userId: string, storyId: string, name: string, ext: string) =>
   `${userId}/${storyId}/images/${name}.${ext}`;
 
-// The same name the export screen shows for the book.
-export const bookTitle = (config: StoryConfig): string =>
-  config.children?.length
-    ? `${config.children.join(' and ')}'s ${config.storyType || ''} Story`.replace(/\s+/g, ' ')
-    : `A ${config.storyType || ''} Story`.replace(/\s+/g, ' ');
+// The same title the editor, export screen and printed cover use.
+export { bookTitle };
 
 export function dataUrlToBlob(dataUrl: string): { blob: Blob; ext: string } {
   const [meta, b64] = dataUrl.split(',', 2);

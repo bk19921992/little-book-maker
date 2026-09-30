@@ -73,8 +73,12 @@ Deno.test('save -> list -> reopen round-trips a book, pictures included; delete 
   const a = await newUser('roundtrip')
   await saveBook(a.client, a.id, book('rt-1'))
   const list = await listBooks(a.client)
-  assertEquals(list.map((b) => [b.storyId, b.title, b.pageCount, b.pageSize]), [['rt-1', "Mia's Bedtime Story", 2, 'A5 portrait']])
+  assertEquals(list.map((b) => [b.storyId, b.title, b.pageCount, b.pageSize]), [['rt-1', "Mia's Story", 2, 'A5 portrait']])
   const reopened = await openBook(a.client, 'rt-1')
+  // An edited title is what My books lists, and it survives reopening.
+  await saveBook(a.client, a.id, { ...(book('rt-1') as object), title: 'Mia and the Moon Owl' } as never)
+  assertEquals((await listBooks(a.client))[0].title, 'Mia and the Moon Owl')
+  assertEquals((await openBook(a.client, 'rt-1')).title, 'Mia and the Moon Owl')
   assertEquals(reopened.pages!.map((p) => [p.text, p.imageUrl === pic, p.imageReview]), [['Mia met an owl.', true, 'passed'], ['They flew home.', true, undefined]])
   assertEquals(reopened.coverImageUrl, pic)
   const row = (await admin.from('books').select('config').eq('story_id', 'rt-1').single()).data!

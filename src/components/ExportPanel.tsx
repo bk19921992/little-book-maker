@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { validateAddress, type ShippingAddress } from '../../supabase/functions/create-print-order/print.ts';
 import { saveBook, withDownloadName } from '../lib/savedBooks';
 import { supabase } from '@/integrations/supabase/client';
+import { bookTitle } from '../../supabase/functions/_shared/title.ts';
 import { useAuth } from '@/context/AuthContext';
 
 // Print stays hidden until Phase 5 - the server refuses orders while the flag is off too.
@@ -185,9 +186,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     document.body.removeChild(link);
   };
 
-  const storyTitle = config.children.length > 0
-    ? `${config.children.join(' and ')}'s ${config.storyType} Story`
-    : `A ${config.storyType} Story`;
+  const storyTitle = bookTitle(config);
 
   const handleCreateAnother = () => {
     onReset();
