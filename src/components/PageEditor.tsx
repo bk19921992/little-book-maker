@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
@@ -20,7 +21,8 @@ import {
 import { StoryConfig, StoryPage } from '../types';
 import { imageConfig, pickReferenceImage } from '../lib/imageRequest';
 import { applyJobItems, runImageJob } from '../lib/imageJob';
-import { countWords, getPageTextStatus, getWordCountStatus, pageFitAdvice, wordCountTargets } from '../lib/validation';
+import { countWords, getPageTextStatus, pageExportIssues, pageFitAdvice, pagesBlockingExport, wordCountTargets } from '../lib/validation';
+import { bookTitle, MAX_TITLE_CHARS } from '../../supabase/functions/_shared/title.ts';
 import { packLines } from '../../supabase/functions/_shared/textContract.ts';
 import { toast } from 'sonner';
 import { api } from '../api';
@@ -102,21 +104,28 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     }
   };
 
+  // Word count is guidance (amber); only what would spoil the printed book
+  // (no words, words that don't fit, no picture) blocks export (red).
   const getPageStatus = (page: StoryPage) => {
-    const wordStatus = getPageTextStatus(page.text, config.readingLevel, config.pageSize);
-    const hasImage = !!page.imageUrl || page.imageLocked;
-    
+    const issues = pageExportIssues(page, config.readingLevel, config.pageSize);
+    const textBlocked = !page.text.trim() || !!pageFitAdvice(page.text, config.readingLevel, config.pageSize);
+    const wordsOff = getPageTextStatus(page.text, config.readingLevel, config.pageSize).status !== 'good';
     return {
-      text: wordStatus.status === 'good' ? 'complete' : 'warning',
-      image: hasImage ? 'complete' : 'warning',
-      overall: wordStatus.status === 'good' && hasImage ? 'complete' : 'warning',
+      text: textBlocked ? 'blocked' : wordsOff ? 'warning' : 'complete',
+      image: page.imageUrl || page.imageLocked ? 'complete' : 'blocked',
+      issues,
     };
   };
 
-  const canExport = pages.every(page => {
-    const status = getPageStatus(page);
-    return status.overall === 'complete';
-  });
+  const blockers = pagesBlockingExport(pages, config.readingLevel, config.pageSize);
+  const canExport = pages.length > 0 && blockers.length === 0;
+  const wordsOff = currentTextStatus && currentTextStatus.status !== 'good' && !currentFitAdvice;
+  const statusIcon = (state: string) =>
+    state === 'complete' ? <CheckCircle className="w-4 h-4 text-story-nature" />
+      : state === 'warning' ? <AlertTriangle className="w-4 h-4 text-amber-500" />
+      : <AlertTriangle className="w-4 h-4 text-destructive" />;
+  const imageLabel = (page: StoryPage) =>
+    page.imageUrl ? 'Picture ready' : page.imageLocked ? 'No picture' : page.imageFailed ? 'Illustration failed' : 'Picture needed';
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
@@ -128,6 +137,20 @@ export const PageEditor: React.FC<PageEditorProps> = ({
           Fine-tune your story and make it perfect
         </p>
       </div>
+
+      <Card className="story-card">
+        <CardContent className="pt-6 space-y-2">
+          <Label htmlFor="book-title">Book title</Label>
+          <Input
+            id="book-title"
+            value={config.title ?? ''}
+            placeholder={bookTitle({ children: config.children })}
+            maxLength={MAX_TITLE_CHARS}
+            onChange={(e) => onConfigChange({ title: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">Printed on the cover. Leave it empty to use "{bookTitle({ children: config.children })}".</p>
+        </CardContent>
+      </Card>
 
       <div className="grid lg:grid-cols-4 gap-8">
         {/* Page List */}
@@ -143,7 +166,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
               {pages.map((page) => {
                 const status = getPageStatus(page);
                 const wordCount = countWords(page.text);
-                
+
                 return (
                   <button
                     key={page.page}
@@ -158,21 +181,13 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium">Page {page.page}</span>
-                      <div className="flex gap-1">
-                        {status.text === 'complete' ? (
-                          <CheckCircle className="w-4 h-4 text-story-nature" />
-                        ) : (
-                          <AlertTriangle className="w-4 h-4 text-destructive" />
-                        )}
-                        {status.image === 'complete' ? (
-                          <CheckCircle className="w-4 h-4 text-story-nature" />
-                        ) : (
-                          <AlertTriangle className="w-4 h-4 text-destructive" />
-                        )}
+                      <div className="flex gap-1" aria-hidden="true">
+                        {statusIcon(status.text)}
+                        {statusIcon(status.image)}
                       </div>
                     </div>
                     <div className="text-xs opacity-70 mt-1">
-                      {wordCount} words • {page.imageUrl ? 'Image ready' : page.imageLocked ? 'No image' : 'Image needed'}
+                      {wordCount} words • {imageLabel(page)}
                     </div>
                   </button>
                 );
@@ -197,11 +212,13 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                       <Badge variant="outline">
                         {countWords(currentPage.text)} / {targets.min}-{targets.max} words
                       </Badge>
-                      <Badge 
-                        variant={currentTextStatus?.status === 'good' ? 'default' : 'destructive'}
-                      >
-                        {currentTextStatus?.status}
-                      </Badge>
+                      {currentFitAdvice ? (
+                        <Badge variant="destructive">Doesn't fit</Badge>
+                      ) : currentTextStatus?.status === 'good' ? (
+                        <Badge>Good length</Badge>
+                      ) : (
+                        <Badge variant="outline" className="border-amber-500 text-amber-700">{currentTextStatus?.status === 'low' ? 'A bit short' : 'A bit long'}</Badge>
+                      )}
                     </div>
                   </CardTitle>
                 </CardHeader>
@@ -214,13 +231,14 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                   />
                   
                   <div className="flex justify-between text-sm text-muted-foreground">
-                    <span>Target: {targets.min}-{targets.max} words for {config.readingLevel}</span>
-                    <span 
-                      className={getWordCountStatus(countWords(currentPage.text), config.readingLevel, config.pageSize).color}
-                    >
-                      Current: {countWords(currentPage.text)} words
-                    </span>
+                    <span>Suggested: {targets.min}-{targets.max} words for {config.readingLevel}</span>
+                    <span>Current: {countWords(currentPage.text)} words</span>
                   </div>
+                  {wordsOff && (
+                    <p className="text-sm text-muted-foreground">
+                      This is just a guide - pages a little {currentTextStatus?.status === 'low' ? 'shorter' : 'longer'} than suggested are fine to print.
+                    </p>
+                  )}
                   {currentFitAdvice && (
                     <Alert>
                       <AlertTriangle className="h-4 w-4" />
@@ -258,7 +276,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                         />
                         <Label htmlFor={`lock-${currentPage.page}`} className="flex items-center gap-1">
                           {currentPage.imageLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                          Lock {currentPage.imageLocked ? 'without' : 'with'} image
+                          No picture on this page
                         </Label>
                       </div>
                       
@@ -280,7 +298,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                   {currentPage.imageLocked ? (
                     <div className="text-center p-8 border-2 border-dashed border-muted rounded-lg">
                       <Lock className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-muted-foreground">This page will not have an illustration</p>
+                      <p className="text-muted-foreground">This page will print without a picture</p>
                     </div>
                   ) : currentPage.imageUrl ? (
                     <div className="rounded-lg overflow-hidden">
@@ -290,10 +308,27 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                         className="w-full h-auto"
                       />
                     </div>
+                  ) : currentPage.imageFailed ? (
+                    <div className="text-center p-8 border-2 border-dashed border-destructive/60 rounded-lg space-y-3">
+                      <AlertTriangle className="w-8 h-8 text-destructive mx-auto" />
+                      <p className="font-medium">Illustration failed</p>
+                      <p className="text-sm text-muted-foreground">
+                        This picture didn't pass our quality check, so we haven't used it. Try again, or print this page without a picture.
+                      </p>
+                      <div className="flex justify-center gap-2">
+                        <Button size="sm" onClick={() => regenerateImage(currentPage.page)} disabled={isRegeneratingImage}>
+                          <RefreshCw className={`w-4 h-4 mr-2 ${isRegeneratingImage ? 'animate-spin' : ''}`} />
+                          Retry
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => toggleImageLock(currentPage.page)} disabled={isRegeneratingImage}>
+                          Use no picture
+                        </Button>
+                      </div>
+                    </div>
                   ) : (
                     <div className="text-center p-8 border-2 border-dashed border-muted rounded-lg">
                       <Image className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-muted-foreground">Image will be generated</p>
+                      <p className="text-muted-foreground">This page needs a picture</p>
                       <Button
                         size="sm"
                         variant="outline"
@@ -301,7 +336,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                         disabled={isRegeneratingImage}
                         className="mt-2"
                       >
-                        Generate Image
+                        Generate picture
                       </Button>
                     </div>
                   )}
@@ -309,12 +344,21 @@ export const PageEditor: React.FC<PageEditorProps> = ({
               </Card>
 
               {/* Validation Alerts */}
-              {!canExport && (
+              {!canExport && blockers.length > 0 && (
                 <Alert>
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription>
-                    Some pages need attention before you can export your story. 
-                    Check word counts and ensure all pages have images or are locked without them.
+                    <p className="mb-1">Before you can export:</p>
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {blockers.map((b) => (
+                        <li key={b.page}>
+                          <button type="button" className="underline underline-offset-2" onClick={() => setSelectedPage(b.page)}>
+                            Page {b.page}
+                          </button>{' '}
+                          {b.issues.join('; ')}
+                        </li>
+                      ))}
+                    </ul>
                   </AlertDescription>
                 </Alert>
               )}

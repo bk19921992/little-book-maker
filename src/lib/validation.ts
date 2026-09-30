@@ -41,39 +41,6 @@ export const validateStoryConfig = (config: StoryConfig): ValidationError[] => {
   return errors;
 };
 
-// Validate individual page content
-export const validatePageContent = (
-  text: string,
-  readingLevel: ReadingLevel,
-  pageNumber: number,
-  pageSize?: PageSizePreset
-): { isValid: boolean; message?: string; wordCount: number } => {
-  const wordCount = countWords(text);
-  const targets = wordCountTargets(readingLevel, pageSize);
-  
-  const tolerance = 15; // ±15 words tolerance
-  const minWords = targets.min - tolerance;
-  const maxWords = targets.max + tolerance;
-
-  if (wordCount < minWords) {
-    return {
-      isValid: false,
-      message: `Page ${pageNumber} has too few words (${wordCount}). Target: ${targets.min}-${targets.max} words.`,
-      wordCount,
-    };
-  }
-
-  if (wordCount > maxWords) {
-    return {
-      isValid: false,
-      message: `Page ${pageNumber} has too many words (${wordCount}). Target: ${targets.min}-${targets.max} words.`,
-      wordCount,
-    };
-  }
-
-  return { isValid: true, wordCount };
-};
-
 // Count words in text
 export const countWords = (text: string): number => {
   if (!text.trim()) return 0;
@@ -115,34 +82,33 @@ export const getPageTextStatus = (
   return { ...wordStatus, issues };
 };
 
-// Validate that all pages are ready for export
-export const validatePagesForExport = (
-  pages: { text: string; imageUrl?: string; imageLocked?: boolean }[],
+// What stops a page being exported. Word count is guidance only (shown as
+// a gentle warning); what blocks is a page with no words, words that will
+// not fit the printed text area (export-pdf fails such a page), or a page
+// with no picture that has not been set to "no picture".
+export const pageExportIssues = (
+  page: { text: string; imageUrl?: string; imageLocked?: boolean; imageFailed?: boolean },
   readingLevel: ReadingLevel,
   pageSize?: PageSizePreset
-): ValidationError[] => {
-  const errors: ValidationError[] = [];
-
-  pages.forEach((page, index) => {
-    const pageNumber = index + 1;
-    
-    // Check text content
-    const textValidation = validatePageContent(page.text, readingLevel, pageNumber, pageSize);
-    if (!textValidation.isValid) {
-      errors.push({ field: `page${pageNumber}Text`, message: textValidation.message! });
-    }
-
-    // Check image presence (unless explicitly locked without image)
-    if (!page.imageUrl && !page.imageLocked) {
-      errors.push({ 
-        field: `page${pageNumber}Image`, 
-        message: `Page ${pageNumber} needs an image or must be locked without one` 
-      });
-    }
-  });
-
-  return errors;
+): string[] => {
+  const issues: string[] = [];
+  if (!page.text.trim()) issues.push('needs some words');
+  else if (contractViolations(page.text, readingLevel, pageSize).length) issues.push("words don't fit the printed page");
+  if (!page.imageUrl && !page.imageLocked) {
+    issues.push(page.imageFailed ? 'illustration failed - retry it or choose no picture' : 'needs a picture');
+  }
+  return issues;
 };
+
+// Pages that stop export, with their reasons.
+export const pagesBlockingExport = (
+  pages: { page: number; text: string; imageUrl?: string; imageLocked?: boolean; imageFailed?: boolean }[],
+  readingLevel: ReadingLevel,
+  pageSize?: PageSizePreset
+): { page: number; issues: string[] }[] =>
+  pages
+    .map((p) => ({ page: p.page, issues: pageExportIssues(p, readingLevel, pageSize) }))
+    .filter((p) => p.issues.length > 0);
 
 // Helper to format validation errors for display
 export const formatValidationErrors = (errors: ValidationError[]): string[] => {

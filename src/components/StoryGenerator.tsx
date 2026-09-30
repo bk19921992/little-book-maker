@@ -59,7 +59,7 @@ export const StoryGenerator: React.FC = () => {
     if (currentStep !== 'edit' && currentStep !== 'export') return;
     // Cheap change fingerprint: text plus each picture's length and tail.
     const pic = (url?: string) => (url ? `${url.length}:${url.slice(-24)}` : '');
-    const snapshot = JSON.stringify([config.storyId, config.pages.map((p) => [p.page, p.text, pic(p.imageUrl), p.imageLocked]), pic(config.coverImageUrl)]);
+    const snapshot = JSON.stringify([config.storyId, config.title, config.pages.map((p) => [p.page, p.text, pic(p.imageUrl), p.imageLocked, p.imageFailed]), pic(config.coverImageUrl)]);
     if (snapshot === lastSaved.current) return;
     const timer = setTimeout(() => {
       saveBook(supabase, user.id, config)

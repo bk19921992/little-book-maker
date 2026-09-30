@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPageTextStatus, wordCountTargets } from './validation.ts';
+import { getPageTextStatus, pagesBlockingExport, wordCountTargets } from './validation.ts';
 
 test('editor word targets follow the text contract, not the old 40-90 Primary range', () => {
   assert.deepEqual(wordCountTargets('Primary 6–8', 'A5 portrait'), { min: 24, max: 36 });
@@ -33,4 +33,22 @@ test('fit advice: fixable line breaks offer Fit lines; a fitting page gets none'
   const oneLongLine = 'Mia and the wise old owl walked slowly through the enchanted forest listening to the leaves';
   assert.equal(pageFitAdvice(oneLongLine, 'Early 4–5', 'A5 portrait')!.canFitLines, true);
   assert.equal(pageFitAdvice('Mia ran home.\nThe owl flew too.', 'Early 4–5', 'A5 portrait'), null);
+});
+
+test('word count is guidance only: a short page that fits can be exported', () => {
+  const short = { page: 1, text: 'Pip hops.', imageUrl: 'data:image/jpeg;base64,x' };
+  assert.deepEqual(pagesBlockingExport([short], 'Primary 6–8', 'A5 portrait'), []);
+});
+
+test('export is blocked by empty text, overflowing text or a missing or failed picture', () => {
+  const tooMany = Array.from({ length: 9 }, (_, i) => `Line ${i + 1} of the story goes here`).join('\n');
+  const blocked = pagesBlockingExport([
+    { page: 1, text: '', imageUrl: 'x' },
+    { page: 2, text: tooMany, imageUrl: 'x' },
+    { page: 3, text: 'Fine words.', imageFailed: true },
+    { page: 4, text: 'Fine words.' },
+    { page: 5, text: 'Fine words.', imageLocked: true },
+  ], 'Primary 6–8', 'A5 portrait');
+  assert.deepEqual(blocked.map((b) => b.page), [1, 2, 3, 4]);
+  assert.match(blocked[2].issues[0], /illustration failed/);
 });
