@@ -58,3 +58,16 @@ test('applyJobItems: done items set images and review state; failures keep the p
   assert.equal(out.coverImageUrl, undefined);
   assert.equal(out.coverFailed, true);
 });
+
+test('applyJobItems: a first-run failure marks the page failed; a later success clears it', () => {
+  const pages: StoryPage[] = [{ page: 1, text: 'a' }, { page: 2, text: 'b', imageUrl: 'data:image/jpeg;base64,old' }];
+  const first = applyJobItems(pages, [
+    { key: 'page:1', page: 1, status: 'failed', attempts: 3 },
+    { key: 'page:2', page: 2, status: 'failed', attempts: 3 },
+  ]);
+  assert.equal(first.pages[0].imageFailed, true);
+  assert.equal(first.pages[1].imageFailed, undefined); // kept its accepted picture
+  const retried = applyJobItems(first.pages, [done(1)]);
+  assert.equal(retried.pages[0].imageFailed, undefined);
+  assert.ok(retried.pages[0].imageUrl);
+});

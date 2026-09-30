@@ -69,16 +69,19 @@ export const reviewStateOf = (review?: { skipped?: boolean }): ImageReviewState 
   review?.skipped ? 'unreviewed' : 'passed';
 
 // Merge finished job items into the book's pages and cover. A failed item
-// ships no new image (the QA gate fails closed) and leaves the page as it
-// was - blank on a first run, its previous accepted picture on an editor
-// redo. Failures are listed for the UI.
+// ships no new image (the QA gate fails closed). A page that already has an
+// accepted picture (an editor redo) keeps it; a page without one is marked
+// imageFailed, so the app shows "Illustration failed - Retry" and export
+// waits until it is retried or set to no picture. Failures are listed too.
 export function applyJobItems(pages: StoryPage[], items: ImageJobItem[]) {
   const byPage = new Map(items.filter((i) => i.page !== null).map((i) => [i.page as number, i]));
-  const merged = pages.map((page) => {
+  const merged = pages.map((page): StoryPage => {
     const item = byPage.get(page.page);
-    return item?.status === 'done' && item.url
-      ? { ...page, imageUrl: item.url, imageReview: reviewStateOf(item.review) }
-      : page;
+    if (item?.status === 'done' && item.url) {
+      return { ...page, imageUrl: item.url, imageReview: reviewStateOf(item.review), imageFailed: undefined };
+    }
+    if (item?.status === 'failed' && !page.imageUrl) return { ...page, imageFailed: true };
+    return page;
   });
   const cover = items.find((i) => i.page === null);
   return {
