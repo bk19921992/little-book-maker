@@ -12,6 +12,7 @@ export type FormatMode = 'auto' | 'manual';
 
 export interface StoryConfig {
   children: string[];               // may be empty
+  title?: string;                   // suggested by story-plan, editable; see _shared/title.ts
   coverImageUrl?: string;             // dedicated cover illustration, when generated
   coverImageReview?: 'passed' | 'unreviewed';
   storyType: string;                // preset or custom
@@ -76,6 +77,7 @@ export interface StoryPage {
   imageUrl?: string;
   imageLocked?: boolean;
   imageReview?: 'passed' | 'unreviewed'; // 'unreviewed': QA reviewer was down; re-checked before checkout
+  imageFailed?: boolean;    // the illustration failed its quality check: retry it or choose no picture
 }
 
 // UI State Types
@@ -127,6 +129,7 @@ export interface PlanFormatSuggestion {
 }
 
 export interface PlanResponse {
+  title?: string;
   outline: StoryOutline;
   styleBible: StyleBible;
   format?: PlanFormatSuggestion | null;

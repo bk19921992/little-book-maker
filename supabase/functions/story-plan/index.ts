@@ -6,6 +6,7 @@ import { moderateFreeText } from "../_shared/moderation.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 import { wordRange } from "../_shared/textContract.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
+import { cleanTitle, MAX_TITLE_CHARS } from "../_shared/title.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -126,7 +127,9 @@ ${config.formatMode === 'auto' ? `BOOK FORMAT CHOICE (required): choose the prin
 - pageLayout must be exactly one of: "split" (picture above, words below - easiest for very young children and text-heavier pages) or "overlay" (full-page illustration with words on top - immersive modern picture-book look).
 - Give a short friendly reason (one sentence) a parent will understand.` : ''}
 
-Return as JSON with a pages array containing page, wordCount, visualBrief, and imagePrompt fields${config.formatMode === 'auto' ? `, plus a format object containing pageSize, pageLayout, and reason` : ''}.`
+BOOK TITLE (required): a short, warm picture-book title for this story (2-7 words, at most ${MAX_TITLE_CHARS} characters, title case, UK spelling, no quotation marks). It may include the child's name.
+
+Return as JSON with a title string and a pages array containing page, wordCount, visualBrief, and imagePrompt fields${config.formatMode === 'auto' ? `, plus a format object containing pageSize, pageLayout, and reason` : ''}.`
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -191,8 +194,14 @@ Return as JSON with a pages array containing page, wordCount, visualBrief, and i
     }
     delete outlineData.format
 
+    // The planner's title suggestion; the client falls back to a default
+    // (see _shared/title.ts) when it is missing or unusable.
+    const title = cleanTitle(outlineData.title)
+    delete outlineData.title
+
     return new Response(
       JSON.stringify({
+        title,
         outline: outlineData,
         styleBible,
         format: formatSuggestion

@@ -1,3 +1,5 @@
+import { MAX_TITLE_CHARS } from './title.ts';
+
 // Server-side bounds for story configuration. Returns a friendly error
 // message, or null when the config is acceptable.
 export function validateStoryConfig(config: Record<string, unknown>): string | null {
@@ -22,6 +24,9 @@ export function validateStoryConfig(config: Record<string, unknown>): string | n
   for (const c of characters) {
     if (text(c).length > 50) return 'Character names must be 50 characters or fewer.';
   }
+
+  if (config.title !== undefined && config.title !== null && typeof config.title !== 'string') return 'Title must be text.';
+  if (text(config.title).length > MAX_TITLE_CHARS) return `Title must be ${MAX_TITLE_CHARS} characters or fewer.`;
 
   if (text(config.themeCustom).length > 100) return 'Theme is too long (100 characters max).';
 
