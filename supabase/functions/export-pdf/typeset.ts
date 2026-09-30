@@ -172,3 +172,21 @@ export function layoutBand(rawText: string, font: MeasuringFont, pageWidth: numb
   if (bandOverflow) bandHeight = maxBand;
   return { hardLineCount, type, fontSize, lineStep, indentX, padY, textLines, lineWidths, blockHeight, bandHeight, bandOverflow };
 }
+
+// Break a cover title into two lines at the word boundary that makes the
+// longer line as short as possible. A single word stays on one line.
+export function balancedTwoLines(text: string, width: (s: string) => number): string[] {
+  const words = text.split(' ').filter(Boolean);
+  if (words.length < 2) return [text];
+  let best: string[] = [text];
+  let bestWidth = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const lines = [words.slice(0, i).join(' '), words.slice(i).join(' ')];
+    const w = Math.max(width(lines[0]), width(lines[1]));
+    if (w < bestWidth) {
+      best = lines;
+      bestWidth = w;
+    }
+  }
+  return best;
+}

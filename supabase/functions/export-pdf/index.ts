@@ -4,7 +4,8 @@ import type { PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import * as fontkit from "https://esm.sh/@pdf-lib/fontkit@1.1.1";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-import { layoutBand, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
+import { balancedTwoLines, layoutBand, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
+import { bookTitle } from "../_shared/title.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
 import { dpiCheck, effectiveDpi, printBoxes } from "./printSpec.ts";
@@ -224,23 +225,38 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     qa.push({ where: 'cover', severity: 'fail', check: 'no illustration available for the cover' });
   }
 
-  const titleText = normaliseTypography(config.children.length ? `${config.children.join(' & ')}'s Story` : 'Magical Story');
+  const titleText = normaliseTypography(bookTitle(config));
   const subtitleText = config.storyType ? normaliseTypography(`A ${sentenceCase(config.storyType)}`) : '';
 
   // Display-sized title, auto-fit to the measure; subtitle at ~28% of it.
-  let titleSize = Math.round(pageWidth * 0.115);
-  const maxTitleWidth = pageWidth * TEXT_MEASURE;
-  while (titleSize > pageWidth * 0.07 && fonts.display.widthOfTextAtSize(titleText, titleSize) > maxTitleWidth) {
-    titleSize -= 1;
+  // A title too long for one line at the smallest display size breaks onto
+  // two balanced lines instead of running off the plate.
+  // A line fits when it is within the text measure AND inside the plate
+  // (whose side padding grows with the type size).
+  const fits = (lines: string[], size: number) => {
+    const widest = Math.max(...lines.map((l) => fonts.display.widthOfTextAtSize(l, size)));
+    return widest <= pageWidth * TEXT_MEASURE && widest + size * 1.1 <= pageWidth - safeInset * 2;
+  };
+  const fitSize = (lines: string[], minSize: number) => {
+    let size = Math.round(pageWidth * 0.115);
+    while (size > minSize && !fits(lines, size)) size -= 1;
+    return size;
+  };
+  let titleLines = [titleText];
+  let titleSize = fitSize(titleLines, pageWidth * 0.07);
+  if (!fits(titleLines, titleSize)) {
+    titleLines = balancedTwoLines(titleText, (t) => fonts.display.widthOfTextAtSize(t, titleSize));
+    titleSize = fitSize(titleLines, pageWidth * 0.045);
   }
+  const titleLineHeight = titleSize * 1.1;
   const subtitleSize = Math.max(12, Math.round(titleSize * 0.28));
-  const titleWidth = fonts.display.widthOfTextAtSize(titleText, titleSize);
+  const titleWidths = titleLines.map((l) => fonts.display.widthOfTextAtSize(l, titleSize));
   const subtitleWidth = subtitleText ? fonts.text.widthOfTextAtSize(subtitleText, subtitleSize) : 0;
-  const plateTextWidth = Math.max(titleWidth, subtitleWidth);
+  const plateTextWidth = Math.max(...titleWidths, subtitleWidth);
   const platePadX = titleSize * 0.55;
   const platePadY = titleSize * 0.45;
   const plateWidth = Math.min(pageWidth - safeInset * 2, plateTextWidth + platePadX * 2);
-  const plateHeight = titleSize * 1.15 + (subtitleText ? subtitleSize * 1.6 : 0) + platePadY * 2;
+  const plateHeight = titleSize * 1.15 + titleLineHeight * (titleLines.length - 1) + (subtitleText ? subtitleSize * 1.6 : 0) + platePadY * 2;
   const plateX = (pageWidth - plateWidth) / 2;
   const plateTop = pageHeight * 0.97; // title zone: hard against the top so cover art faces stay clear
   const plateY = plateTop - plateHeight;
@@ -256,14 +272,17 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   });
   coverPage.drawRectangle({ x: plateX, y: plateY, width: plateWidth, height: plateHeight, color: PAPER, opacity: 0.9 });
 
-  const titleY = plateY + plateHeight - platePadY - titleSize * 0.85;
-  coverPage.drawText(titleText, {
-    x: (pageWidth - titleWidth) / 2,
-    y: titleY,
-    size: titleSize,
-    font: fonts.display,
-    color: INK,
+  const firstTitleY = plateY + plateHeight - platePadY - titleSize * 0.85;
+  titleLines.forEach((line, i) => {
+    coverPage.drawText(line, {
+      x: (pageWidth - titleWidths[i]) / 2,
+      y: firstTitleY - i * titleLineHeight,
+      size: titleSize,
+      font: fonts.display,
+      color: INK,
+    });
   });
+  const titleY = firstTitleY - (titleLines.length - 1) * titleLineHeight;
   if (subtitleText) {
     coverPage.drawText(subtitleText, {
       x: (pageWidth - subtitleWidth) / 2,

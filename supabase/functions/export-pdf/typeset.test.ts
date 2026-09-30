@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BAND_CAP, layoutBand, typesetVerse } from './typeset.ts';
+import { balancedTwoLines, BAND_CAP, layoutBand, typesetVerse } from './typeset.ts';
 import { loadNunito, PAGES, pagePoints } from './testFont.ts';
 import { formatLineCapacity, MAX_LINE_CHARS } from '../_shared/textContract.ts';
 
@@ -88,4 +88,10 @@ test('the text contract fits every format: capacity lines at the character cap, 
       assert.ok(band.fontSize >= 14, `${where} below 14pt`);
     }
   }
+});
+
+test('balancedTwoLines splits a long cover title evenly by width', () => {
+  const width = (s: string) => s.length;
+  assert.deepEqual(balancedTwoLines('The Very Sleepy Dragon of Puddle Lane', width), ['The Very Sleepy', 'Dragon of Puddle Lane']);
+  assert.deepEqual(balancedTwoLines('Supercalifragilistic', width), ['Supercalifragilistic']);
 });
