@@ -15,15 +15,9 @@ const createInitialConfig = (): StoryConfig => ({
   lengthPages: 10,
   narrationStyle: 'Simple prose',
   personal: {},
-  // Every story is child-safe by design (the setup screen says so); since
-  // 76d4210 there is no waiver checkbox, so this can no longer start false or
-  // "Create My Story" stays disabled for everyone.
-  contentSafety: true,
+  contentSafety: false,
   imageStyle: 'Picture-book',
-  formatMode: 'auto',
   pageSize: 'A5 portrait',
-  pageLayout: 'split',
-  formatReason: null,
   imageSeed: null,
 });
 

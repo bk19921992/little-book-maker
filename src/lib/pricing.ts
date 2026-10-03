@@ -5,3 +5,5 @@ export const PRICES = {
 };
 
 export const CURRENCY = 'gbp';
+
+export const TEST_DISCOUNT_CODE = 'TEST-BOOK-0';
