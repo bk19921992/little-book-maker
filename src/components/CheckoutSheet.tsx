@@ -7,9 +7,13 @@ import {
   useElements
 } from '@stripe/react-stripe-js';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
+import { getSession } from '@/lib/session';
+import { useAuth } from '@/context/AuthContext';
 import { PRICES } from '@/lib/pricing';
 
 const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
@@ -30,8 +34,7 @@ if (publishableKey) {
 
 interface CheckoutSheetProps {
   item: 'export' | 'print' | 'subscription';
-  storyId?: string;
-  onSuccess: () => void;
+  onSuccess: (billingToken: string) => void;
   onCancel: () => void;
 }
 
@@ -44,19 +47,21 @@ interface BillingIntentResponse {
 }
 
 interface BillingConfirmResponse {
-  success: boolean;
-  approved: boolean;
-  free?: boolean;
-  error?: string;
+  billingToken: string;
 }
 
-const CheckoutForm = ({ item, storyId, onSuccess, onCancel }: CheckoutSheetProps) => {
+const CheckoutForm = ({ item, onSuccess, onCancel }: CheckoutSheetProps) => {
   const stripe = useStripe();
   const elements = useElements();
   const [loading, setLoading] = useState(false);
+  const [discountCode, setDiscountCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [paymentIntent, setPaymentIntent] = useState<BillingIntentResponse | null>(null);
 
+  const { user } = useAuth();
+  const session = getSession(user?.id);
+  const isFirstExport = item === 'export' && !session.firstExportUsed;
+  
   const getItemPrice = () => {
     if (item === 'export') return PRICES.exportSingle;
     if (item === 'print') return PRICES.printHandling;
@@ -65,7 +70,8 @@ const CheckoutForm = ({ item, storyId, onSuccess, onCancel }: CheckoutSheetProps
   };
 
   const getItemDescription = () => {
-    if (item === 'export') return 'PDF export';
+    if (item === 'export' && isFirstExport) return 'First export (Free)';
+    if (item === 'export') return 'Additional export';
     if (item === 'print') return 'Print handling fee';
     if (item === 'subscription') return 'Monthly subscription';
     return 'Purchase';
@@ -79,23 +85,24 @@ const CheckoutForm = ({ item, storyId, onSuccess, onCancel }: CheckoutSheetProps
 
     try {
       const { data, error } = await supabase.functions.invoke<BillingIntentResponse>('billing-intent', {
-        body: { item, storyId }
+        body: { item, discountCode: discountCode || undefined, sessionData: session }
       });
 
       if (error) throw error;
 
-      if (data.free) {
-        // First export is free - confirm directly with the server.
+      if (data.testBypass || data.free) {
+        // Skip payment, confirm directly
         const { data: confirmData, error: confirmError } = await supabase.functions.invoke<BillingConfirmResponse>('billing-confirm', {
-          body: { item, storyId }
+          body: { item, discountCode, sessionData: session }
         });
 
         if (confirmError) throw confirmError;
-        if (!confirmData?.approved) {
-          throw new Error(confirmData?.error || 'Billing confirmation failed');
+
+        if (!confirmData?.billingToken) {
+          throw new Error('Billing confirmation returned no billing token');
         }
 
-        onSuccess();
+        onSuccess(confirmData.billingToken);
         return;
       }
 
@@ -137,16 +144,17 @@ const CheckoutForm = ({ item, storyId, onSuccess, onCancel }: CheckoutSheetProps
           body: {
             item,
             paymentRef: confirmedPayment.id,
-            storyId
+            sessionData: session
           }
         });
 
         if (confirmError) throw confirmError;
-        if (!confirmData?.approved) {
-          throw new Error(confirmData?.error || 'Billing confirmation failed');
+
+        if (!confirmData?.billingToken) {
+          throw new Error('Billing confirmation returned no billing token');
         }
 
-        onSuccess();
+        onSuccess(confirmData.billingToken);
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Payment failed';
@@ -155,6 +163,8 @@ const CheckoutForm = ({ item, storyId, onSuccess, onCancel }: CheckoutSheetProps
       setLoading(false);
     }
   };
+
+  const isDevelopment = import.meta.env.DEV;
 
   return (
     <Card className="w-full max-w-md">
@@ -165,17 +175,34 @@ const CheckoutForm = ({ item, storyId, onSuccess, onCancel }: CheckoutSheetProps
         <div className="space-y-2">
           <div className="flex justify-between items-center">
             <span className="text-sm font-medium">{getItemDescription()}</span>
-            <span className="font-semibold">{formatPrice(getItemPrice())}</span>
+            <span className="font-semibold">
+              {isFirstExport ? 'Free' : formatPrice(getItemPrice())}
+            </span>
           </div>
-
-          {item === 'export' && (
+          
+          {isFirstExport && (
             <p className="text-sm text-muted-foreground">
-              Your first PDF export is free. After that, each export costs £2.
+              Your first export is free! Subsequent exports will cost £2.
             </p>
           )}
         </div>
 
         <Separator />
+
+        {isDevelopment && (
+          <div className="space-y-2">
+            <Label htmlFor="discount-code">Have a code?</Label>
+            <Input
+              id="discount-code"
+              placeholder="Enter discount code"
+              value={discountCode}
+              onChange={(e) => setDiscountCode(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Use code "TEST-BOOK-0" for testing
+            </p>
+          </div>
+        )}
 
         {error && (
           <div className="text-sm text-destructive bg-destructive/10 p-2 rounded">
@@ -189,7 +216,7 @@ const CheckoutForm = ({ item, storyId, onSuccess, onCancel }: CheckoutSheetProps
             disabled={loading}
             className="w-full"
           >
-            {loading ? 'Processing...' : 'Continue'}
+            {loading ? 'Processing...' : (isFirstExport ? 'Continue (Free)' : 'Proceed to Payment')}
           </Button>
         ) : (
           <div className="space-y-4">

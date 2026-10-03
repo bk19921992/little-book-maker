@@ -1,10 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { LogOut } from 'lucide-react';
 import { useAppState } from '../state';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { clearCheckpoint, loadCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
 import { SetupForm } from './SetupForm';
 import { PreviewGenerate } from './PreviewGenerate';
 import { PageEditor } from './PageEditor';
@@ -22,22 +20,6 @@ export const StoryGenerator: React.FC = () => {
   const { user, signOut } = useAuth();
 
   const { currentStep, config } = state;
-
-  // A book whose illustrations were still being made when the page closed
-  // or reloaded (see lib/generationCheckpoint.ts).
-  const [savedBook, setSavedBook] = useState<GenerationCheckpoint | null>(() => loadCheckpoint());
-  const [resuming, setResuming] = useState<GenerationCheckpoint | null>(null);
-  const resumeSavedBook = () => {
-    if (!savedBook) return;
-    updateConfig(savedBook.config);
-    setResuming(savedBook);
-    setSavedBook(null);
-    setStep('preview');
-  };
-  const discardSavedBook = () => {
-    clearCheckpoint();
-    setSavedBook(null);
-  };
 
   const handleNext = () => {
     switch (currentStep) {
@@ -154,21 +136,6 @@ export const StoryGenerator: React.FC = () => {
 
       {/* Main Content */}
       <main className="py-6 sm:py-8">
-        {currentStep === 'setup' && savedBook && (
-          <div className="max-w-4xl mx-auto px-4 sm:px-6 mb-6">
-            <Alert>
-              <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-                <span>
-                  Your book{savedBook.config.children?.length ? ` for ${savedBook.config.children.join(' & ')}` : ''} was still being illustrated. Pick up where it left off?
-                </span>
-                <span className="flex gap-2">
-                  <Button size="sm" onClick={resumeSavedBook}>Resume</Button>
-                  <Button size="sm" variant="outline" onClick={discardSavedBook}>Discard</Button>
-                </span>
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
         {currentStep === 'setup' && (
           <SetupForm
             config={config}
@@ -184,8 +151,6 @@ export const StoryGenerator: React.FC = () => {
             onConfigChange={updateConfig}
             onNext={handleNext}
             onBack={handleBack}
-            resume={resuming}
-            onResumeHandled={() => setResuming(null)}
           />
         )}
         

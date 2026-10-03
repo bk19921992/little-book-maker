@@ -18,10 +18,7 @@ import {
   Download
 } from 'lucide-react';
 import { StoryConfig, StoryPage } from '../types';
-import { imageConfig, pickReferenceImage } from '../lib/imageRequest';
-import { applyJobItems, runImageJob } from '../lib/imageJob';
-import { countWords, getPageTextStatus, getWordCountStatus, pageFitAdvice, wordCountTargets } from '../lib/validation';
-import { packLines } from '../../supabase/functions/_shared/textContract.ts';
+import { countWords, getWordCountStatus, wordCountTargets } from '../lib/validation';
 import { toast } from 'sonner';
 import { api } from '../api';
 
@@ -43,9 +40,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
 
   const pages = config.pages || [];
   const currentPage = pages.find(p => p.page === selectedPage);
-  const targets = wordCountTargets(config.readingLevel, config.pageSize);
-  const currentTextStatus = currentPage ? getPageTextStatus(currentPage.text, config.readingLevel, config.pageSize) : null;
-  const currentFitAdvice = currentPage ? pageFitAdvice(currentPage.text, config.readingLevel, config.pageSize) : null;
+  const targets = wordCountTargets[config.readingLevel];
 
   const updatePageText = (pageNumber: number, text: string) => {
     const updatedPages = pages.map(page =>
@@ -79,20 +74,26 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     setIsRegeneratingImage(true);
     try {
       const prompt = outlinePage.imagePrompt || outlinePage.visualBrief || 'storybook illustration';
-      // Chain the new page to an accepted (QA-checked) page of this book so
-      // it keeps the same child, pets and toy. It runs as a one-item job, so
-      // up to three attempts never hit the edge time limit.
-      const reference = pickReferenceImage(pages.filter((p) => p.imageReview !== 'unreviewed'), pageNumber);
-      const { jobId } = await api.startImageJob(config.pageSize, config.pageLayout, [
-        { page: pageNumber, prompt, text: storyPage.text, visualBrief: outlinePage.visualBrief },
-      ], false, imageConfig(config), reference);
-      const result = applyJobItems(pages, await runImageJob(api, jobId));
+      const response = await api.generateImages(config.pageSize, [
+        {
+          page: pageNumber,
+          prompt,
+          text: storyPage.text,
+          visualBrief: outlinePage.visualBrief,
+          config,
+          seed: config.imageSeed ? config.imageSeed + pageNumber : undefined,
+        },
+      ]);
 
-      if (result.failedPages.length) {
-        toast.error(`The new picture for page ${pageNumber} didn't pass our quality check, so the current one is kept. Please try again.`);
-      } else {
-        onConfigChange({ pages: result.pages });
+      const generated = response.images?.[0];
+      if (generated?.url) {
+        const updatedPages = pages.map(page =>
+          page.page === pageNumber ? { ...page, imageUrl: generated.url } : page
+        );
+        onConfigChange({ pages: updatedPages });
         toast.success(`Illustration updated for page ${pageNumber}`);
+      } else {
+        toast.error('The image service returned no artwork. Please try again.');
       }
     } catch (error) {
       console.error('Image regeneration failed', error);
@@ -103,7 +104,8 @@ export const PageEditor: React.FC<PageEditorProps> = ({
   };
 
   const getPageStatus = (page: StoryPage) => {
-    const wordStatus = getPageTextStatus(page.text, config.readingLevel, config.pageSize);
+    const wordCount = countWords(page.text);
+    const wordStatus = getWordCountStatus(wordCount, config.readingLevel);
     const hasImage = !!page.imageUrl || page.imageLocked;
     
     return {
@@ -198,9 +200,9 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                         {countWords(currentPage.text)} / {targets.min}-{targets.max} words
                       </Badge>
                       <Badge 
-                        variant={currentTextStatus?.status === 'good' ? 'default' : 'destructive'}
+                        variant={getWordCountStatus(countWords(currentPage.text), config.readingLevel).status === 'good' ? 'default' : 'destructive'}
                       >
-                        {currentTextStatus?.status}
+                        {getWordCountStatus(countWords(currentPage.text), config.readingLevel).status}
                       </Badge>
                     </div>
                   </CardTitle>
@@ -216,28 +218,11 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                   <div className="flex justify-between text-sm text-muted-foreground">
                     <span>Target: {targets.min}-{targets.max} words for {config.readingLevel}</span>
                     <span 
-                      className={getWordCountStatus(countWords(currentPage.text), config.readingLevel, config.pageSize).color}
+                      className={getWordCountStatus(countWords(currentPage.text), config.readingLevel).color}
                     >
                       Current: {countWords(currentPage.text)} words
                     </span>
                   </div>
-                  {currentFitAdvice && (
-                    <Alert>
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertDescription className="space-y-2">
-                        <p>{currentFitAdvice.message}</p>
-                        {currentFitAdvice.canFitLines && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => updatePageText(currentPage.page, packLines(currentPage.text))}
-                          >
-                            Fit lines
-                          </Button>
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  )}
                 </CardContent>
               </Card>
 

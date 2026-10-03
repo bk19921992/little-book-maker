@@ -1,50 +1,36 @@
-import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
-import type { ImageConfig } from './lib/imageRequest';
-import type { ImageJobItem, ImageJobStep } from './lib/imageJob';
+import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ImageGenerateResponse, ExportResponse, PrintOrderResponse, PageSizePreset } from './types';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
-
-
-// Read the friendly error message returned by an edge function (401/402/429/
-// validation/moderation responses) so the UI can show it to the user.
-const extractFunctionError = async (error: unknown): Promise<string> => {
-  try {
-    const context = (error as { context?: Response }).context;
-    if (context && typeof context.json === 'function') {
-      const body = await context.json();
-      if (body && typeof body.error === 'string' && body.error.trim()) {
-        return body.error;
-      }
-    }
-  } catch {
-    // fall through to the generic message
-  }
-  return error instanceof Error ? error.message : 'Edge Function error';
-};
 
 // API client for communicating with Supabase edge functions
 class APIClient {
-  private async invokeFunction<T>(functionName: string, body: unknown, retryOnSendFailure = true): Promise<T> {
+  private async invokeFunction<T>(functionName: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
     try {
       if (supabaseConfigError) {
         throw new Error(supabaseConfigError);
       }
 
-      const { data, error } = await supabase.functions.invoke(functionName, { body });
+      console.log(`Calling ${functionName} with:`, body)
+      const { data, error } = await supabase.functions.invoke(functionName, {
+        body,
+        headers,
+      });
+
+      console.log(`${functionName} response:`, { data, error })
 
       if (error) {
         console.error(`Error calling ${functionName}:`, error);
         const msg = error.message || 'Edge Function error';
         // Retry once if the request failed to send (common transient issue)
-        if (retryOnSendFailure && msg.includes('Failed to send a request to the Edge Function')) {
+        if (msg.includes('Failed to send a request to the Edge Function')) {
           console.warn(`[${functionName}] Retry after transient send failure...`);
           await new Promise((r) => setTimeout(r, 600));
-          const retry = await supabase.functions.invoke(functionName, { body });
+          const retry = await supabase.functions.invoke(functionName, { body, headers });
           if (retry.error) {
-            throw new Error(`[${functionName}] ${await extractFunctionError(retry.error)}`);
+            throw new Error(`[${functionName}] ${retry.error.message || 'Edge Function request failed again'}`);
           }
           return retry.data as T;
         }
-        throw new Error(`[${functionName}] ${await extractFunctionError(error)}`);
+        throw new Error(`[${functionName}] ${msg}`);
       }
 
       return data as T;
@@ -66,61 +52,50 @@ class APIClient {
     return this.invokeFunction<WriteResponse>('story-write', { config, outline });
   }
 
-  // Durable illustration job (see supabase/functions/generate-images/jobs.ts):
-  // start queues the book and charges usage once; each step is one
-  // generate->review attempt; status returns every item with its image.
-  async startImageJob(
+  async generateImages(
     pageSize: PageSizePreset,
-    pageLayout: PageLayout,
-    prompts: { page: number; prompt: string; text?: string; visualBrief?: string }[],
-    includeCover: boolean,
-    config: ImageConfig,
-    referenceImage?: string
-  ): Promise<{ jobId: string; items: ImageJobItem[] }> {
-    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, referenceImage }, false);
-  }
-
-  async stepImageJob(jobId: string): Promise<ImageJobStep> {
-    return this.invokeFunction('generate-images', { action: 'step', jobId });
-  }
-
-  async imageJobStatus(jobId: string): Promise<{ jobStatus: 'running' | 'done'; items: ImageJobItem[] }> {
-    return this.invokeFunction('generate-images', { action: 'status', jobId });
-  }
-
-  // Re-run the image QA gate over existing images (no generation, no usage).
-  async reviewImages(
-    items: { url: string; label: string; brief?: string; config?: ImageConfig; reference?: string }[]
-  ): Promise<{ reviews: { label: string; pass: boolean; issues: string[]; skipped?: boolean }[] }> {
-    return this.invokeFunction('generate-images', { reviewImages: items });
+    prompts: { page: number; prompt: string; text?: string; visualBrief?: string; config?: StoryConfig; seed?: number }[]
+  ): Promise<ImageGenerateResponse> {
+    return this.invokeFunction<ImageGenerateResponse>('generate-images', {
+      pageSize,
+      prompts,
+    });
   }
 
   async exportPDF(
     config: StoryConfig,
     pages: StoryPage[],
-    storyId: string,
     includeBleed: boolean = true,
-    coverImage?: string
+    authToken?: string
   ): Promise<ExportResponse> {
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['X-Billing-Token'] = authToken;
+    }
+    
     return this.invokeFunction<ExportResponse>('export-pdf', {
       config,
       pages,
-      storyId,
       includeBleed,
-      coverImage,
-    });
+    }, headers);
   }
 
   async createPrintOrder(
     provider: 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO',
     pdfUrl: string,
-    pageSize: PageSizePreset
+    pageSize: PageSizePreset,
+    authToken?: string
   ): Promise<PrintOrderResponse> {
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['X-Billing-Token'] = authToken;
+    }
+    
     return this.invokeFunction<PrintOrderResponse>('create-print-order', {
       provider,
       pdfUrl,
       pageSize,
-    });
+    }, headers);
   }
 
   // Mock data for development
@@ -146,10 +121,7 @@ class APIClient {
       },
       contentSafety: true,
       imageStyle: 'Picture-book',
-      formatMode: 'manual',
       pageSize: 'A5 portrait',
-      pageLayout: 'split',
-      formatReason: null,
       imageSeed: 12345,
     };
 
