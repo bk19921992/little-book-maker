@@ -1,19 +1,62 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
+import { getCorsHeaders } from "../_shared/cors.ts"
+import { validateStoryConfig } from "../_shared/validation.ts"
+import { moderateFreeText } from "../_shared/moderation.ts"
+import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
+import { wordRange } from "../_shared/textContract.ts"
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req)
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    let user
+    try {
+      user = await requireUser(req)
+    } catch (authError) {
+      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders)
+      throw authError
+    }
+
     const { config } = await req.json()
-    console.log('Story plan request received:', config)
-    
+
+    const validationError = validateStoryConfig(config)
+    if (validationError) {
+      return new Response(JSON.stringify({ error: validationError }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const moderationError = await moderateFreeText({
+      storyType: config.storyType,
+      setting: config.setting,
+      themeCustom: config.themeCustom || undefined,
+      children: (config.children || []).join(', '),
+      characters: (config.characters || []).join(', '),
+      town: config.personal?.town,
+      favouriteToy: config.personal?.favouriteToy,
+      favouriteColour: config.personal?.favouriteColour,
+      pets: config.personal?.pets,
+      dedication: config.personal?.dedication,
+    })
+    if (moderationError) {
+      return new Response(JSON.stringify({ error: moderationError }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'story', 1)
+    if (limitMessage) {
+      return tooManyRequestsResponse(corsHeaders, limitMessage)
+    }
+
+    console.log('Story plan request: user', user.id, 'pages', config.lengthPages)
+
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
 
     if (!openaiKey) {
@@ -22,6 +65,11 @@ serve(async (req) => {
     }
 
     // Generate style bible
+    // Per-page word targets come from the shared text contract. In auto mode
+    // the format is chosen in this same call, so plan for the smaller
+    // capacity; story-write re-applies the contract for the chosen format.
+    const planRange = wordRange(config.readingLevel, config.formatMode === 'auto' ? undefined : config.pageSize)
+
     const styleBible = {
       palette: config.palette,
       heroDescription: config.children.length > 0 
@@ -50,16 +98,16 @@ Personal Details to Include:
 - Town/City: ${config.personal.town || 'a lovely town'}
 - Favorite Toy: ${config.personal.favouriteToy || 'their favorite toy'}
 - Favorite Color: ${config.personal.favouriteColour || 'bright colors'}
-- Pets: ${config.personal.pets || 'friendly animals'}
+${config.personal.pets ? `- Pets: ${config.personal.pets}` : ''}
 ${config.personal.dedication ? `- Dedication: ${config.personal.dedication}` : ''}
 
 CRITICAL READING LEVEL REQUIREMENTS:
 ${config.readingLevel === 'Toddler 2–3' ? 
-  '- Write 60-80 words per page\n- Use simple 2-4 word sentences\n- Repeat key phrases for comfort\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words\n- Example: "Big red ball. Ball is round. Ball bounces high. Fun, fun, fun!"' :
+  `- Write ${planRange.min}-${planRange.max} words per page\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words\n- Example: "Big red ball. Ball is round. Ball bounces high. Fun, fun, fun!"` :
 config.readingLevel === 'Early 4–5' ?
-  '- Write 80-120 words per page\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language\n- Focus on everyday experiences\n- Use descriptive but simple words\n- Example: "The little girl ran fast. She ran to the big tree. The tree had green leaves. Pretty, pretty leaves!"' :
+  `- Write ${planRange.min}-${planRange.max} words per page\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language\n- Focus on everyday experiences\n- Use descriptive but simple words\n- Example: "The little girl ran fast. She ran to the big tree. The tree had green leaves. Pretty, pretty leaves!"` :
 config.readingLevel === 'Primary 6–8' ?
-  '- Write 120-150 words per page\n- Use 4-8 word sentences\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression\n- Use slightly more complex vocabulary\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with black spots."' :
+  `- Write ${planRange.min}-${planRange.max} words per page\n- Use 4-8 word sentences\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression\n- Use slightly more complex vocabulary\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with black spots."` :
   '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate'}
 
 Create exactly ${config.lengthPages} pages. Each page should have:
@@ -70,9 +118,13 @@ Create exactly ${config.lengthPages} pages. Each page should have:
 
 Make sure to incorporate the personal details naturally throughout the story and use the specified narration style.
 
-Return as JSON with pages array containing page, wordCount, visualBrief, and imagePrompt fields.`
+${config.formatMode === 'auto' ? `BOOK FORMAT CHOICE (required): choose the printed page shape and layout that best fit THIS particular story - its type, audience age, mood, and page count. Do not default to one answer; different stories suit different formats.
+- pageSize must be exactly one of: "A5 portrait" (classic small storybook, suits longer text for confident readers), "A4 portrait" (large portrait pages), "210×210 mm square" (the classic modern picture-book shape), "A4 landscape" (wide pages for big cinematic scenes and read-aloud story-time books).
+- pageLayout must be exactly one of: "split" (picture above, words below - easiest for very young children and text-heavier pages) or "overlay" (full-page illustration with words on top - immersive modern picture-book look).
+- Give a short friendly reason (one sentence) a parent will understand.` : ''}
 
-    console.log('Making OpenAI API call...')
+Return as JSON with a pages array containing page, wordCount, visualBrief, and imagePrompt fields${config.formatMode === 'auto' ? `, plus a format object containing pageSize, pageLayout, and reason` : ''}.`
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -96,8 +148,6 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
       }),
     })
 
-    console.log('OpenAI response status:', response.status)
-    
     if (!response.ok) {
       const errorText = await response.text()
       console.error('OpenAI API error:', errorText)
@@ -125,10 +175,24 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
       throw new Error('Story planner returned an unexpected shape.');
     }
 
+    // Auto format mode: pass through the planner's format suggestion when it is
+    // a valid object. The client validates the values against its canonical
+    // lists and falls back to a per-book heuristic when absent or invalid.
+    let formatSuggestion = null
+    if (config.formatMode === 'auto' && outlineData.format && typeof outlineData.format === 'object') {
+      formatSuggestion = {
+        pageSize: typeof outlineData.format.pageSize === 'string' ? outlineData.format.pageSize : undefined,
+        pageLayout: typeof outlineData.format.pageLayout === 'string' ? outlineData.format.pageLayout : undefined,
+        reason: typeof outlineData.format.reason === 'string' ? outlineData.format.reason : undefined,
+      }
+    }
+    delete outlineData.format
+
     return new Response(
       JSON.stringify({
         outline: outlineData,
-        styleBible
+        styleBible,
+        format: formatSuggestion
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -138,7 +202,7 @@ Return as JSON with pages array containing page, wordCount, visualBrief, and ima
   } catch (error) {
     console.error('Story plan error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: (error instanceof Error ? error.message : 'Unexpected server error') }),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

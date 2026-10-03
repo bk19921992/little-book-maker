@@ -5,16 +5,24 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, BookOpen, Image, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
-import { StoryConfig, StoryPage, StoryOutline, StyleBible } from '../types';
+import { StoryConfig, StoryPage, StoryOutline, StyleBible, PageSizePreset, PageLayout, OutlineItem } from '../types';
 import { api } from '../api';
 import { validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
+import { resolveAutoFormat } from '../lib/format';
+import { imageConfig } from '../lib/imageRequest';
+import { applyJobItems, runImageJob } from '../lib/imageJob';
+import { clearCheckpoint, saveCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
 
 interface PreviewGenerateProps {
   config: StoryConfig;
   onConfigChange: (updates: Partial<StoryConfig>) => void;
   onNext: () => void;
   onBack: () => void;
+  // A book whose illustrations were still being made when the page was
+  // reloaded: continue its job instead of starting again.
+  resume?: GenerationCheckpoint | null;
+  onResumeHandled?: () => void;
 }
 
 type GenerationStep = 'idle' | 'planning' | 'writing' | 'images' | 'complete';
@@ -24,6 +32,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   onConfigChange,
   onNext,
   onBack,
+  resume,
+  onResumeHandled,
 }) => {
   const [currentStep, setCurrentStep] = useState<GenerationStep>('idle');
   const [progress, setProgress] = useState(0);
@@ -31,6 +41,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const [startTime, setStartTime] = useState<number>(0);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
+  // Set while an illustration job is unfinished, so a lost connection can
+  // be resumed without starting (or paying for) the book again.
+  const [pendingJob, setPendingJob] = useState<{ jobId: string; book: StoryConfig } | null>(null);
 
   const updateProgress = (newProgress: number) => {
     setProgress(newProgress);
@@ -71,13 +84,36 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       setIsGenerating(true);
       updateProgress(5);
 
+      // Give this book an id up front - billing, export and (later) saving
+      // key off it. Without it checkout cannot run and export refuses.
+      const storyId = config.storyId || crypto.randomUUID();
+      onConfigChange({ storyId });
+
       // Step 1: Plan the story
       toast.info('Planning your story...');
       const planResponse = await api.planStory(config);
-      
+
+      // Auto format mode: the planner (or a per-book fallback heuristic) picks
+      // the shape and layout for this particular story. Resolve it now and use
+      // the resolved values for everything downstream in this run, since the
+      // config state update above is async.
+      let effectivePageSize = config.pageSize;
+      let effectivePageLayout = config.pageLayout;
+      const formatUpdates: { pageSize?: PageSizePreset; pageLayout?: PageLayout; formatReason?: string | null } = {};
+      if (config.formatMode === 'auto') {
+        const resolved = resolveAutoFormat(config, planResponse.format);
+        effectivePageSize = resolved.pageSize;
+        effectivePageLayout = resolved.pageLayout;
+        formatUpdates.pageSize = resolved.pageSize;
+        formatUpdates.pageLayout = resolved.pageLayout;
+        formatUpdates.formatReason = resolved.reason;
+        toast.info(`AI picked ${resolved.pageSize} with ${resolved.pageLayout === 'overlay' ? 'full-page pictures' : 'split pages'} for this story`);
+      }
+
       onConfigChange({
         styleBible: planResponse.styleBible,
         outline: planResponse.outline,
+        ...formatUpdates,
       });
 
       updateProgress(25);
@@ -87,7 +123,13 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       toast.info(`Writing ${config.lengthPages} pages...`);
       
       // Update progress incrementally during writing
-      const writeResponse = await api.writeStory(config, planResponse.outline);
+      // Send the resolved format: story-write sizes each page's copy to the
+      // text band of the page shape actually being printed. (`config` here is
+      // this render's snapshot, before the auto-format update above lands.)
+      const writeResponse = await api.writeStory(
+        { ...config, pageSize: effectivePageSize, pageLayout: effectivePageLayout },
+        planResponse.outline
+      );
       
       onConfigChange({
         pages: writeResponse.pages,
@@ -96,51 +138,37 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       updateProgress(70);
       setCurrentStep('images');
 
-      // Step 3: Generate images (AI-powered illustrations)
+      // Step 3: Illustrations, as a durable server-side job: one image
+      // attempt per call, so no request hits the edge time limit, and the
+      // job survives dropped connections and page reloads.
       toast.info('Creating AI illustrations...');
       // Build a quick lookup for outline data
-      const outlineByPage = new Map(planResponse.outline.pages.map((p: any) => [p.page, p]));
+      const outlineByPage = new Map<number, OutlineItem>(planResponse.outline.pages.map((p: OutlineItem) => [p.page, p]));
       const imagePrompts = writeResponse.pages
         .filter((p) => p && p.page !== undefined)
         .map((p) => {
-          const outline = outlineByPage.get(p.page) || {} as any;
+          const outline = outlineByPage.get(p.page) || ({} as Partial<OutlineItem>);
           return {
             page: p.page,
             prompt: outline.imagePrompt || outline.visualBrief || 'storybook scene',
             text: p.text,
             visualBrief: outline.visualBrief,
-            seed: config.imageSeed || undefined,
-            config: config,
           };
         });
 
-      const imageResponse = await api.generateImages(config.pageSize, imagePrompts);
-
-      if (imageResponse.errors?.length) {
-        const failedPages = imageResponse.errors.map((e) => e.page).join(', ');
-        toast.warning(
-          `Could not create illustrations for page${imageResponse.errors.length > 1 ? 's' : ''} ${failedPages}. You can retry them from the editor.`
-        );
-      }
-
-      // Update pages with image URLs
-      const pagesWithImages = writeResponse.pages.map(page => {
-        const imageData = imageResponse.images.find(img => img.page === page.page);
-        return {
-          ...page,
-          imageUrl: imageData?.url,
-        };
-      });
-
-      onConfigChange({
-        pages: pagesWithImages,
-      });
-
-      updateProgress(100);
-      setCurrentStep('complete');
-      setEstimatedTimeRemaining('Complete!');
-      toast.success('Your story is ready!');
-
+      const book: StoryConfig = {
+        ...config,
+        ...formatUpdates,
+        storyId,
+        pageSize: effectivePageSize,
+        pageLayout: effectivePageLayout,
+        styleBible: planResponse.styleBible,
+        outline: planResponse.outline,
+        pages: writeResponse.pages,
+      };
+      const { jobId } = await api.startImageJob(effectivePageSize, effectivePageLayout, imagePrompts, true, imageConfig(book));
+      saveCheckpoint(jobId, book);
+      await illustrate(jobId, book);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate story';
       setError(errorMessage);
@@ -151,6 +179,73 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
     }
     setIsGenerating(false);
   };
+
+  // Drive an illustration job to completion and merge its pictures into the
+  // book. Used for a fresh book and for resuming one.
+  const illustrate = async (jobId: string, book: StoryConfig) => {
+    const pages = book.pages || [];
+    const total = pages.length + 1; // + cover
+    let finished = 0;
+    setPendingJob({ jobId, book });
+    setCurrentStep('images');
+    setProgress(70);
+    setEstimatedTimeRemaining(`0 of ${total} illustrations finished`);
+    try {
+      const items = await runImageJob(api, jobId, {
+        onItem: () => {
+          finished += 1;
+          setProgress(70 + Math.round((finished / total) * 29));
+          setEstimatedTimeRemaining(`${finished} of ${total} illustrations finished`);
+        },
+      });
+      const result = applyJobItems(pages, items);
+      if (result.failedPages.length) {
+        toast.warning(
+          `The illustration${result.failedPages.length > 1 ? 's' : ''} for page${result.failedPages.length > 1 ? 's' : ''} ${result.failedPages.join(', ')} didn't pass our quality check. You can regenerate ${result.failedPages.length > 1 ? 'them' : 'it'} from the editor.`
+        );
+      }
+      onConfigChange({
+        ...book,
+        pages: result.pages,
+        coverImageUrl: result.coverImageUrl,
+        coverImageReview: result.coverImageReview,
+      });
+      clearCheckpoint();
+      setPendingJob(null);
+      updateProgress(100);
+      setCurrentStep('complete');
+      setEstimatedTimeRemaining('Complete!');
+      toast.success('Your story is ready!');
+    } catch (err) {
+      // The job and its finished pictures are safe on the server; keep the
+      // checkpoint so the customer can resume instead of starting again.
+      const message = "We lost contact while drawing your pictures. Your progress is saved - press Resume illustrations to carry on.";
+      console.error('Illustration job interrupted', err);
+      setError(message);
+      toast.error(message);
+      setCurrentStep('idle');
+    }
+  };
+
+  const resumeIllustrations = async () => {
+    if (!pendingJob) return;
+    setError(null);
+    setIsGenerating(true);
+    await illustrate(pendingJob.jobId, pendingJob.book);
+    setIsGenerating(false);
+  };
+
+  // Resume after a reload: StoryGenerator restored the book's text from the
+  // checkpoint; continue the same job.
+  useEffect(() => {
+    if (!resume) return;
+    onResumeHandled?.();
+    setStartTime(Date.now());
+    setIsGenerating(true);
+    toast.info('Picking up your illustrations where they left off...');
+    illustrate(resume.jobId, resume.config).finally(() => setIsGenerating(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resume]);
 
   const getStepStatus = (step: GenerationStep) => {
     const stepOrder: GenerationStep[] = ['planning', 'writing', 'images', 'complete'];
@@ -233,7 +328,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Page Size:</span>
-                  <span className="text-sm text-muted-foreground">{config.pageSize}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {config.pageSize}{config.formatMode === 'auto' && config.formatReason ? ' (AI picked)' : ''}
+                  </span>
                 </div>
               </div>
             </div>
@@ -451,7 +548,19 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         </Button>
         
         <div className="flex gap-3">
-          {currentStep === 'idle' && (
+          {currentStep === 'idle' && pendingJob && (
+            <Button
+              onClick={resumeIllustrations}
+              size="lg"
+              className="px-8 py-3 text-lg font-medium"
+              disabled={isGenerating}
+            >
+              <Image className="w-5 h-5 mr-2" />
+              Resume illustrations
+            </Button>
+          )}
+
+          {currentStep === 'idle' && !pendingJob && (
             <Button
               onClick={generateStory}
               size="lg"
