@@ -1,5 +1,9 @@
 project_id = "njzndvftkdasbmsgspwp"
 
+# Every function checks the caller itself (requireUser in _shared/auth.ts),
+# matching how production is deployed today; stripe-webhook is called by
+# Stripe and authenticated by the Stripe signature. Pinned here so a CLI
+# deploy does not silently switch the gateway JWT check on.
 [functions.story-plan]
 verify_jwt = false
 
@@ -7,4 +11,19 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.generate-images]
+verify_jwt = false
+
+[functions.export-pdf]
+verify_jwt = false
+
+[functions.billing-intent]
+verify_jwt = false
+
+[functions.billing-confirm]
+verify_jwt = false
+
+[functions.create-print-order]
+verify_jwt = false
+
+[functions.stripe-webhook]
 verify_jwt = false

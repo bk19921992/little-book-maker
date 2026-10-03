@@ -2,10 +2,18 @@
 
 export type ReadingLevel = 'Toddler 2–3' | 'Early 4–5' | 'Primary 6–8';
 
-export type PageSizePreset = 'A5 portrait' | 'A4 portrait' | '210×210 mm square';
+export type PageSizePreset = 'A5 portrait' | 'A4 portrait' | '210×210 mm square' | 'A4 landscape';
+
+// How each story page arranges its illustration and text
+export type PageLayout = 'split' | 'overlay';
+
+// Who picks the book format: 'auto' = AI decides per story, 'manual' = user picks
+export type FormatMode = 'auto' | 'manual';
 
 export interface StoryConfig {
   children: string[];               // may be empty
+  coverImageUrl?: string;             // dedicated cover illustration, when generated
+  coverImageReview?: 'passed' | 'unreviewed';
   storyType: string;                // preset or custom
   themePreset?: string | null;      // eg 'Calm pastels'
   themeCustom?: string | null;
@@ -24,8 +32,12 @@ export interface StoryConfig {
     dedication?: string;
   };
   contentSafety: boolean;           // must be true to generate
+  storyId?: string;                 // per-book id, set when planning starts (billing + future saving)
   imageStyle: 'Picture-book' | 'Watercolour' | 'Crayon' | 'Paper cut-out' | 'Cartoon line art' | { other: string };
+  formatMode: FormatMode;         // 'auto' = AI picks shape+layout per story after planning
   pageSize: PageSizePreset;
+  pageLayout: PageLayout;        // 'split' = picture above words, 'overlay' = full-page picture with words on top
+  formatReason?: string | null;  // why the AI picked this format (auto mode)
   imageSeed?: number | null;
 
   // Generated
@@ -63,6 +75,7 @@ export interface StoryPage {
   text: string;
   imageUrl?: string;
   imageLocked?: boolean;
+  imageReview?: 'passed' | 'unreviewed'; // 'unreviewed': QA reviewer was down; re-checked before checkout
 }
 
 // UI State Types
@@ -105,25 +118,22 @@ export interface ValidationError {
   message: string;
 }
 
-export interface WordCountTargets {
-  'Toddler 2–3': { min: 60; max: 80 };
-  'Early 4–5': { min: 80; max: 120 };
-  'Primary 6–8': { min: 120; max: 150 };
+// API Response types
+// Format suggestion returned by the planner when formatMode is 'auto'
+export interface PlanFormatSuggestion {
+  pageSize?: string;
+  pageLayout?: string;
+  reason?: string;
 }
 
-// API Response types
 export interface PlanResponse {
   outline: StoryOutline;
   styleBible: StyleBible;
+  format?: PlanFormatSuggestion | null;
 }
 
 export interface WriteResponse {
   pages: StoryPage[];
-}
-
-export interface ImageGenerateResponse {
-  images: { page: number; url: string }[];
-  errors?: { page: number; error: string }[];
 }
 
 export interface ExportResponse {
@@ -136,6 +146,6 @@ export interface PrintOrderResponse {
   provider: string;
   orderId?: string;
   checkoutUrl?: string;
-  raw?: any;
+  raw?: unknown;
   error?: string;
 }

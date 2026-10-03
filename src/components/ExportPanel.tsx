@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -20,8 +20,16 @@ import { StoryConfig } from '../types';
 import { api } from '../api';
 import { toast } from 'sonner';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
-import { getSession, markFirstExportUsed } from '@/lib/session';
+import { recheckUnreviewedImages } from '../lib/reviewGate';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { validateAddress, type ShippingAddress } from '../../supabase/functions/create-print-order/print.ts';
+import { saveBook, withDownloadName } from '../lib/savedBooks';
+import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
+
+// Print stays hidden until Phase 5 - the server refuses orders while the flag is off too.
+const PRINT_ENABLED = import.meta.env.VITE_PRINT_ENABLED === 'true';
 
 interface ExportPanelProps {
   config: StoryConfig;
@@ -30,7 +38,6 @@ interface ExportPanelProps {
   onReset: () => void;
 }
 
-type PrintProvider = 'PEECHO' | 'BOOKVAULT' | 'LULU' | 'GELATO';
 
 export const ExportPanel: React.FC<ExportPanelProps> = ({
   config,
@@ -38,9 +45,13 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   onBack,
   onReset,
 }) => {
+  const { user } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
+  const [isCheckingImages, setIsCheckingImages] = useState(false);
+  const [imageCheckMessage, setImageCheckMessage] = useState<string | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<PrintProvider>('PEECHO');
+  const [address, setAddress] = useState<ShippingAddress>({ name: '', email: user?.email || '', line1: '', line2: '', city: '', postcode: '', country: 'GB' });
+  const [addressErrors, setAddressErrors] = useState<string[]>([]);
   const [printResult, setPrintResult] = useState<{
     ok: boolean;
     provider: string;
@@ -51,23 +62,19 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const [showExportCheckout, setShowExportCheckout] = useState(false);
   const [showPrintCheckout, setShowPrintCheckout] = useState(false);
 
-  const { user } = useAuth();
-  const session = useMemo(() => getSession(user?.id), [user?.id]);
-  const [firstExportUsed, setFirstExportUsed] = useState(session.firstExportUsed);
-
-  useEffect(() => {
-    setFirstExportUsed(session.firstExportUsed);
-  }, [session.sessionId]);
-
-  const exportPDF = async (billingToken?: string) => {
+  const exportPDF = async () => {
     if (!config.pages || config.pages.length === 0) {
       toast.error('No pages to export');
+      return;
+    }
+    if (!config.storyId) {
+      toast.error('This book is missing its id - please go back and generate again.');
       return;
     }
 
     setIsExporting(true);
     try {
-      const response = await api.exportPDF(config, config.pages, true, billingToken);
+      const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
 
       onConfigChange({
         exports: {
@@ -76,14 +83,10 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         },
       });
 
-      if (!firstExportUsed) {
-        markFirstExportUsed(user?.id);
-        setFirstExportUsed(true);
-      }
-
       toast.success('PDFs generated successfully!');
     } catch (error) {
-      toast.error('Failed to generate PDFs');
+      const message = error instanceof Error ? error.message : 'Failed to generate PDFs';
+      toast.error(message);
       console.error('Export error:', error);
     } finally {
       setIsExporting(false);
@@ -91,43 +94,62 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     }
   };
 
-  const handleExportClick = () => {
-    if (isFirstExport) {
-      exportPDF();
-    } else {
-      setShowExportCheckout(true);
-    }
-  };
-
-  const handleExportSuccess = (billingToken: string) => {
-    setShowExportCheckout(false);
-    exportPDF(billingToken);
-  };
-
-  const createPrintOrder = async (billingToken?: string) => {
-    if (!config.exports?.printPdfUrl) {
-      toast.error('Please export PDFs first');
-      return;
-    }
-
-    setIsPrinting(true);
+  const handleExportClick = async () => {
+    // Illustrations the QA reviewer could not check when they were made are
+    // re-checked BEFORE checkout, so nobody pays for (or exports) unverified
+    // art. Then billing (free first export or payment) is settled with the
+    // server as before.
+    setImageCheckMessage(null);
+    setIsCheckingImages(true);
     try {
-      const response = await api.createPrintOrder(
-        selectedProvider,
-        config.exports.printPdfUrl,
-        config.pageSize,
-        billingToken
-      );
-
-      setPrintResult(response);
-
-      if (response.ok) {
-        toast.success(`Print order created with ${response.provider}`);
-      } else {
-        toast.error(response.error ?? 'Failed to create print order');
+      const { updates, blockMessage } = await recheckUnreviewedImages(api, config);
+      if (Object.keys(updates).length) onConfigChange(updates);
+      if (blockMessage) {
+        setImageCheckMessage(blockMessage);
+        toast.error(blockMessage);
+        return;
       }
     } catch (error) {
-      toast.error('Failed to create print order');
+      const message = "We couldn't check your illustrations just now. Please try again in a moment.";
+      console.error('Image re-check failed', error);
+      setImageCheckMessage(message);
+      toast.error(message);
+      return;
+    } finally {
+      setIsCheckingImages(false);
+    }
+    // Save the book to the account before the customer pays, so a paid book
+    // survives a closed tab. A save failure is not a reason to block them.
+    if (user && config.storyId) {
+      try {
+        await saveBook(supabase, user.id, config);
+      } catch (saveError) {
+        console.error('Saving the book before checkout failed', saveError);
+      }
+    }
+    setShowExportCheckout(true);
+  };
+
+  const handleExportSuccess = () => {
+    setShowExportCheckout(false);
+    exportPDF();
+  };
+
+  const createPrintOrder = async () => {
+    if (!config.storyId) return;
+    setIsPrinting(true);
+    try {
+      const response = await api.createPrintOrder(config.storyId, address);
+      setPrintResult(response);
+      if (response.ok) {
+        toast.success('Your printed book is ordered!');
+      } else {
+        toast.error(response.error ?? "We couldn't place the order. Please try again.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "We couldn't place the order. Please try again.";
+      setPrintResult({ ok: false, provider: 'PEECHO', error: message });
+      toast.error(message);
       console.error('Print error:', error);
     } finally {
       setIsPrinting(false);
@@ -135,18 +157,28 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     }
   };
 
+  // Check the delivery address first (the same rules the server applies),
+  // then take payment, then place the order.
   const handlePrintClick = () => {
+    const checked = validateAddress(address);
+    if ('errors' in checked) {
+      setAddressErrors(checked.errors);
+      return;
+    }
+    setAddressErrors([]);
     setShowPrintCheckout(true);
   };
 
-  const handlePrintSuccess = (billingToken: string) => {
+  const handlePrintSuccess = () => {
     setShowPrintCheckout(false);
-    createPrintOrder(billingToken);
+    createPrintOrder();
   };
 
   const downloadFile = (url: string, filename: string) => {
     const link = document.createElement('a');
-    link.href = url;
+    // Stored PDFs come back as signed storage links: ask the server for an
+    // attachment so the browser downloads instead of leaving the app.
+    link.href = withDownloadName(url, filename);
     link.download = filename;
     document.body.appendChild(link);
     link.click();
@@ -156,8 +188,6 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const storyTitle = config.children.length > 0
     ? `${config.children.join(' and ')}'s ${config.storyType} Story`
     : `A ${config.storyType} Story`;
-
-  const isFirstExport = !firstExportUsed;
 
   const handleCreateAnother = () => {
     onReset();
@@ -228,16 +258,21 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Badge variant="secondary">Includes print-ready & web PDF</Badge>
-              {isFirstExport && (
-                <Badge variant="outline" className="text-story-nature border-story-nature">
-                  First export is free
-                </Badge>
-              )}
+              <Badge variant="outline" className="text-story-nature border-story-nature">
+                First export is free
+              </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              Generate professionally typeset PDFs that include all text, illustrations, bleed and trim marks.
+              Generate professionally typeset PDFs of your book: one for reading on screen, and a print-ready one with 3 mm bleed.
             </p>
           </div>
+
+          {imageCheckMessage && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{imageCheckMessage}</AlertDescription>
+            </Alert>
+          )}
 
           {config.exports?.webPdfUrl && (
             <Alert>
@@ -268,9 +303,14 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               </Button>
               <Button
                 onClick={handleExportClick}
-                disabled={isExporting}
+                disabled={isExporting || isCheckingImages}
               >
-                {isExporting ? (
+                {isCheckingImages ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Checking illustrations...
+                  </>
+                ) : isExporting ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     Preparing PDFs...
@@ -287,7 +327,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </CardContent>
       </Card>
 
-      {/* Print Order */}
+      {/* Print Order - hidden until Phase 5 */}
+      {PRINT_ENABLED && (
       <Card className="story-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -297,43 +338,68 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </CardHeader>
         <CardContent className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            Choose a print partner and we'll pass your print-ready PDF straight to their ordering system.
+            We print and post a paperback of your book. Generate your PDFs first, then tell us where to send it.
           </p>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2">
-              <Printer className="w-5 h-5 text-primary/70" />
-              <span className="font-semibold">Professional Print Order</span>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Select value={selectedProvider} onValueChange={(value: PrintProvider) => setSelectedProvider(value)}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Choose provider" />
-                </SelectTrigger>
+          {config.pageSize !== 'A5 portrait' && (
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                Printed books currently look best at A5. At {config.pageSize} the pictures print less sharply.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              ['name', 'Full name', 'Sam Smith'],
+              ['email', 'Email for delivery updates', 'you@example.com'],
+              ['line1', 'Address line 1', '1 High Street'],
+              ['line2', 'Address line 2 (optional)', ''],
+              ['city', 'Town or city', 'Leeds'],
+              ['postcode', 'Postcode', 'LS1 1AA'],
+            ] as const).map(([field, label, placeholder]) => (
+              <div key={field} className="space-y-1">
+                <Label htmlFor={`ship-${field}`}>{label}</Label>
+                <Input
+                  id={`ship-${field}`}
+                  value={address[field] || ''}
+                  placeholder={placeholder}
+                  autoComplete={field === 'name' ? 'name' : field === 'email' ? 'email' : field === 'postcode' ? 'postal-code' : field === 'city' ? 'address-level2' : field === 'line1' ? 'address-line1' : 'address-line2'}
+                  onChange={(e) => setAddress({ ...address, [field]: e.target.value })}
+                />
+              </div>
+            ))}
+            <div className="space-y-1">
+              <Label htmlFor="ship-country">Country</Label>
+              <Select value={address.country} onValueChange={(country) => setAddress({ ...address, country })}>
+                <SelectTrigger id="ship-country"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PEECHO">Peecho</SelectItem>
-                  <SelectItem value="BOOKVAULT">BookVault</SelectItem>
-                  <SelectItem value="LULU">Lulu</SelectItem>
-                  <SelectItem value="GELATO">Gelato</SelectItem>
+                  <SelectItem value="GB">United Kingdom</SelectItem>
+                  <SelectItem value="IE">Ireland</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                onClick={handlePrintClick}
-                disabled={!config.exports?.printPdfUrl || isPrinting}
-              >
-                {isPrinting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creating order...
-                  </>
-                ) : (
-                  <>
-                    <Printer className="w-4 h-4 mr-2" />
-                    Checkout
-                  </>
-                )}
-              </Button>
             </div>
+          </div>
+
+          {addressErrors.length > 0 && (
+            <p className="text-sm text-destructive">Please check: {addressErrors.join(', ')}.</p>
+          )}
+
+          <div className="flex justify-end">
+            <Button onClick={handlePrintClick} disabled={!config.exports?.printPdfUrl || isPrinting}>
+              {isPrinting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Placing your order...
+                </>
+              ) : (
+                <>
+                  <Printer className="w-4 h-4 mr-2" />
+                  Order printed book
+                </>
+              )}
+            </Button>
           </div>
 
           {printResult && (
@@ -343,8 +409,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                 {printResult.ok ? (
                   <div className="space-y-2">
                     <p>
-                      Order created with <strong>{printResult.provider}</strong>.
-                      {printResult.orderId && ` Reference: ${printResult.orderId}.`}
+                      Your book is ordered and on its way to the printer.
+                      {printResult.orderId && ` Order reference: ${printResult.orderId}.`}
                     </p>
                     {printResult.checkoutUrl && (
                       <Button variant="link" asChild className="px-0">
@@ -355,24 +421,26 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
                     )}
                   </div>
                 ) : (
-                  <p>{printResult.error || 'We couldn’t create the order. Please try again or choose a different provider.'}</p>
+                  <p>{printResult.error || 'We couldn’t place the order. Please try again - your payment is kept for this book.'}</p>
                 )}
               </AlertDescription>
             </Alert>
           )}
         </CardContent>
       </Card>
+      )}
 
       <Dialog open={showExportCheckout} onOpenChange={setShowExportCheckout}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CreditCard className="w-4 h-4" />
-              Complete export purchase
+              Download this book PDF
             </DialogTitle>
           </DialogHeader>
           <CheckoutSheet
             item="export"
+            storyId={config.storyId}
             onSuccess={handleExportSuccess}
             onCancel={() => setShowExportCheckout(false)}
           />
@@ -384,11 +452,12 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Printer className="w-4 h-4" />
-              Print handling checkout
+              Printed book checkout
             </DialogTitle>
           </DialogHeader>
           <CheckoutSheet
             item="print"
+            storyId={config.storyId}
             onSuccess={handlePrintSuccess}
             onCancel={() => setShowPrintCheckout(false)}
           />

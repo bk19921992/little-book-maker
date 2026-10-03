@@ -25,3 +25,9 @@ dist-ssr
 
 # Environment files
 .env
+
+# image-jobs e2e test tokens (created and removed by run.sh)
+supabase/tests/**/.tokens.json
+
+# Supabase CLI local state
+supabase/.temp/

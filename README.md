@@ -88,9 +88,30 @@ STRIPE_SECRET_KEY=...
 ```
 
 Story text and page illustrations both use OpenAI (`OPENAI_API_KEY`). Image
-generation defaults to `gpt-image-1` at `low` quality; override with the
+generation defaults to `gpt-image-1` at `medium` quality; override with the
 optional `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE` and `OPENAI_IMAGE_QUALITY`
-secrets if needed.
+secrets if needed. Every illustration passes a vision review
+(`OPENAI_REVIEW_MODEL`, default `gpt-4.1`) before it is accepted; a picture
+that fails three attempts ships no image, and one made while the reviewer was
+unavailable is re-checked before checkout.
+
+Illustrations run as a durable job (`generate-images` actions `start`, `step`,
+`status`; see `supabase/functions/generate-images/jobs.ts`): each call makes one
+image attempt, so a whole book never has to fit in one edge-function request,
+and the app can resume a book after a reload. Apply the migrations in
+`supabase/migrations` (they add the `image_jobs` tables) and deploy
+`generate-images` before deploying a frontend that uses the job API.
+
+How much text a page may carry is set in one place,
+`supabase/functions/_shared/textContract.ts`, and checked against the real
+typesetter and font by the tests.
+
+### Tests
+
+```sh
+npm test                                  # unit tests (Node 22+)
+sh supabase/tests/image-jobs-e2e/run.sh   # job API on real Postgres + PostgREST (needs docker)
+```
 
 The currently generated frontend must point at an active Supabase project. A stale
 or deleted project ref such as `https://<missing-ref>.supabase.co` will fail before
