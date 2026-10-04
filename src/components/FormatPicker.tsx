@@ -80,7 +80,7 @@ export const FormatPicker: React.FC<FormatPickerProps> = ({ formatMode, pageSize
           <div className="flex items-start space-x-2">
             <RadioGroupItem value="auto" id="format-mode-auto" className="mt-1" />
             <Label htmlFor="format-mode-auto" className="text-sm leading-relaxed font-normal">
-              <span className="font-medium">Let AI decide</span> - recommended. Once your story is
+              <span className="font-medium">Let us decide</span> - recommended. Once your story is
               planned, the AI picks the page shape and layout that fit this particular book.
             </Label>
           </div>
