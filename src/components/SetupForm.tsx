@@ -185,9 +185,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                   key={preset.name}
                   variant={config.themePreset === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('theme', preset.name)}
-                  className="h-auto p-3 text-left justify-start"
+                  className="h-auto p-3 text-left justify-start whitespace-normal"
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 w-full min-w-0">
                     <div className="flex gap-1">
                       {preset.palette.slice(0, 4).map((color, i) => (
                         <div
@@ -197,7 +197,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                         />
                       ))}
                     </div>
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <div className="font-medium">{preset.name}</div>
                       <div className="text-xs opacity-70">{preset.description}</div>
                     </div>
@@ -392,7 +392,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
             We weave these into the story and the pictures. All optional.
           </p>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Your town (appears in the story)</Label>
                 <Input
@@ -527,7 +527,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           onClick={onNext}
           disabled={!canProceed}
           size="lg"
-          className="px-8 py-3 text-lg font-medium animate-gentle-bounce"
+          className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium animate-gentle-bounce w-full sm:w-auto"
         >
           Create My Story
         </Button>

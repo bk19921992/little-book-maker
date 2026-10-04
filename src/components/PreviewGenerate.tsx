@@ -518,7 +518,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           <CardContent>
             <div className="grid gap-6">
               {config.pages.slice(0, 3).map((page, index) => (
-                <div key={page.page} className="border rounded-xl p-6 space-y-4 bg-gradient-to-br from-background to-muted/30 shadow-sm">
+                <div key={page.page} className="border rounded-xl p-3 sm:p-6 space-y-4 bg-gradient-to-br from-background to-muted/30 shadow-sm">
                   <div className="flex items-center justify-between">
                     <Badge variant="outline" className="text-sm font-medium">Page {page.page}</Badge>
                     <div className="flex items-center gap-2">
@@ -571,17 +571,17 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       </Dialog>
 
       {/* Action Buttons */}
-      <div className="flex justify-between">
-        <Button variant="outline" onClick={onBack}>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+        <Button variant="outline" onClick={onBack} className="w-full sm:w-auto">
           Back to Setup
         </Button>
         
-        <div className="flex gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row">
           {currentStep === 'idle' && pendingJob && (
             <Button
               onClick={resumeIllustrations}
               size="lg"
-              className="px-8 py-3 text-lg font-medium"
+              className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"
               disabled={isGenerating}
             >
               <Image className="w-5 h-5 mr-2" />
@@ -605,7 +605,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             <Button
               onClick={onNext}
               size="lg"
-              className="px-8 py-3 text-lg font-medium"
+              className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"
             >
               Edit & Export
             </Button>

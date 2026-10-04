@@ -132,7 +132,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
       <div className="grid lg:grid-cols-4 gap-8">
         {/* Page List */}
         <div className="lg:col-span-1">
-          <Card className="story-card sticky top-24">
+          <Card className="story-card lg:sticky lg:top-24">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-primary" />
@@ -330,8 +330,8 @@ export const PageEditor: React.FC<PageEditorProps> = ({
       </div>
 
       {/* Action Buttons */}
-      <div className="flex justify-between">
-        <Button variant="outline" onClick={onBack}>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
+        <Button variant="outline" onClick={onBack} className="w-full sm:w-auto">
           Back to Preview
         </Button>
         
@@ -339,7 +339,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
           onClick={onNext}
           disabled={!canExport}
           size="lg"
-          className="px-8 py-3 text-lg font-medium"
+          className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"
         >
           <Download className="w-5 h-5 mr-2" />
           Export Story

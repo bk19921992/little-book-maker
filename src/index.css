@@ -141,7 +141,7 @@
 
 @layer components {
   .story-card {
-    @apply bg-card border border-border rounded-2xl p-6 shadow-[var(--shadow-card)] transition-[var(--transition-smooth)];
+    @apply bg-card border border-border rounded-2xl p-2 sm:p-6 shadow-[var(--shadow-card)] transition-[var(--transition-smooth)];
   }
 
   .story-card:hover {
@@ -213,4 +213,10 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
   }
+}
+
+/* Mobile: let grid/flex children shrink so nothing forces horizontal scroll */
+@layer base {
+  .grid > *, .story-card { min-width: 0; }
+  body { overflow-x: hidden; }
 }

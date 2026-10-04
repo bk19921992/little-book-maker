@@ -284,11 +284,11 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           )}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Button variant="outline" onClick={onBack}>
+            <Button variant="outline" onClick={onBack} className="w-full sm:w-auto">
               Back to Editor
             </Button>
 
-            <div className="flex gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row">
               <Button
                 variant="ghost"
                 onClick={() => {

@@ -124,7 +124,7 @@ export const StoryGenerator: React.FC = () => {
       )}
 
       {/* Header */}
-      <header className="border-b bg-background/80 backdrop-blur-sm sticky top-0 z-50">
+      <header className="border-b bg-background/80 backdrop-blur-sm sm:sticky sm:top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
           <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-center gap-2 sm:gap-3">
@@ -135,13 +135,13 @@ export const StoryGenerator: React.FC = () => {
             </div>
 
             {user && (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-start">
                 <Button variant="outline" size="sm" onClick={() => setMyBooksOpen(true)} className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4" />
                   My books
                 </Button>
-                <div className="text-xs sm:text-sm text-muted-foreground text-right">
-                  <div className="font-medium text-foreground">{user.email}</div>
+                <div className="hidden sm:block text-xs sm:text-sm text-muted-foreground text-right min-w-0">
+                  <div className="font-medium text-foreground truncate max-w-[14rem]">{user.email}</div>
                   <div>Signed in</div>
                 </div>
                 <Button
@@ -157,7 +157,7 @@ export const StoryGenerator: React.FC = () => {
             )}
 
             {/* Step indicator */}
-            <div className="flex flex-wrap items-center gap-1 sm:gap-2 w-full sm:w-auto">
+            <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto">
               {['Setup', 'Preview', 'Edit', 'Export'].map((step, index) => {
                 const stepNames = ['setup', 'preview', 'edit', 'export'];
                 const isActive = stepNames[index] === currentStep;
@@ -167,7 +167,7 @@ export const StoryGenerator: React.FC = () => {
                   <div
                     key={step}
                     className={`
-                      px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-medium transition-all
+                      flex-1 sm:flex-none text-center px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-all
                       ${isActive 
                         ? 'bg-primary text-primary-foreground' 
                         : isComplete 
@@ -176,8 +176,7 @@ export const StoryGenerator: React.FC = () => {
                       }
                     `}
                   >
-                    <span className="hidden sm:inline">{step}</span>
-                    <span className="sm:hidden">{step.charAt(0)}</span>
+                    {step}
                   </div>
                 );
               })}
