@@ -19,6 +19,7 @@ import {
 import { StoryConfig } from '../types';
 import { api } from '../api';
 import { toast } from 'sonner';
+import { PRINT_ORDERS_ENABLED } from '@/lib/pricing';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
 import { recheckUnreviewedImages } from '../lib/reviewGate';
 import { Input } from '@/components/ui/input';
@@ -29,7 +30,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 
 // Print stays hidden until Phase 5 - the server refuses orders while the flag is off too.
-const PRINT_ENABLED = import.meta.env.VITE_PRINT_ENABLED === 'true';
+const PRINT_ENABLED = PRINT_ORDERS_ENABLED;
 
 interface ExportPanelProps {
   config: StoryConfig;
@@ -202,7 +203,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             Export Your Story
           </h1>
           <p className="text-lg text-muted-foreground">
-            Download your storybook or order professional prints
+            Download your storybook. Printed orders are coming soon.
           </p>
         </div>
         <Button variant="ghost" onClick={handleCreateAnother} className="self-center sm:self-auto">
@@ -278,7 +279,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             <Alert>
               <CheckCircle className="h-4 w-4" />
               <AlertDescription>
-                PDFs generated. Download them or head to print.
+                PDFs generated. Download your book below.
               </AlertDescription>
             </Alert>
           )}

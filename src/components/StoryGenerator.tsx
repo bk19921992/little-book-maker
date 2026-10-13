@@ -101,13 +101,13 @@ export const StoryGenerator: React.FC = () => {
     <div className="min-h-screen bg-gradient-soft">
       {/* Hero Section - Only show on setup */}
       {currentStep === 'setup' && (
-        <div className="relative overflow-hidden bg-gradient-story">
+        <section aria-label="About your storybook" className="relative overflow-hidden bg-gradient-story">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-16 text-center">
             <div className="mb-6 sm:mb-8">
               <img
-                src={heroImage}
+                width="1429" height="804" src={heroImage}
                 alt="Magical storybook coming to life"
-                className="w-full max-w-lg sm:max-w-xl lg:max-w-2xl mx-auto rounded-2xl shadow-[var(--shadow-story)] animate-gentle-bounce"
+                className="w-full max-w-lg sm:max-w-xl lg:max-w-2xl mx-auto rounded-2xl shadow-[var(--shadow-story)] "
               />
             </div>
             <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-white mb-3 sm:mb-4">
@@ -115,12 +115,12 @@ export const StoryGenerator: React.FC = () => {
             </h1>
             <p className="text-lg sm:text-xl text-white/90 mb-6 sm:mb-8 max-w-2xl mx-auto px-4">
               Generate personalized children's storybooks with beautiful illustrations, 
-              ready for reading or professional printing
+              ready to download as a PDF. Printed orders are coming soon.
             </p>
           </div>
           {/* Decorative gradient overlay */}
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/20" />
-        </div>
+        </section>
       )}
 
       {/* Header */}
@@ -131,7 +131,7 @@ export const StoryGenerator: React.FC = () => {
               <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-warm flex items-center justify-center">
                 <span className="text-white font-bold text-base sm:text-lg">S</span>
               </div>
-              <h1 className="text-lg sm:text-xl font-display font-bold">Storybook Generator</h1>
+              <p className="text-lg sm:text-xl font-display font-bold">Story Sprout</p>
             </div>
 
             {user && (

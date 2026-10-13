@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { useState } from 'react';
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 import {
@@ -10,13 +11,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
-import { PRICES } from '@/lib/pricing';
+import { PRICES, PAID_CHECKOUT_ENABLED, PAID_CHECKOUT_NOTICE } from '@/lib/pricing';
 
 const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
 
 let stripePromise: Promise<Stripe | null> | null = null;
 
-if (publishableKey) {
+if (PAID_CHECKOUT_ENABLED && publishableKey) {
   stripePromise = loadStripe(publishableKey);
 } else {
   if (import.meta.env.DEV) {
@@ -130,6 +131,17 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
     setLoading(true);
     setError(null);
     try {
+      // Avoid creating a paid intent while the release gate is closed.
+      // RLS limits this read to the signed-in user's existing exports.
+      if (!PAID_CHECKOUT_ENABLED) {
+        if (item !== 'export') throw new Error(PAID_CHECKOUT_NOTICE);
+        const { data: exports, error: entitlementError } = await (supabase as SupabaseClient).from('entitlements')
+          .select('story_id').eq('item', 'export');
+        if (entitlementError) throw entitlementError;
+        if (exports?.length && !exports.some(exported => exported.story_id === storyId)) {
+          throw new Error(PAID_CHECKOUT_NOTICE);
+        }
+      }
       const { data, error: intentError } = await supabase.functions.invoke<BillingIntentResponse>('billing-intent', {
         body: { item, storyId },
       });
@@ -155,7 +167,7 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
-        <CardTitle>Complete Your Purchase</CardTitle>
+        <CardTitle>Your book download</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
@@ -167,7 +179,7 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
           </div>
           {item === 'export' && (
             <p className="text-sm text-muted-foreground">
-              Your first book PDF is free. Another book costs £2.99 before creation.
+              Your first PDF is free. Additional PDFs will cost £2.99 when paid checkout opens. {!PAID_CHECKOUT_ENABLED && PAID_CHECKOUT_NOTICE}
             </p>
           )}
         </div>

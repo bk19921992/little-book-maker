@@ -102,7 +102,7 @@ export const FormatPicker: React.FC<FormatPickerProps> = ({ formatMode, pageSize
                 value={pageSize}
                 onValueChange={(value: PageSizePreset) => onConfigChange({ pageSize: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger aria-label="Page shape">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
