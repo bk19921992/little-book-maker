@@ -105,12 +105,12 @@ export const SetupForm: React.FC<SetupFormProps> = ({
             </p>
             <div className="flex gap-2">
               <Input
-                placeholder="Enter a child's name"
+                aria-label="Child name" placeholder="Enter a child's name"
                 value={newChild}
                 onChange={(e) => setNewChild(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && addChild()}
               />
-              <Button onClick={addChild} size="sm" variant="secondary">
+              <Button aria-label="Add child" onClick={addChild} size="sm" variant="secondary">
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
@@ -118,7 +118,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               {config.children.map((child, index) => (
                 <Badge key={index} variant="secondary" className="flex items-center gap-1">
                   {child}
-                  <button onClick={() => removeChild(index)}>
+                  <button aria-label={`Remove ${child}`} onClick={() => removeChild(index)}>
                     <X className="w-3 h-3" />
                   </button>
                 </Badge>
@@ -295,12 +295,12 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           </div>
           <div className="flex gap-2">
             <Input
-              placeholder="Add custom character"
+              aria-label="Custom character" placeholder="Add custom character"
               value={newCharacter}
               onChange={(e) => setNewCharacter(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && addCharacter()}
             />
-            <Button onClick={addCharacter} size="sm" variant="secondary">
+            <Button aria-label="Add character" onClick={addCharacter} size="sm" variant="secondary">
               <Plus className="w-4 h-4" />
             </Button>
           </div>
@@ -308,7 +308,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
             {config.characters.map((character, index) => (
               <Badge key={index} variant="secondary" className="flex items-center gap-1">
                 {character}
-                <button onClick={() => removeCharacter(index)}>
+                <button aria-label={`Remove ${character}`} onClick={() => removeCharacter(index)}>
                   <X className="w-3 h-3" />
                 </button>
               </Badge>
@@ -331,7 +331,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 value={config.readingLevel}
                 onValueChange={(value: ReadingLevel) => onConfigChange({ readingLevel: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger aria-label="Reading level">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -343,7 +343,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
             </div>
             <div className="space-y-2">
               <Label>Story Length: {config.lengthPages} pages</Label>
-              <Slider
+              <Slider aria-label="Story length in pages"
                 value={[config.lengthPages]}
                 onValueChange={([value]) => onConfigChange({ lengthPages: value })}
                 min={6}
@@ -365,7 +365,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 value={typeof config.imageStyle === 'string' ? config.imageStyle : 'Picture-book'}
                 onValueChange={(value) => onConfigChange({ imageStyle: value as StoryConfig['imageStyle'] })}
               >
-                <SelectTrigger>
+                <SelectTrigger aria-label="Picture style">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -480,7 +480,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 value={config.narrationStyle}
                 onValueChange={(value: StoryConfig['narrationStyle']) => onConfigChange({ narrationStyle: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger aria-label="Narration style">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -497,7 +497,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 value={config.educationalFocus}
                 onValueChange={(value: StoryConfig['educationalFocus']) => onConfigChange({ educationalFocus: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger aria-label="Educational focus">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
