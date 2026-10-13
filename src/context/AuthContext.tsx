@@ -12,7 +12,7 @@ interface AuthContextValue {
   setMode: (mode: AuthMode) => void;
   clearError: () => void;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<boolean>;
   signOut: () => Promise<void>;
 }
 
@@ -88,14 +88,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         throw new Error(supabaseConfigError);
       }
 
-      const { error: signUpError } = await supabase.auth.signUp({
+      const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
-        options: { emailRedirectTo: window?.location?.origin ?? undefined },
+        options: { emailRedirectTo: window.location.origin },
       });
       if (signUpError) {
         throw signUpError;
       }
+      return !data.session;
     } catch (err) {
       const message = formatSupabaseConnectionError(err) || 'Unable to sign up';
       setError(message);
