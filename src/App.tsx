@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { lazy, Suspense } from "react";
+import SiteAnalytics from "@/components/SiteAnalytics";
 import "./pages/app-entry.css";
 import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
@@ -22,6 +23,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
+      <SiteAnalytics />
       <Sonner />
 
         <BrowserRouter>
