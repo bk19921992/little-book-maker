@@ -57,7 +57,12 @@ export const withDownloadName = (url: string, filename: string): string =>
 
 // Uploads are skipped for pictures already saved unchanged in this session.
 const uploaded = new Map<string, string>();
-const fingerprint = (dataUrl: string) => `${dataUrl.length}:${dataUrl.slice(-64)}`;
+// Compare the whole image. Equal length and equal base64 tails do not prove
+// two illustrations are the same; a collision used to silently skip the upload.
+const fingerprint = async (dataUrl: string) => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(dataUrl));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+};
 
 // Save (or update) a book: upload its pictures, then write the row.
 export async function saveBook(db: SupabaseClient, userId: string, config: StoryConfig): Promise<void> {
@@ -68,10 +73,11 @@ export async function saveBook(db: SupabaseClient, userId: string, config: Story
     if (!dataUrl?.startsWith('data:image/')) return undefined;
     const { blob, ext } = dataUrlToBlob(dataUrl);
     const path = imagePath(userId, storyId, name, ext);
-    if (uploaded.get(path) === fingerprint(dataUrl)) return path;
+    const imageFingerprint = await fingerprint(dataUrl);
+    if (uploaded.get(path) === imageFingerprint) return path;
     const { error } = await db.storage.from(BOOKS_BUCKET).upload(path, blob, { upsert: true, contentType: blob.type });
     if (error) throw error;
-    uploaded.set(path, fingerprint(dataUrl));
+    uploaded.set(path, imageFingerprint);
     return path;
   };
 
@@ -145,7 +151,9 @@ export async function deleteBook(db: SupabaseClient, userId: string, storyId: st
   const folder = `${userId}/${storyId}`;
   const paths: string[] = [];
   for (const sub of ['images', 'pdf']) {
-    const { data } = await db.storage.from(BOOKS_BUCKET).list(`${folder}/${sub}`);
+    const { data, error: listError } = await db.storage.from(BOOKS_BUCKET).list(`${folder}/${sub}`);
+    // Keep the book row if its files could not be enumerated for deletion.
+    if (listError) throw listError;
     for (const f of data || []) paths.push(`${folder}/${sub}/${f.name}`);
   }
   if (paths.length) {
