@@ -72,3 +72,21 @@ test('a page left without a picture (e.g. removed by an earlier failed re-check)
   assert.equal(sent.length, 0);
   assert.match(r.blockMessage!, /^Page 2 has no picture yet/);
 });
+
+test('incomplete reviewer response keeps checkout closed instead of treating missing verdicts as passed', async () => {
+  const api = { async reviewImages() { return { reviews: [{ label: 'page:2', pass: true, issues: [] }] }; } };
+  const r = await recheckUnreviewedImages(api, book());
+  assert.match(r.blockMessage!, /haven't been checked/);
+  assert.equal(r.updates.pages![2].imageReview, 'unreviewed');
+  assert.equal(r.updates.coverImageReview, undefined);
+});
+
+test('missing cover verdict alone blocks checkout after all requested page verdicts pass', async () => {
+  const api = { async reviewImages(items: { label: string }[]) {
+    return { reviews: items.filter((item) => item.label !== 'cover').map(({ label }) => ({ label, pass: true, issues: [] })) };
+  } };
+  const r = await recheckUnreviewedImages(api, book());
+  assert.match(r.blockMessage!, /haven't been checked/);
+  assert.ok(r.updates.pages!.every((page) => page.imageReview === 'passed'));
+  assert.equal(r.updates.coverImageReview, undefined);
+});

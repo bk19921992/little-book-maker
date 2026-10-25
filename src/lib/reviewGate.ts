@@ -45,13 +45,17 @@ export async function recheckUnreviewedImages(api: ReviewApi, config: StoryConfi
   let stillUnchecked = false;
   const nextPages: StoryPage[] = pages.map((p) => {
     const v = verdicts.get(`page:${p.page}`);
-    if (!v) return p;
+    if (!v) {
+      if (targets.some((target) => target.label === `page:${p.page}`)) stillUnchecked = true;
+      return p;
+    }
     if (!v.pass) { failedPages.push(p.page); return { ...p, imageUrl: undefined, imageReview: undefined }; }
     if (v.skipped) { stillUnchecked = true; return p; }
     return { ...p, imageReview: 'passed' };
   });
   const updates: Partial<StoryConfig> = { pages: nextPages };
   const cover = verdicts.get('cover');
+  if (!cover && targets.some((target) => target.label === 'cover')) stillUnchecked = true;
   if (cover) {
     if (!cover.pass) Object.assign(updates, { coverImageUrl: undefined, coverImageReview: undefined });
     else if (cover.skipped) stillUnchecked = true;
