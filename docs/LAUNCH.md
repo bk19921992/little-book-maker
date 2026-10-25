@@ -1,23 +1,52 @@
 # Launch runbook
 
-How to take the payments, saved-books and printing work live on the
-production Supabase project (`njzndvftkdasbmsgspwp`) and Vercel, and how to
-check it. Nothing here has been run against production; every step is for
-the owner.
+Current readiness notes and historical setup reference for the production Supabase
+project (`njzndvftkdasbmsgspwp`) and Vercel `little-book-maker`.
+This document does not authorise account creation, provider spending, payment
+activation, migration repair, secret changes or printing. Do not run the historical
+setup commands without current state checks and owner authority.
 
-## 0. Before you start
+## 0. Observed readiness, 25 October 2026
 
-- **Production is currently mixed.** `generate-images` (job API) was
-  deployed on 29 Sep and the `image_jobs` tables exist, but `export-pdf` and
-  `story-write` are the 27 Sep versions. Deploy everything together (step 2).
-- **Migration history is empty on production** although the phase-1 and
-  image-job tables exist (they were applied by hand). A plain
-  `supabase db push` would re-run the phase-1 migration and fail on its
-  existing policies. Repair the history first (step 1).
-- **A second project, "Book AI" (`dxvefqlzlzluubuqbcen`), runs a different
-  codebase** (Stripe Checkout Sessions, an `api` schema, its own
-  `stripe-webhook`). Decide which backend is canonical; this repo targets
-  `njzndvftkdasbmsgspwp`.
+Read-only dashboard and live-frontend checks on 25 October found:
+
+- The live frontend uses `njzndvftkdasbmsgspwp`, whose Supabase dashboard title
+  is **BK19921992 Book AI**. `dxvefqlzlzluubuqbcen` is a separate project. Its
+  absence from this frontend does not prove it has no other dependencies or can
+  be paused/deleted.
+- The Edge Functions listing showed eight functions with relative update labels
+  around **22 days ago**. These are observed dashboard labels, not verified
+  deployment dates or proof deployed code matches this repository. The old claim
+  that `story-write` and `export-pdf` are still on 27 September versions is no
+  longer a reliable current-state description. Compare actual versions before
+  deciding to deploy functions.
+- Vercel production has `VITE_SUPABASE_URL` and
+  `VITE_SUPABASE_PUBLISHABLE_KEY`; no `VITE_STRIPE_PUBLISHABLE_KEY` was listed.
+  The live bundle has no baked-in Stripe publishable key. Loading `stripe.js`
+  does not establish configured checkout. The paid-card gate stays closed.
+- Supabase secret **names** include `STRIPE_SECRET_KEY` and
+  `STRIPE_PUBLISHABLE_KEY`, but not `STRIPE_WEBHOOK_SECRET`. Values and test/live
+  mode were not inspected. No webhook activation, payment success or entitlement
+  delivery is verified. Do not copy keys or activate billing from this note.
+- Print enablement/offering variables remain absent. Printing stays off.
+- Sign-in/setup/free-book gating was checked, but fresh live story text,
+  illustrations, saved-book reload and PDF generation remain unverified. Existing
+  test users had exhausted their free quota. No new test signup, quota reset,
+  payment or paid generation is authorised by this document.
+- Migration-history status below is historical and **not rechecked** on 25 October.
+  Never repair history or run `db push` based solely on the old note.
+
+Sources: live `https://little-book-maker.vercel.app/`, authenticated Vercel
+`little-book-maker` environment-name listing and Supabase project
+`njzndvftkdasbmsgspwp` function/secret-name listings, inspected 25 October 2026.
+No secret values are recorded here.
+
+## Historical setup reference (not an execution checklist)
+
+The remaining sections describe the original proposed setup. Revalidate every
+step against current state, test/live mode and owner permission before use.
+The original migration note said tables had been applied by hand while migration
+history was empty; this is not a current verification of either state.
 
 ## 1. Database
 
@@ -36,7 +65,7 @@ warnings.
 
 `supabase/config.toml` pins `verify_jwt = false` for every function (they
 check the caller themselves; `stripe-webhook` is authenticated by the Stripe
-signature), matching production today.
+signature), as declared in repository config; current deployed code/config parity is unverified.
 
 ```sh
 supabase functions deploy story-plan story-write generate-images export-pdf \
@@ -67,9 +96,9 @@ Secrets (`supabase secrets set NAME=value`):
 ## 4. Vercel (project `little-book-maker`)
 
 Add `VITE_STRIPE_PUBLISHABLE_KEY` (`pk_test_...`, then `pk_live_...`) for
-Production and Preview, then redeploy. Today only the two Supabase variables
-are set, so paid checkout shows "Card payments aren't available right now"
-(the free first export still works). Leave `VITE_PRINT_ENABLED` unset until
+Production and Preview, then redeploy. At the 25 October read-only check, only the two Supabase variables
+were listed, so paid checkout shows "Card payments aren't available right now"
+(fresh live first-export success remains unverified). Leave `VITE_PRINT_ENABLED` unset until
 printing is live.
 
 ## 5. Smoke test (test mode)
@@ -118,3 +147,13 @@ supabase start && sh supabase/tests/local/run.sh   # payments, saved books,
                                            # printing on a local Supabase
 sh supabase/tests/image-jobs-e2e/run.sh    # image job API (docker)
 ```
+
+
+### Offline fixture scope
+
+`src/lib/fixtures/sixPageBook.ts` is synthetic local-only data. `npm test`
+exercises checkpoint recovery, image-job completion, review gating and saved-book
+serialisation with a six-page book and a fake storage client. A network guard
+rejects accidental requests in that test. The pixel is a placeholder, not generated
+art. It proves no live provider, database, payment, PDF renderer or browser flow.
+Existing PDF typesetting/print-spec unit tests are separate from live export.
