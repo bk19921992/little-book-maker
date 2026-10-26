@@ -3,10 +3,10 @@ import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
-import { buildItems, runStep, summarise, type AttemptWorker } from "./jobs.ts"
+import { buildItems, MAX_ATTEMPTS, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
 import { acceptedReferenceImage, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
-import { editImageWithReference, generateOneImage, imageCapRejection, maxImagesPerJob, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
+import { editImageWithReference, generateOneImage, isReferenceSpecificEditFailure, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
 
 interface ImageReview {
   pass: boolean
@@ -20,8 +20,6 @@ interface ImageReview {
 // A reviewer API outage never blocks the pipeline (marked skipped, surfaced in
 // the response); a found defect DOES - the page is regenerated with the
 // rejection reasons fed back, up to MAX_IMAGE_ATTEMPTS total tries.
-const MAX_IMAGE_ATTEMPTS = 3
-
 async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl: string, ctx: ReviewContext): Promise<ImageReview> {
   const reviewPrompt = buildReviewPrompt(ctx)
 
@@ -93,7 +91,8 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
       try {
         url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
       } catch (editError) {
-        console.error(`Reference edit failed for ${label}, falling back to plain generation:`, editError)
+        if (!isReferenceSpecificEditFailure(editError)) throw editError
+        console.error(`Reference rejected for ${label}, falling back to plain generation:`, editError)
         url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
       }
     } else {
@@ -181,14 +180,18 @@ serve(async (req) => {
       throw new Error('prompts must contain at most 20 pages')
     }
 
-    // Hard per-book cap on OpenAI image calls: every generation attempt costs
-    // money, so reject oversized books before any paid call is made.
-    const imageCapRejectionMessage = imageCapRejection(
+    // Validate image config and the per-book image-call bound up front,
+    // BEFORE any book claim or daily-usage accounting: failures here consume
+    // nothing. (The per-step worker resolves the same config again because a
+    // step runs in a later invocation.) One attempt can make 2 image calls
+    // (reference edit + fallback), hence 2 * MAX_ATTEMPTS per image.
+    const preflightFailure = preflightImageRequest(
+      (key: string) => Deno.env.get(key),
+      OPENAI_SIZES[pageSize] || '1024x1536',
       (prompts as ImagePrompt[]).length + (includeCover ? 1 : 0),
-      MAX_IMAGE_ATTEMPTS,
-      maxImagesPerJob((key: string) => Deno.env.get(key)),
+      2 * MAX_ATTEMPTS,
     )
-    if (imageCapRejectionMessage) return json({ error: imageCapRejectionMessage }, 400)
+    if (preflightFailure) return json({ error: preflightFailure.message }, preflightFailure.status)
 
     if (body.action !== 'start') throw new Error('Unknown illustration action')
     if (!await claimBook(serviceClient(), user.id, body.storyId)) return bookPaymentRequired(corsHeaders)
@@ -257,7 +260,7 @@ serve(async (req) => {
         let url = ''
         let review: ImageReview = { pass: false, issues: ['not yet reviewed'] }
         const basePrompt = fullPrompt
-        for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
           // Retry hygiene: only the LATEST rejection is fed back (stacking
           // notes bloats the prompt and dilutes the scene), and the style
           // lock is repeated AFTER the feedback so it stays the final word.
@@ -286,8 +289,8 @@ serve(async (req) => {
           if (review.pass) break
         }
         if (!review.pass) {
-          console.error(`Quality review failed for page ${promptData.page} after ${MAX_IMAGE_ATTEMPTS} attempts: ${review.issues.join('; ')}`)
-          errors.push({ page: promptData.page, error: `Quality review failed after ${MAX_IMAGE_ATTEMPTS} attempts: ${review.issues.join('; ')}` })
+          console.error(`Quality review failed for page ${promptData.page} after ${MAX_ATTEMPTS} attempts: ${review.issues.join('; ')}`)
+          errors.push({ page: promptData.page, error: `Quality review failed after ${MAX_ATTEMPTS} attempts: ${review.issues.join('; ')}` })
           continue
         }
         // A rejected page never becomes the visual reference for later pages.
@@ -323,7 +326,7 @@ serve(async (req) => {
         // (the export falls back to its no-dedicated-cover path) rather than
         // shipping a defective front cover.
         coverReview = { pass: false, issues: ['not yet reviewed'] }
-        for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
           const fullCoverPrompt = attempt > 1 ? withReviewFeedback(coverPrompt, coverReview.issues, styleAnchor) : coverPrompt
           if (attempt > 1) {
             console.log(`Regenerating cover after review rejection (attempt ${attempt}): ${coverReview.issues.join('; ')}`)
@@ -347,8 +350,8 @@ serve(async (req) => {
           if (coverReview.pass) break
         }
         if (!coverReview.pass) {
-          console.error(`Cover failed quality review after ${MAX_IMAGE_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}`)
-          errors.push({ page: 0, error: `Cover quality review failed after ${MAX_IMAGE_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}` })
+          console.error(`Cover failed quality review after ${MAX_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}`)
+          errors.push({ page: 0, error: `Cover quality review failed after ${MAX_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}` })
           coverUrl = undefined
         }
       } catch (coverError) {
