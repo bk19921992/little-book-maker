@@ -6,7 +6,7 @@ import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.t
 import { buildItems, MAX_ATTEMPTS, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
 import { acceptedReferenceImage, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
-import { editImageWithReference, generateOneImage, isReferenceSpecificEditFailure, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
+import { editImageWithReference, generateOneImage, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
 
 interface ImageReview {
   pass: boolean
@@ -88,13 +88,11 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
 
     let url: string
     if (reference) {
-      try {
-        url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
-      } catch (editError) {
-        if (!isReferenceSpecificEditFailure(editError)) throw editError
-        console.error(`Reference rejected for ${label}, falling back to plain generation:`, editError)
-        url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
-      }
+      // Fail closed: a failed reference edit fails this attempt with the real
+      // error. Never fall back to plain generation - that would silently drop
+      // the character reference and could retry a moderation or
+      // invalid-request rejection as a second paid call.
+      url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
     } else {
       url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
     }
@@ -183,15 +181,18 @@ serve(async (req) => {
     // Validate image config and the per-book image-call bound up front,
     // BEFORE any book claim or daily-usage accounting: failures here consume
     // nothing. (The per-step worker resolves the same config again because a
-    // step runs in a later invocation.) One attempt can make 2 image calls
-    // (reference edit + fallback), hence 2 * MAX_ATTEMPTS per image.
+    // step runs in a later invocation.) Each attempt makes exactly 1 image
+    // call, hence MAX_ATTEMPTS per image.
     const preflightFailure = preflightImageRequest(
       (key: string) => Deno.env.get(key),
       OPENAI_SIZES[pageSize] || '1024x1536',
       (prompts as ImagePrompt[]).length + (includeCover ? 1 : 0),
-      2 * MAX_ATTEMPTS,
+      MAX_ATTEMPTS,
     )
-    if (preflightFailure) return json({ error: preflightFailure.message }, preflightFailure.status)
+    if (preflightFailure) {
+      if (preflightFailure.detail) console.error('Image preflight config failure:', preflightFailure.detail)
+      return json({ error: preflightFailure.message }, preflightFailure.status)
+    }
 
     if (body.action !== 'start') throw new Error('Unknown illustration action')
     if (!await claimBook(serviceClient(), user.id, body.storyId)) return bookPaymentRequired(corsHeaders)
@@ -269,14 +270,10 @@ serve(async (req) => {
             console.log(`Regenerating page ${promptData.page} after review rejection (attempt ${attempt}): ${review.issues.join('; ')}`)
           }
           if (referenceUrl) {
-            try {
-              url = await editImageWithReference(openaiKey, model, size, quality, attemptPrompt, referenceUrl)
-            } catch (editError) {
-              // Never lose a page because the edits call failed: fall back to a
-              // plain generation guided by the style bible.
-              console.error(`Reference edit failed for page ${promptData.page}, falling back to plain generation:`, editError)
-              url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
-            }
+            // Fail closed: a failed reference edit fails this attempt with the
+            // real error. Never fall back to plain generation - that would
+            // silently drop the character reference for this page.
+            url = await editImageWithReference(openaiKey, model, size, quality, attemptPrompt, referenceUrl)
           } else {
             url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
           }
@@ -332,12 +329,10 @@ serve(async (req) => {
             console.log(`Regenerating cover after review rejection (attempt ${attempt}): ${coverReview.issues.join('; ')}`)
           }
           if (referenceUrl) {
-            try {
-              coverUrl = await editImageWithReference(openaiKey, model, size, quality, fullCoverPrompt, referenceUrl)
-            } catch (coverEditError) {
-              console.error('Cover reference edit failed, falling back to plain generation:', coverEditError)
-              coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
-            }
+            // Fail closed: a failed reference edit fails this attempt with the
+            // real error. Never fall back to plain generation - that would
+            // silently drop the character reference on the cover.
+            coverUrl = await editImageWithReference(openaiKey, model, size, quality, fullCoverPrompt, referenceUrl)
           } else {
             coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
           }
