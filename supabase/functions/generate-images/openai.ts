@@ -18,11 +18,13 @@ export const ALLOWED_IMAGE_SIZES = ['1024x1024', '1024x1536', '1536x1024']
 
 // Hard per-book bound on OpenAI image-generation API calls (NOT a monetary
 // cap and not a limit on review or story-text calls, which are bounded
-// separately by MAX_IMAGE_ATTEMPTS and the story functions). 63 covers the
-// app's largest supported book - 20 pages + cover (21 images) x 3 attempts -
-// so the bound never restricts a book the product can express; it only stops
-// retry loops or future changes from multiplying paid calls past that envelope.
-export const DEFAULT_MAX_IMAGES_PER_JOB = 63
+// separately by the per-attempt limit and the story functions). One attempt
+// can make 2 image calls (reference edit + plain-generation fallback), so the
+// honest worst case for the largest supported book - 20 pages + cover
+// (21 images) x 3 attempts x 2 calls - is 126. The bound never restricts a
+// book the product can express; it only stops retry loops or future changes
+// from multiplying paid calls past that envelope.
+export const DEFAULT_MAX_IMAGE_CALLS_PER_JOB = 126
 
 export type EnvGetter = (key: string) => string | undefined
 
@@ -46,17 +48,58 @@ export function resolveImageSize(env: EnvGetter, fallback: string): string {
   return size
 }
 
-export function maxImagesPerJob(env: EnvGetter): number {
-  const raw = env('MAX_IMAGES_PER_JOB')
+export function maxImageCallsPerJob(env: EnvGetter): number {
+  const raw = env('MAX_IMAGE_CALLS_PER_JOB')
   const parsed = raw ? parseInt(raw, 10) : NaN
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_IMAGES_PER_JOB
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_IMAGE_CALLS_PER_JOB
 }
 
-// Returns the rejection message when the book could exceed the cap, else null.
-export function imageCapRejection(imageCount: number, maxAttempts: number, cap: number): string | null {
-  const worstCase = imageCount * maxAttempts
+// Returns the rejection message when the book could exceed the bound, else null.
+export function imageCallBoundRejection(imageCount: number, maxCallsPerImage: number, cap: number): string | null {
+  const worstCase = imageCount * maxCallsPerImage
   if (worstCase <= cap) return null
-  return `This book could need up to ${worstCase} image-generation calls (${imageCount} images x ${maxAttempts} attempts), above the per-book image-call limit of ${cap}. Raise MAX_IMAGES_PER_JOB to allow more.`
+  return `This book could need up to ${worstCase} image-generation calls (${imageCount} images x up to ${maxCallsPerImage} calls each), above the per-book image-call limit of ${cap}. Raise MAX_IMAGE_CALLS_PER_JOB to allow more.`
+}
+
+// Up-front request validation, run by the handler BEFORE any book claim or
+// daily-usage accounting: config failures (500) and call-bound rejections
+// (400) consume nothing. Config is validated first so a misconfigured secret
+// fails fast regardless of the request contents.
+export type PreflightFailure = { status: number; message: string }
+
+export function preflightImageRequest(
+  env: EnvGetter,
+  pageSizeFallback: string,
+  imageCount: number,
+  maxCallsPerImage: number,
+): PreflightFailure | null {
+  try {
+    resolveImageModel(env)
+    resolveImageQuality(env)
+    resolveImageSize(env, pageSizeFallback)
+  } catch (configError) {
+    return { status: 500, message: configError instanceof Error ? configError.message : String(configError) }
+  }
+  const rejection = imageCallBoundRejection(imageCount, maxCallsPerImage, maxImageCallsPerJob(env))
+  return rejection ? { status: 400, message: rejection } : null
+}
+
+export class ImageApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ImageApiError'
+    this.status = status
+  }
+}
+
+// Reference-edit fallback gate: only a rejection that is ABOUT the reference
+// image content (a 400/422 from the edits endpoint) may fall back to plain
+// generation. Auth failures, unknown or retired models, rate limits, server
+// errors and network failures rethrow: retrying those as a plain generation
+// would double paid calls and mask the real error.
+export function isReferenceSpecificEditFailure(err: unknown): boolean {
+  return err instanceof ImageApiError && (err.status === 400 || err.status === 422)
 }
 
 export function parseImageResponse(result: any): string {
@@ -105,7 +148,7 @@ export async function generateOneImage(
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`OpenAI image API error ${response.status}: ${errorText}`)
+    throw new ImageApiError(`OpenAI image API error ${response.status}: ${errorText}`, response.status)
   }
 
   return parseImageResponse(logUsage(await response.json(), model, size, quality))
@@ -157,7 +200,7 @@ export async function editImageWithReference(
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`OpenAI image edits API error ${response.status}: ${errorText}`)
+    throw new ImageApiError(`OpenAI image edits API error ${response.status}: ${errorText}`, response.status)
   }
 
   return parseImageResponse(logUsage(await response.json(), model, size, quality))
