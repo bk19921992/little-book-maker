@@ -7,7 +7,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { layoutBand, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { dpiCheck, effectiveDpi, printBoxes } from "./printSpec.ts";
+import { containFit, dpiCheck, effectiveDpi, printBoxes } from "./printSpec.ts";
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -185,6 +185,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // Prefer the dedicated cover illustration (generated with clear title
   // space); fall back to the first story image for older books.
   const coverImageUrl = coverImage || coverImagePage?.imageUrl;
+  // Dedicated cover art is composed with title space reserved; the page-art
+  // fallback is not, so it gets the story-page treatment instead.
+  const dedicatedCover = Boolean(coverImage);
   // Print pages carry TrimBox/BleedBox so printers know the finished size.
   const markPrintBoxes = (page: ReturnType<typeof pdfDoc.addPage>) => {
     if (!includeBleed) return;
@@ -196,33 +199,6 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
   markPrintBoxes(coverPage);
   coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
-
-  if (coverImageUrl) {
-    const coverData = await fetchImageBytes(coverImageUrl);
-    if (coverData) {
-      try {
-        const img = await embedAny(pdfDoc, coverData);
-        const scale = Math.max(pageWidth / img.width, pageHeight / img.height);
-        const drawW = img.width * scale;
-        const drawH = img.height * scale;
-        coverPage.drawImage(img, {
-          x: (pageWidth - drawW) / 2,
-          y: (pageHeight - drawH) / 2,
-          width: drawW,
-          height: drawH,
-        });
-        qa.push({ where: 'cover', severity: 'pass', check: coverImage ? 'dedicated cover illustration, full-bleed, title space reserved' : 'cover illustration present, full-bleed (page art fallback)' });
-        if (includeBleed) qa.push(dpiCheck('cover', effectiveDpi(img, { width: drawW, height: drawH })));
-      } catch (coverError) {
-        console.error('Failed to embed cover image', coverError);
-        qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration failed to embed' });
-      }
-    } else {
-      qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration fetch failed' });
-    }
-  } else {
-    qa.push({ where: 'cover', severity: 'fail', check: 'no illustration available for the cover' });
-  }
 
   const titleText = normaliseTypography(config.children.length ? `${config.children.join(' & ')}'s Story` : 'Magical Story');
   const subtitleText = config.storyType ? normaliseTypography(`A ${sentenceCase(config.storyType)}`) : '';
@@ -241,59 +217,144 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   const platePadY = titleSize * 0.45;
   const plateWidth = Math.min(pageWidth - safeInset * 2, plateTextWidth + platePadX * 2);
   const plateHeight = titleSize * 1.15 + (subtitleText ? subtitleSize * 1.6 : 0) + platePadY * 2;
-  const plateX = (pageWidth - plateWidth) / 2;
-  const plateTop = pageHeight * 0.97; // title zone: hard against the top so cover art faces stay clear
-  const plateY = plateTop - plateHeight;
 
-  // Soft paper plate behind the title (double rect fakes a feathered edge).
-  coverPage.drawRectangle({
-    x: plateX - platePadX * 0.3,
-    y: plateY - platePadY * 0.3,
-    width: plateWidth + platePadX * 0.6,
-    height: plateHeight + platePadY * 0.6,
-    color: PAPER,
-    opacity: 0.35,
-  });
-  coverPage.drawRectangle({ x: plateX, y: plateY, width: plateWidth, height: plateHeight, color: PAPER, opacity: 0.9 });
+  // Fallback covers (page art, or no art) use the story-page system: the
+  // illustration sits uncropped above a paper band carrying the title.
+  const coverDedSize = Math.max(10, Math.round(pageWidth * 0.024));
+  const coverDedHeight = config.personal?.dedication ? coverDedSize * 2.2 : 0;
+  const coverBlockHeight = titleSize * 1.15 + (subtitleText ? subtitleSize * 1.6 : 0) + coverDedHeight;
+  const coverBandHeight = coverBlockHeight + titleSize * 0.7;
 
-  const titleY = plateY + plateHeight - platePadY - titleSize * 0.85;
-  coverPage.drawText(titleText, {
-    x: (pageWidth - titleWidth) / 2,
-    y: titleY,
-    size: titleSize,
-    font: fonts.display,
-    color: INK,
-  });
-  if (subtitleText) {
-    coverPage.drawText(subtitleText, {
-      x: (pageWidth - subtitleWidth) / 2,
-      y: titleY - subtitleSize * 1.5,
-      size: subtitleSize,
-      font: fonts.text,
-      color: INK,
-    });
+  if (coverImageUrl) {
+    const coverData = await fetchImageBytes(coverImageUrl);
+    if (coverData) {
+      try {
+        const img = await embedAny(pdfDoc, coverData);
+        let drawW: number;
+        let drawH: number;
+        if (dedicatedCover) {
+          // Composed for the cover: full-bleed, centred crop, title on a
+          // plate in the reserved space.
+          const scale = Math.max(pageWidth / img.width, pageHeight / img.height);
+          drawW = img.width * scale;
+          drawH = img.height * scale;
+          coverPage.drawImage(img, {
+            x: (pageWidth - drawW) / 2,
+            y: (pageHeight - drawH) / 2,
+            width: drawW,
+            height: drawH,
+          });
+        } else {
+          // Page-art fallback: contain-fit the whole illustration above the
+          // title band so framing never guillotines characters.
+          const fit = containFit(
+            { width: pageWidth, height: pageHeight - coverBandHeight },
+            { width: img.width, height: img.height },
+          );
+          drawW = fit.width;
+          drawH = fit.height;
+          coverPage.drawImage(img, { x: fit.x, y: coverBandHeight + fit.y, width: fit.width, height: fit.height });
+        }
+        qa.push({ where: 'cover', severity: 'pass', check: dedicatedCover ? 'dedicated cover illustration, full-bleed, title space reserved' : 'cover illustration present, uncropped, title on paper band (page art fallback)' });
+        if (includeBleed) qa.push(dpiCheck('cover', effectiveDpi(img, { width: drawW, height: drawH })));
+      } catch (coverError) {
+        console.error('Failed to embed cover image', coverError);
+        qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration failed to embed' });
+      }
+    } else {
+      qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration fetch failed' });
+    }
+  } else {
+    qa.push({ where: 'cover', severity: 'fail', check: 'no illustration available for the cover' });
   }
 
-  if (config.personal?.dedication) {
-    const dedText = normaliseTypography(config.personal.dedication);
-    const dedSize = Math.max(10, Math.round(pageWidth * 0.024));
-    const dedWidth = fonts.text.widthOfTextAtSize(dedText, dedSize);
-    const dedPad = dedSize * 0.8;
+  if (dedicatedCover) {
+    const plateX = (pageWidth - plateWidth) / 2;
+    const plateTop = pageHeight * 0.97; // title zone: hard against the top so cover art faces stay clear
+    const plateY = plateTop - plateHeight;
+
+    // Soft paper plate behind the title (double rect fakes a feathered edge).
     coverPage.drawRectangle({
-      x: (pageWidth - dedWidth) / 2 - dedPad,
-      y: safeInset - dedPad * 0.5,
-      width: dedWidth + dedPad * 2,
-      height: dedSize * 1.2 + dedPad,
+      x: plateX - platePadX * 0.3,
+      y: plateY - platePadY * 0.3,
+      width: plateWidth + platePadX * 0.6,
+      height: plateHeight + platePadY * 0.6,
       color: PAPER,
-      opacity: 0.88,
+      opacity: 0.35,
     });
-    coverPage.drawText(dedText, {
-      x: (pageWidth - dedWidth) / 2,
-      y: safeInset + dedPad * 0.25,
-      size: dedSize,
-      font: fonts.text,
+    coverPage.drawRectangle({ x: plateX, y: plateY, width: plateWidth, height: plateHeight, color: PAPER, opacity: 0.9 });
+
+    const titleY = plateY + plateHeight - platePadY - titleSize * 0.85;
+    coverPage.drawText(titleText, {
+      x: (pageWidth - titleWidth) / 2,
+      y: titleY,
+      size: titleSize,
+      font: fonts.display,
       color: INK,
     });
+    if (subtitleText) {
+      coverPage.drawText(subtitleText, {
+        x: (pageWidth - subtitleWidth) / 2,
+        y: titleY - subtitleSize * 1.5,
+        size: subtitleSize,
+        font: fonts.text,
+        color: INK,
+      });
+    }
+
+    if (config.personal?.dedication) {
+      const dedText = normaliseTypography(config.personal.dedication);
+      const dedWidth = fonts.text.widthOfTextAtSize(dedText, coverDedSize);
+      const dedPad = coverDedSize * 0.8;
+      coverPage.drawRectangle({
+        x: (pageWidth - dedWidth) / 2 - dedPad,
+        y: safeInset - dedPad * 0.5,
+        width: dedWidth + dedPad * 2,
+        height: coverDedSize * 1.2 + dedPad,
+        color: PAPER,
+        opacity: 0.88,
+      });
+      coverPage.drawText(dedText, {
+        x: (pageWidth - dedWidth) / 2,
+        y: safeInset + dedPad * 0.25,
+        size: coverDedSize,
+        font: fonts.text,
+        color: INK,
+      });
+    }
+  } else {
+    // Title block centred in the paper band; dedication (if any) beneath it.
+    const blockBottom = (coverBandHeight - coverBlockHeight) / 2;
+    let baseline = blockBottom + coverBlockHeight - titleSize * 0.9;
+    coverPage.drawText(titleText, {
+      x: (pageWidth - titleWidth) / 2,
+      y: baseline,
+      size: titleSize,
+      font: fonts.display,
+      color: INK,
+    });
+    if (subtitleText) {
+      baseline -= subtitleSize * 1.6;
+      coverPage.drawText(subtitleText, {
+        x: (pageWidth - subtitleWidth) / 2,
+        y: baseline,
+        size: subtitleSize,
+        font: fonts.text,
+        color: INK,
+      });
+    }
+    if (config.personal?.dedication) {
+      const dedText = normaliseTypography(config.personal.dedication);
+      const dedWidth = fonts.text.widthOfTextAtSize(dedText, coverDedSize);
+      baseline -= coverDedSize * 2.2;
+      coverPage.drawText(dedText, {
+        x: (pageWidth - dedWidth) / 2,
+        y: baseline,
+        size: coverDedSize,
+        font: fonts.text,
+        color: INK,
+      });
+    }
   }
 
   // ---- Story pages ----
@@ -334,20 +395,21 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
             });
             if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: drawW, height: drawH })));
           } else {
-            // Split: cover-crop the artwork into the region above the band,
-            // edge to edge.
-            const scale = Math.max(pageWidth / embeddedImage.width, artHeight / embeddedImage.height);
-            const drawW = embeddedImage.width * scale;
-            const drawH = embeddedImage.height * scale;
+            // Split: contain-fit the whole illustration inside the region
+            // above the band, centred. Nothing is cropped; where the art's
+            // shape differs from the region's, paper margins frame it. The
+            // art can no longer spill into the band, so no mask is needed.
+            const fit = containFit(
+              { width: pageWidth, height: artHeight },
+              { width: embeddedImage.width, height: embeddedImage.height },
+            );
             storyPage.drawImage(embeddedImage, {
-              x: (pageWidth - drawW) / 2,
-              y: bandTop + (artHeight - drawH) / 2,
-              width: drawW,
-              height: drawH,
+              x: fit.x,
+              y: bandTop + fit.y,
+              width: fit.width,
+              height: fit.height,
             });
-            // Mask any artwork spilling into the band (centre crop overflow).
-            storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: bandTop, color: PAPER });
-            if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: drawW, height: drawH })));
+            if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: fit.width, height: fit.height })));
           }
           imagePlaced = true;
         } catch (imageError) {
@@ -384,7 +446,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     }
 
     // Paper band (opaque) over the bottom of the page for overlay pages; for
-    // split pages the page background is already paper and the art was masked.
+    // split pages the page background is already paper and the contain-fit
+    // art never reaches the band.
     if (overlay) {
       storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: bandTop, color: PAPER });
     }
