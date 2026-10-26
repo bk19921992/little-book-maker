@@ -3,58 +3,10 @@ import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../
 import { getCorsHeaders } from "../_shared/cors.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
-import { buildItems, runStep, summarise, type AttemptWorker } from "./jobs.ts"
+import { buildItems, MAX_ATTEMPTS, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
 import { acceptedReferenceImage, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
-
-function parseImageResponse(result: any): string {
-  const b64 = result?.data?.[0]?.b64_json
-  if (!b64) {
-    throw new Error('OpenAI image API returned no image data')
-  }
-  return `data:image/jpeg;base64,${b64}`
-}
-
-async function generateOneImage(
-  openaiKey: string,
-  model: string,
-  size: string,
-  quality: string,
-  fullPrompt: string,
-): Promise<string> {
-  const response = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openaiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      prompt: fullPrompt,
-      n: 1,
-      size,
-      quality,
-      output_format: 'jpeg',
-    }),
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`OpenAI image API error ${response.status}: ${errorText}`)
-  }
-
-  return parseImageResponse(await response.json())
-}
-
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const parts = dataUrl.split(',', 2)
-  const binary = atob(parts[1])
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
+import { editImageWithReference, generateOneImage, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
 
 interface ImageReview {
   pass: boolean
@@ -68,8 +20,6 @@ interface ImageReview {
 // A reviewer API outage never blocks the pipeline (marked skipped, surfaced in
 // the response); a found defect DOES - the page is regenerated with the
 // rejection reasons fed back, up to MAX_IMAGE_ATTEMPTS total tries.
-const MAX_IMAGE_ATTEMPTS = 3
-
 async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl: string, ctx: ReviewContext): Promise<ImageReview> {
   const reviewPrompt = buildReviewPrompt(ctx)
 
@@ -108,47 +58,6 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
   return { pass: true, issues: [], skipped: true }
 }
 
-// gpt-image-1 accepts reference images on the edits endpoint. Passing the first
-// page's illustration anchors the child, animals and recurring props visually,
-// which holds their identity far better than a text-only description.
-async function editImageWithReference(
-  openaiKey: string,
-  model: string,
-  size: string,
-  quality: string,
-  fullPrompt: string,
-  referenceDataUrl: string,
-): Promise<string> {
-  const bytes = dataUrlToBytes(referenceDataUrl)
-  // A supplied reference may be an older PNG page, so label the upload with
-  // its real type rather than assuming JPEG.
-  const mimeType = referenceDataUrl.slice(5, referenceDataUrl.indexOf(';')) || 'image/jpeg'
-  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg'
-  const form = new FormData()
-  form.append('model', model)
-  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: mimeType }), `reference.${extension}`)
-  form.append('prompt', fullPrompt)
-  form.append('n', '1')
-  form.append('size', size)
-  form.append('quality', quality)
-  form.append('output_format', 'jpeg')
-
-  const response = await fetch('https://api.openai.com/v1/images/edits', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: form,
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`OpenAI image edits API error ${response.status}: ${errorText}`)
-  }
-
-  return parseImageResponse(await response.json())
-}
-
 // What a job stores once for all its items.
 type JobRequest = {
   pageSize: string
@@ -163,8 +72,9 @@ const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // fallback and review as the single-request path below.
 function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
   return async ({ request, item, reference, feedback }) => {
-    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
-    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
+    const env = (key: string) => Deno.env.get(key)
+    const model = resolveImageModel(env)
+    const quality = resolveImageQuality(env)
     const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
     const styleBible = buildStyleBible(request.config, request.size, request.pageLayout || 'split')
     const styleAnchor = styleProfile(request.config?.imageStyle)?.anchor || ''
@@ -178,12 +88,11 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
 
     let url: string
     if (reference) {
-      try {
-        url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
-      } catch (editError) {
-        console.error(`Reference edit failed for ${label}, falling back to plain generation:`, editError)
-        url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
-      }
+      // Fail closed: a failed reference edit fails this attempt with the real
+      // error. Never fall back to plain generation - that would silently drop
+      // the character reference and could retry a moderation or
+      // invalid-request rejection as a second paid call.
+      url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
     } else {
       url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
     }
@@ -269,6 +178,22 @@ serve(async (req) => {
       throw new Error('prompts must contain at most 20 pages')
     }
 
+    // Validate image config and the per-book image-call bound up front,
+    // BEFORE any book claim or daily-usage accounting: failures here consume
+    // nothing. (The per-step worker resolves the same config again because a
+    // step runs in a later invocation.) Each attempt makes exactly 1 image
+    // call, hence MAX_ATTEMPTS per image.
+    const preflightFailure = preflightImageRequest(
+      (key: string) => Deno.env.get(key),
+      OPENAI_SIZES[pageSize] || '1024x1536',
+      (prompts as ImagePrompt[]).length + (includeCover ? 1 : 0),
+      MAX_ATTEMPTS,
+    )
+    if (preflightFailure) {
+      if (preflightFailure.detail) console.error('Image preflight config failure:', preflightFailure.detail)
+      return json({ error: preflightFailure.message }, preflightFailure.status)
+    }
+
     if (body.action !== 'start') throw new Error('Unknown illustration action')
     if (!await claimBook(serviceClient(), user.id, body.storyId)) return bookPaymentRequired(corsHeaders)
 
@@ -282,7 +207,7 @@ serve(async (req) => {
       const request: JobRequest = {
         pageSize,
         pageLayout: pageLayout || 'split',
-        size: Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536',
+        size: resolveImageSize((key: string) => Deno.env.get(key), OPENAI_SIZES[pageSize] || '1024x1536'),
         config: body.config || prompts[0]?.config,
       }
       // The config is stored once on the job, not on every item.
@@ -300,9 +225,10 @@ serve(async (req) => {
 
     console.log('Generate images request: user', user.id, 'pages', prompts.length)
 
-    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
-    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
-    const size = Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536'
+    const env = (key: string) => Deno.env.get(key)
+    const model = resolveImageModel(env)
+    const quality = resolveImageQuality(env)
+    const size = resolveImageSize(env, OPENAI_SIZES[pageSize] || '1024x1536')
     const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
 
     // All pages in one request share the same config, so build the style bible once.
@@ -335,7 +261,7 @@ serve(async (req) => {
         let url = ''
         let review: ImageReview = { pass: false, issues: ['not yet reviewed'] }
         const basePrompt = fullPrompt
-        for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
           // Retry hygiene: only the LATEST rejection is fed back (stacking
           // notes bloats the prompt and dilutes the scene), and the style
           // lock is repeated AFTER the feedback so it stays the final word.
@@ -344,14 +270,10 @@ serve(async (req) => {
             console.log(`Regenerating page ${promptData.page} after review rejection (attempt ${attempt}): ${review.issues.join('; ')}`)
           }
           if (referenceUrl) {
-            try {
-              url = await editImageWithReference(openaiKey, model, size, quality, attemptPrompt, referenceUrl)
-            } catch (editError) {
-              // Never lose a page because the edits call failed: fall back to a
-              // plain generation guided by the style bible.
-              console.error(`Reference edit failed for page ${promptData.page}, falling back to plain generation:`, editError)
-              url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
-            }
+            // Fail closed: a failed reference edit fails this attempt with the
+            // real error. Never fall back to plain generation - that would
+            // silently drop the character reference for this page.
+            url = await editImageWithReference(openaiKey, model, size, quality, attemptPrompt, referenceUrl)
           } else {
             url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
           }
@@ -364,8 +286,8 @@ serve(async (req) => {
           if (review.pass) break
         }
         if (!review.pass) {
-          console.error(`Quality review failed for page ${promptData.page} after ${MAX_IMAGE_ATTEMPTS} attempts: ${review.issues.join('; ')}`)
-          errors.push({ page: promptData.page, error: `Quality review failed after ${MAX_IMAGE_ATTEMPTS} attempts: ${review.issues.join('; ')}` })
+          console.error(`Quality review failed for page ${promptData.page} after ${MAX_ATTEMPTS} attempts: ${review.issues.join('; ')}`)
+          errors.push({ page: promptData.page, error: `Quality review failed after ${MAX_ATTEMPTS} attempts: ${review.issues.join('; ')}` })
           continue
         }
         // A rejected page never becomes the visual reference for later pages.
@@ -401,18 +323,16 @@ serve(async (req) => {
         // (the export falls back to its no-dedicated-cover path) rather than
         // shipping a defective front cover.
         coverReview = { pass: false, issues: ['not yet reviewed'] }
-        for (let attempt = 1; attempt <= MAX_IMAGE_ATTEMPTS; attempt++) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
           const fullCoverPrompt = attempt > 1 ? withReviewFeedback(coverPrompt, coverReview.issues, styleAnchor) : coverPrompt
           if (attempt > 1) {
             console.log(`Regenerating cover after review rejection (attempt ${attempt}): ${coverReview.issues.join('; ')}`)
           }
           if (referenceUrl) {
-            try {
-              coverUrl = await editImageWithReference(openaiKey, model, size, quality, fullCoverPrompt, referenceUrl)
-            } catch (coverEditError) {
-              console.error('Cover reference edit failed, falling back to plain generation:', coverEditError)
-              coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
-            }
+            // Fail closed: a failed reference edit fails this attempt with the
+            // real error. Never fall back to plain generation - that would
+            // silently drop the character reference on the cover.
+            coverUrl = await editImageWithReference(openaiKey, model, size, quality, fullCoverPrompt, referenceUrl)
           } else {
             coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
           }
@@ -425,8 +345,8 @@ serve(async (req) => {
           if (coverReview.pass) break
         }
         if (!coverReview.pass) {
-          console.error(`Cover failed quality review after ${MAX_IMAGE_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}`)
-          errors.push({ page: 0, error: `Cover quality review failed after ${MAX_IMAGE_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}` })
+          console.error(`Cover failed quality review after ${MAX_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}`)
+          errors.push({ page: 0, error: `Cover quality review failed after ${MAX_ATTEMPTS} attempts: ${coverReview.issues.join('; ')}` })
           coverUrl = undefined
         }
       } catch (coverError) {
