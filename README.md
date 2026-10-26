@@ -88,9 +88,12 @@ STRIPE_SECRET_KEY=...
 ```
 
 Story text and page illustrations both use OpenAI (`OPENAI_API_KEY`). Image
-generation defaults to `gpt-image-1` at `medium` quality; override with the
+generation defaults to `gpt-image-2.5-sunburst` at `medium` quality
+(gpt-image-1 was shut down by OpenAI on 23 Oct 2026); override with the
 optional `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_SIZE` and `OPENAI_IMAGE_QUALITY`
-secrets if needed. Every illustration passes a vision review
+secrets if needed. Quality is limited to `low`/`medium`/`high` and each book
+is capped at `MAX_IMAGES_PER_JOB` OpenAI image calls (default 21) to bound
+per-book spend. Every illustration passes a vision review
 (`OPENAI_REVIEW_MODEL`, default `gpt-4.1`) before it is accepted; a picture
 that fails three attempts ships no image, and one made while the reviewer was
 unavailable is re-checked before checkout.
