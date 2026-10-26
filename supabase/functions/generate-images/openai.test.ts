@@ -5,6 +5,7 @@
 // /v1/images/edits as gpt-image-1) and the cost guards.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   ALLOWED_IMAGE_QUALITIES,
   DEFAULT_IMAGE_MODEL,
@@ -13,7 +14,6 @@ import {
   generateOneImage,
   ImageApiError,
   imageCallBoundRejection,
-  isReferenceSpecificEditFailure,
   maxImageCallsPerJob,
   parseImageResponse,
   preflightImageRequest,
@@ -55,31 +55,34 @@ test('size override is validated against the supported set', () => {
 })
 
 test('per-book image-call bound covers the largest book the product can express', () => {
-  // 20 pages + cover (21 images) x 3 attempts x (reference edit + fallback)
-  assert.equal(DEFAULT_MAX_IMAGE_CALLS_PER_JOB, 126)
+  // 20 pages + cover (21 images) x 3 attempts x 1 call per attempt
+  assert.equal(DEFAULT_MAX_IMAGE_CALLS_PER_JOB, 63)
   assert.equal(maxImageCallsPerJob(noEnv), DEFAULT_MAX_IMAGE_CALLS_PER_JOB)
   assert.equal(maxImageCallsPerJob((k) => k === 'MAX_IMAGE_CALLS_PER_JOB' ? '150' : undefined), 150)
   assert.equal(maxImageCallsPerJob((k) => k === 'MAX_IMAGE_CALLS_PER_JOB' ? 'junk' : undefined), DEFAULT_MAX_IMAGE_CALLS_PER_JOB)
   // The app's maximum book (21 images, 6 calls each) exactly fits the default.
-  assert.equal(imageCallBoundRejection(21, 6, 126), null)
-  assert.match(imageCallBoundRejection(22, 6, 126) || '', /image-call limit of 126/)
+  assert.equal(imageCallBoundRejection(21, 3, 63), null)
+  assert.match(imageCallBoundRejection(22, 3, 63) || '', /image-call limit of 63/)
   // A lowered env bound rejects truthfully, naming the bound.
   assert.match(imageCallBoundRejection(4, 6, 21) || '', /image-call limit of 21/)
 })
 
-test('edit fallback gate: only reference-content rejections (400/422) may fall back', () => {
-  assert.equal(isReferenceSpecificEditFailure(new ImageApiError('edits rejected', 400)), true)
-  assert.equal(isReferenceSpecificEditFailure(new ImageApiError('edits rejected', 422)), true)
-  // Auth, retired model, rate limit, server and network failures must rethrow.
-  for (const status of [401, 403, 404, 429, 500, 503]) {
-    assert.equal(isReferenceSpecificEditFailure(new ImageApiError('boom', status)), false)
+test('reference edit failures propagate: 400/422/500 never trigger plain generation', async () => {
+  // The client throws ImageApiError with the HTTP status for any non-OK edits
+  // response, and index.ts has no edit->generate fallback at any call site.
+  const ref = 'data:image/png;base64,' + Buffer.from('png-bytes').toString('base64')
+  for (const status of [400, 422, 500]) {
+    const mockFetch = async () => new Response('rejected', { status })
+    const err = await editImageWithReference('sk-test', 'gpt-image-2.5-sunburst', '1024x1024', 'medium', 'a fox', ref, mockFetch as any).catch((e) => e)
+    assert.ok(err instanceof ImageApiError)
+    assert.equal((err as ImageApiError).status, status)
   }
-  assert.equal(isReferenceSpecificEditFailure(new Error('network')), false)
-  assert.equal(isReferenceSpecificEditFailure(new TypeError('fetch failed')), false)
-  assert.equal(isReferenceSpecificEditFailure('string error'), false)
+  const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+  assert.ok(!source.includes('isReferenceSpecificEditFailure'), 'index.ts must not contain a fallback gate')
+  assert.equal(source.split('editImageWithReference(').length - 1, 3, 'worker + page + cover call the edit directly, no fallback wrapper')
 })
 
-test('API errors carry their HTTP status for the fallback gate', async () => {
+test('API errors carry their HTTP status', async () => {
   const mockFetch = async () => new Response('model_not_found', { status: 404 })
   const err = await generateOneImage('sk-test', 'gpt-image-1', '1024x1536', 'low', 'a fox', mockFetch as any).catch((e) => e)
   assert.ok(err instanceof ImageApiError)
@@ -90,17 +93,18 @@ test('API errors carry their HTTP status for the fallback gate', async () => {
 test('preflight validates config before the call bound and never consumes quota', () => {
   const env = (k: string) => k === 'OPENAI_IMAGE_QUALITY' ? 'max' : undefined
   // Bad config wins over a call-bound violation: 500, naming the config problem.
-  const badConfig = preflightImageRequest(env, '1024x1536', 22, 6)
+  const badConfig = preflightImageRequest(env, '1024x1536', 22, 3)
   assert.equal(badConfig?.status, 500)
-  assert.match(badConfig!.message, /OPENAI_IMAGE_QUALITY/)
+  assert.equal(badConfig!.message, 'Image generation is not configured correctly')
+  assert.match(badConfig!.detail || '', /OPENAI_IMAGE_QUALITY/)
   // Valid config + oversized book: 400 call-bound rejection.
-  const tooBig = preflightImageRequest(noEnv, '1024x1536', 22, 6)
+  const tooBig = preflightImageRequest(noEnv, '1024x1536', 22, 3)
   assert.equal(tooBig?.status, 400)
   assert.match(tooBig!.message, /image-call limit/)
   // Valid config + the largest supported book: passes.
-  assert.equal(preflightImageRequest(noEnv, '1024x1536', 21, 6), null)
+  assert.equal(preflightImageRequest(noEnv, '1024x1536', 21, 3), null)
   // Bad size override is a config failure too.
-  const badSize = preflightImageRequest((k) => k === 'OPENAI_IMAGE_SIZE' ? '800x800' : undefined, '1024x1536', 7, 6)
+  const badSize = preflightImageRequest((k) => k === 'OPENAI_IMAGE_SIZE' ? '800x800' : undefined, '1024x1536', 7, 3)
   assert.equal(badSize?.status, 500)
 })
 
