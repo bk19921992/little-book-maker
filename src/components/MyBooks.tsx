@@ -17,7 +17,8 @@ interface MyBooksProps {
 // The customer's saved books: reopen one to edit or export again, download
 // its PDF, or delete it.
 export const MyBooks: React.FC<MyBooksProps> = ({ open, userId, onOpenChange, onOpenBook }) => {
-  const [books, setBooks] = useState<SavedBookSummary[] | null>(null);
+  // null = loading, 'error' = the load failed (never shown as an empty list).
+  const [books, setBooks] = useState<SavedBookSummary[] | 'error' | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -26,7 +27,7 @@ export const MyBooks: React.FC<MyBooksProps> = ({ open, userId, onOpenChange, on
     } catch (error) {
       console.error('Loading saved books failed', error);
       toast.error("We couldn't load your books. Please try again.");
-      setBooks([]);
+      setBooks('error');
     }
   }, []);
 
@@ -85,8 +86,16 @@ export const MyBooks: React.FC<MyBooksProps> = ({ open, userId, onOpenChange, on
         </DialogHeader>
         {books === null ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="w-4 h-4 animate-spin" /> Loading your books...</div>
+        ) : books === 'error' ? (
+          <div className="py-6 space-y-4">
+            <p className="text-sm text-muted-foreground">Your books could not be loaded. Try again.</p>
+            <Button size="sm" variant="outline" onClick={() => { setBooks(null); void refresh(); }}>Try again</Button>
+          </div>
         ) : books.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-6">No saved books yet. Books are saved as soon as their pictures are ready.</p>
+          <div className="py-6 space-y-4">
+            <p className="text-sm text-muted-foreground">No saved books yet. Books are saved as soon as their pictures are ready.</p>
+            <Button size="sm" variant="outline" onClick={() => onOpenChange(false)}>Back to your story</Button>
+          </div>
         ) : (
           <ul className="divide-y max-h-[60vh] overflow-y-auto">
             {books.map((book) => (
