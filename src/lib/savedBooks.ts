@@ -16,6 +16,7 @@ export interface SavedBookSummary {
   exportedAt: string | null;
   pageSize?: string;
   pageCount: number;
+  coverImagePath: string | null;
   webPdfPath: string | null;
   printPdfPath: string | null;
 }
@@ -114,6 +115,7 @@ export async function listBooks(db: SupabaseClient): Promise<SavedBookSummary[]>
     exportedAt: row.exported_at,
     pageSize: (row.config as StoredConfig)?.pageSize,
     pageCount: (row.config as StoredConfig)?.pages?.length ?? 0,
+    coverImagePath: (row.config as StoredConfig)?.coverImagePath ?? null,
     webPdfPath: row.web_pdf_path,
     printPdfPath: row.print_pdf_path,
   }));
@@ -139,6 +141,24 @@ export async function openBook(db: SupabaseClient, storyId: string): Promise<Sto
   const { coverImagePath, pages: _p, ...setup } = stored;
   const coverImageUrl = await load(coverImagePath);
   return { ...(setup as StoryConfig), storyId, pages, ...(coverImageUrl ? { coverImageUrl } : {}) };
+}
+
+// Cover thumbnails for the library list, as short-lived signed URLs keyed by
+// storage path. Covers that fail to sign are skipped; the list shows a
+// placeholder for those rather than failing the whole load.
+export async function coverImageLinks(db: SupabaseClient, paths: string[], ttlSeconds = 60 * 60): Promise<Map<string, string>> {
+  const links = new Map<string, string>();
+  if (!paths.length) return links;
+  try {
+    const { data, error } = await db.storage.from(BOOKS_BUCKET).createSignedUrls(paths, ttlSeconds);
+    if (error || !data) return links;
+    for (const entry of data) {
+      if (entry.path && entry.signedUrl && !entry.error) links.set(entry.path, entry.signedUrl);
+    }
+  } catch {
+    // A thrown storage failure yields placeholders too; the book list must survive it.
+  }
+  return links;
 }
 
 export async function pdfDownloadLink(db: SupabaseClient, path: string, filename: string): Promise<string> {
