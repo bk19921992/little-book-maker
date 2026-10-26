@@ -1,4 +1,4 @@
-// OpenAI image client + cost guards for the illustration pipeline.
+// OpenAI image client + request validation for the illustration pipeline.
 // This module has no Deno references so `node --test` can import it directly
 // (see openai.test.ts); index.ts wires it to Deno.env and the live fetch.
 
@@ -18,13 +18,15 @@ export const ALLOWED_IMAGE_SIZES = ['1024x1024', '1024x1536', '1536x1024']
 
 // Hard per-book bound on OpenAI image-generation API calls (NOT a monetary
 // cap and not a limit on review or story-text calls, which are bounded
-// separately by the per-attempt limit and the story functions). One attempt
-// can make 2 image calls (reference edit + plain-generation fallback), so the
-// honest worst case for the largest supported book - 20 pages + cover
-// (21 images) x 3 attempts x 2 calls - is 126. The bound never restricts a
-// book the product can express; it only stops retry loops or future changes
-// from multiplying paid calls past that envelope.
-export const DEFAULT_MAX_IMAGE_CALLS_PER_JOB = 126
+// separately by the per-attempt limit and the story functions). Each attempt
+// makes exactly 1 image call (a reference edit when a character reference
+// exists, else a plain generation; a failed edit fails the attempt and never
+// falls back to plain generation), so the worst case for the largest
+// supported book - 20 pages + cover (21 images) x 3 attempts - is 63. The
+// bound documents that existing maximum envelope rather than adding a new
+// restriction; it only stops retry loops or future changes from multiplying
+// paid calls past it.
+export const DEFAULT_MAX_IMAGE_CALLS_PER_JOB = 63
 
 export type EnvGetter = (key: string) => string | undefined
 
@@ -65,7 +67,7 @@ export function imageCallBoundRejection(imageCount: number, maxCallsPerImage: nu
 // daily-usage accounting: config failures (500) and call-bound rejections
 // (400) consume nothing. Config is validated first so a misconfigured secret
 // fails fast regardless of the request contents.
-export type PreflightFailure = { status: number; message: string }
+export type PreflightFailure = { status: number; message: string; detail?: string }
 
 export function preflightImageRequest(
   env: EnvGetter,
@@ -78,7 +80,9 @@ export function preflightImageRequest(
     resolveImageQuality(env)
     resolveImageSize(env, pageSizeFallback)
   } catch (configError) {
-    return { status: 500, message: configError instanceof Error ? configError.message : String(configError) }
+    // The client gets a generic message; the config detail is logged
+    // server-side only, never returned to the caller.
+    return { status: 500, message: 'Image generation is not configured correctly', detail: configError instanceof Error ? configError.message : String(configError) }
   }
   const rejection = imageCallBoundRejection(imageCount, maxCallsPerImage, maxImageCallsPerJob(env))
   return rejection ? { status: 400, message: rejection } : null
@@ -91,15 +95,6 @@ export class ImageApiError extends Error {
     this.name = 'ImageApiError'
     this.status = status
   }
-}
-
-// Reference-edit fallback gate: only a rejection that is ABOUT the reference
-// image content (a 400/422 from the edits endpoint) may fall back to plain
-// generation. Auth failures, unknown or retired models, rate limits, server
-// errors and network failures rethrow: retrying those as a plain generation
-// would double paid calls and mask the real error.
-export function isReferenceSpecificEditFailure(err: unknown): boolean {
-  return err instanceof ImageApiError && (err.status === 400 || err.status === 422)
 }
 
 export function parseImageResponse(result: any): string {
