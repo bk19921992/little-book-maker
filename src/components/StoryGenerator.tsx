@@ -49,18 +49,6 @@ export const StoryGenerator: React.FC = () => {
     updateConfig({ ...book, exports: undefined, coverImageUrl: book.coverImageUrl, coverImageReview: book.coverImageReview });
     setStep('edit');
   };
-  // The open editor must forget a deleted book, or autosave would quietly re-save it.
-  const handleDeletedBook = (storyId: string) => {
-    if (config.storyId === storyId) {
-      resetState();
-      setStep('setup');
-    }
-  };
-  // The empty library's call to action starts a genuinely fresh book.
-  const handleMakeBook = () => {
-    resetState();
-    setStep('setup');
-  };
 
   // Autosave while editing and exporting (text edits, redone pictures), so
   // the book on the account matches what the customer sees. Debounced; the
@@ -198,7 +186,7 @@ export const StoryGenerator: React.FC = () => {
       </header>
 
       {user && (
-        <MyBooks open={myBooksOpen} userId={user.id} onOpenChange={setMyBooksOpen} onOpenBook={openSavedBook} onDeletedBook={handleDeletedBook} onMakeBook={handleMakeBook} />
+        <MyBooks open={myBooksOpen} userId={user.id} onOpenChange={setMyBooksOpen} onOpenBook={openSavedBook} />
       )}
 
       {/* Main Content */}
