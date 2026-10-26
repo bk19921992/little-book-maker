@@ -6,55 +6,7 @@ import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.t
 import { buildItems, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
 import { acceptedReferenceImage, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
-
-function parseImageResponse(result: any): string {
-  const b64 = result?.data?.[0]?.b64_json
-  if (!b64) {
-    throw new Error('OpenAI image API returned no image data')
-  }
-  return `data:image/jpeg;base64,${b64}`
-}
-
-async function generateOneImage(
-  openaiKey: string,
-  model: string,
-  size: string,
-  quality: string,
-  fullPrompt: string,
-): Promise<string> {
-  const response = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openaiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      prompt: fullPrompt,
-      n: 1,
-      size,
-      quality,
-      output_format: 'jpeg',
-    }),
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`OpenAI image API error ${response.status}: ${errorText}`)
-  }
-
-  return parseImageResponse(await response.json())
-}
-
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const parts = dataUrl.split(',', 2)
-  const binary = atob(parts[1])
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
+import { editImageWithReference, generateOneImage, imageCapRejection, maxImagesPerJob, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
 
 interface ImageReview {
   pass: boolean
@@ -108,47 +60,6 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
   return { pass: true, issues: [], skipped: true }
 }
 
-// gpt-image-1 accepts reference images on the edits endpoint. Passing the first
-// page's illustration anchors the child, animals and recurring props visually,
-// which holds their identity far better than a text-only description.
-async function editImageWithReference(
-  openaiKey: string,
-  model: string,
-  size: string,
-  quality: string,
-  fullPrompt: string,
-  referenceDataUrl: string,
-): Promise<string> {
-  const bytes = dataUrlToBytes(referenceDataUrl)
-  // A supplied reference may be an older PNG page, so label the upload with
-  // its real type rather than assuming JPEG.
-  const mimeType = referenceDataUrl.slice(5, referenceDataUrl.indexOf(';')) || 'image/jpeg'
-  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg'
-  const form = new FormData()
-  form.append('model', model)
-  form.append('image[]', new Blob([bytes as unknown as BlobPart], { type: mimeType }), `reference.${extension}`)
-  form.append('prompt', fullPrompt)
-  form.append('n', '1')
-  form.append('size', size)
-  form.append('quality', quality)
-  form.append('output_format', 'jpeg')
-
-  const response = await fetch('https://api.openai.com/v1/images/edits', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: form,
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`OpenAI image edits API error ${response.status}: ${errorText}`)
-  }
-
-  return parseImageResponse(await response.json())
-}
-
 // What a job stores once for all its items.
 type JobRequest = {
   pageSize: string
@@ -163,8 +74,9 @@ const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // fallback and review as the single-request path below.
 function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
   return async ({ request, item, reference, feedback }) => {
-    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
-    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
+    const env = (key: string) => Deno.env.get(key)
+    const model = resolveImageModel(env)
+    const quality = resolveImageQuality(env)
     const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
     const styleBible = buildStyleBible(request.config, request.size, request.pageLayout || 'split')
     const styleAnchor = styleProfile(request.config?.imageStyle)?.anchor || ''
@@ -269,6 +181,15 @@ serve(async (req) => {
       throw new Error('prompts must contain at most 20 pages')
     }
 
+    // Hard per-book cap on OpenAI image calls: every generation attempt costs
+    // money, so reject oversized books before any paid call is made.
+    const imageCapRejectionMessage = imageCapRejection(
+      (prompts as ImagePrompt[]).length + (includeCover ? 1 : 0),
+      MAX_IMAGE_ATTEMPTS,
+      maxImagesPerJob((key: string) => Deno.env.get(key)),
+    )
+    if (imageCapRejectionMessage) return json({ error: imageCapRejectionMessage }, 400)
+
     if (body.action !== 'start') throw new Error('Unknown illustration action')
     if (!await claimBook(serviceClient(), user.id, body.storyId)) return bookPaymentRequired(corsHeaders)
 
@@ -282,7 +203,7 @@ serve(async (req) => {
       const request: JobRequest = {
         pageSize,
         pageLayout: pageLayout || 'split',
-        size: Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536',
+        size: resolveImageSize((key: string) => Deno.env.get(key), OPENAI_SIZES[pageSize] || '1024x1536'),
         config: body.config || prompts[0]?.config,
       }
       // The config is stored once on the job, not on every item.
@@ -300,9 +221,10 @@ serve(async (req) => {
 
     console.log('Generate images request: user', user.id, 'pages', prompts.length)
 
-    const model = Deno.env.get('OPENAI_IMAGE_MODEL') || 'gpt-image-1'
-    const quality = Deno.env.get('OPENAI_IMAGE_QUALITY') || 'medium'
-    const size = Deno.env.get('OPENAI_IMAGE_SIZE') || OPENAI_SIZES[pageSize] || '1024x1536'
+    const env = (key: string) => Deno.env.get(key)
+    const model = resolveImageModel(env)
+    const quality = resolveImageQuality(env)
+    const size = resolveImageSize(env, OPENAI_SIZES[pageSize] || '1024x1536')
     const reviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
 
     // All pages in one request share the same config, so build the style bible once.
