@@ -65,18 +65,25 @@ const FixtureDialog = ({ state }: { state: string }) => {
 
   useEffect(() => {
     if (state !== 'delete') return;
-    const clickTimer = setTimeout(() => {
-      document.querySelector<HTMLButtonElement>('button[aria-label^="Delete"]')?.click();
-    }, 400);
+    // Poll: the list loads asynchronously, so the delete button may not exist yet at mount.
+    const clickInterval = setInterval(() => {
+      const button = document.querySelector<HTMLButtonElement>('button[aria-label^="Delete"]');
+      if (button && !document.querySelector('[role="alertdialog"]')) {
+        button.click();
+      }
+    }, 250);
     // Radix should move focus inside the stacked AlertDialog when it opens over the Dialog.
-    const focusTimer = setTimeout(() => {
+    const focusInterval = setInterval(() => {
+      if (!document.querySelector('[role="alertdialog"]')) return;
       const active = document.activeElement as HTMLElement | null;
       const inside = !!active?.closest('[role="alertdialog"]');
       setFocusCheck(inside
         ? `FOCUS CHECK PASS: focus moved inside the delete confirmation ("${active?.textContent?.trim() || active?.tagName}")`
         : 'FOCUS CHECK FAIL: focus is not inside the delete confirmation');
-    }, 1000);
-    return () => { clearTimeout(clickTimer); clearTimeout(focusTimer); };
+      clearInterval(focusInterval);
+      clearInterval(clickInterval);
+    }, 250);
+    return () => { clearInterval(clickInterval); clearInterval(focusInterval); };
   }, [state]);
 
   return (
