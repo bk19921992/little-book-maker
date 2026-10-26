@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { MyBooks } from '@/components/MyBooks';
 
@@ -62,6 +62,9 @@ const mockDb = (state: string): SupabaseClient => ({
 
 const FixtureDialog = ({ state }: { state: string }) => {
   const [focusCheck, setFocusCheck] = useState('focus check pending...');
+  // Stable identity: a fresh mock per render would invalidate the component's
+  // owner-scoped state (exactly what the component is designed to do).
+  const db = useMemo(() => mockDb(state), [state]);
 
   useEffect(() => {
     if (state !== 'delete') return;
@@ -94,7 +97,7 @@ const FixtureDialog = ({ state }: { state: string }) => {
       <MyBooks
         open
         userId="fixture-user"
-        db={mockDb(state)}
+        db={db}
         onOpenChange={() => undefined}
         onOpenBook={() => undefined}
       />
