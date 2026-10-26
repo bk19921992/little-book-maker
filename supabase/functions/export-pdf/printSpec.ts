@@ -31,3 +31,20 @@ export function dpiCheck(where: string, dpi: number): { where: string; severity:
   if (dpi >= DPI_MINIMUM) return { where, severity: 'warn', check: `illustration ${dpi} dpi in print (${DPI_RECOMMENDED} recommended; acceptable, may look slightly soft)` };
   return { where, severity: 'fail', check: `illustration only ${dpi} dpi in print (minimum ${DPI_MINIMUM}); it will look pixelated` };
 }
+
+// Contain-fit: scale artwork so the WHOLE picture fits inside a region,
+// centred, cropping nothing. Where the picture's shape differs from the
+// region's, the short side leaves paper margins - the illustration reads as
+// a framed plate, as in a printed storybook. The old cover-crop filled the
+// region and guillotined whatever fell outside it (heads, wings, paws).
+// Returns the draw rectangle in points, as offsets from the region's origin.
+export function containFit(
+  region: { width: number; height: number },
+  image: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const scale = Math.min(region.width / image.width, region.height / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  return { x: (region.width - width) / 2, y: (region.height - height) / 2, width, height };
+}
+
