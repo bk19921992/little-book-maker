@@ -26,8 +26,20 @@ export function effectiveDpi(imagePx: { width: number; height: number }, drawnPt
 export const DPI_RECOMMENDED = 300; // print-shop standard for crisp pictures
 export const DPI_MINIMUM = 150; // below this pictures look visibly soft or pixelated in print
 
-export function dpiCheck(where: string, dpi: number): { where: string; severity: 'pass' | 'warn' | 'fail'; check: string } {
-  if (dpi >= DPI_RECOMMENDED) return { where, severity: 'pass', check: `illustration ${dpi} dpi in print` };
-  if (dpi >= DPI_MINIMUM) return { where, severity: 'warn', check: `illustration ${dpi} dpi in print (${DPI_RECOMMENDED} recommended; acceptable, may look slightly soft)` };
-  return { where, severity: 'fail', check: `illustration only ${dpi} dpi in print (minimum ${DPI_MINIMUM}); it will look pixelated` };
+export function dpiCheck(where: string, dpi: number): { where: string; severity: 'pass' | 'warn' | 'fail'; check: string; kind: 'dpi' } {
+  if (dpi >= DPI_RECOMMENDED) return { where, severity: 'pass', check: `illustration ${dpi} dpi in print`, kind: 'dpi' };
+  if (dpi >= DPI_MINIMUM) return { where, severity: 'warn', check: `illustration ${dpi} dpi in print (${DPI_RECOMMENDED} recommended; acceptable, may look slightly soft)`, kind: 'dpi' };
+  return { where, severity: 'fail', check: `illustration only ${dpi} dpi in print (minimum ${DPI_MINIMUM}); it will look pixelated`, kind: 'dpi' };
+}
+
+// Which QA entries must STOP an export (fail closed). A fail means the book
+// is defective: text clamped into the band, text across the safe area, an
+// illustration missing or unembeddable, no cover at all. Print dpi fails are
+// the one exception and stay advisory for now: blocking them would refuse
+// books customers can already buy, which is a product decision, not a defect
+// gate. Everything failing here already passes the editor's client-side
+// contract, so a blocker means the book reached export by an unusual path
+// (older book, direct API call) - exactly what the gate exists for.
+export function exportBlockers<T extends { severity: string; kind?: string }>(qa: T[]): T[] {
+  return qa.filter((q) => q.severity === 'fail' && q.kind !== 'dpi');
 }

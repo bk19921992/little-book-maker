@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BLEED_MM, dpiCheck, effectiveDpi, MM_TO_PT, printBoxes } from './printSpec.ts';
+import { BLEED_MM, dpiCheck, effectiveDpi, exportBlockers, MM_TO_PT, printBoxes } from './printSpec.ts';
 import { pagePoints } from './testFont.ts';
 
 test('print boxes: TrimBox is the finished A5 size inside a 3 mm bleed', () => {
@@ -35,4 +35,21 @@ test('dpi checks: pass at 300, warn from 150, fail below', () => {
   assert.equal(dpiCheck('p1', 300).severity, 'pass');
   assert.equal(dpiCheck('p1', 169).severity, 'warn');
   assert.equal(dpiCheck('p1', 120).severity, 'fail');
+});
+
+test('export gate: a defective book blocks, dpi stays advisory, warns pass', () => {
+  const textFail = { where: 'page 3', severity: 'fail', check: 'text block does not fit the 40% band even at the smallest tier; band clamped, copy should be shortened upstream' };
+  const missingArt = { where: 'page 2', severity: 'fail', check: 'illustration MISSING' };
+  const noCover = { where: 'cover', severity: 'fail', check: 'no illustration available for the cover' };
+  const dpiFail = dpiCheck('page 1', 120);
+  assert.equal(dpiFail.severity, 'fail');
+  const warn = { where: 'page 1', severity: 'warn', check: 'ragged wrap' };
+
+  assert.deepEqual(exportBlockers([textFail]), [textFail], 'clamped text blocks the export');
+  assert.deepEqual(exportBlockers([missingArt]), [missingArt], 'missing illustration blocks');
+  assert.deepEqual(exportBlockers([noCover]), [noCover], 'no cover blocks');
+  assert.deepEqual(exportBlockers([dpiFail]), [], 'print dpi fail stays advisory for now');
+  assert.deepEqual(exportBlockers([warn]), [], 'warns never block');
+  assert.deepEqual(exportBlockers([textFail, dpiFail, warn]), [textFail], 'mixed: only the real defect');
+  assert.deepEqual(exportBlockers([]), [], 'a clean book exports');
 });

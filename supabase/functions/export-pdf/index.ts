@@ -7,7 +7,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { layoutBand, normaliseTypography, SAFE, TEXT_MEASURE } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { dpiCheck, effectiveDpi, printBoxes } from "./printSpec.ts";
+import { dpiCheck, effectiveDpi, exportBlockers, printBoxes } from "./printSpec.ts";
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -113,6 +113,7 @@ interface QaEntry {
   where: string;
   severity: 'pass' | 'warn' | 'fail';
   check: string;
+  kind?: 'dpi';
 }
 
 async function fetchImageBytes(imageUrl: string): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
@@ -221,7 +222,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       qa.push({ where: 'cover', severity: 'fail', check: 'cover illustration fetch failed' });
     }
   } else {
-    qa.push({ where: 'cover', severity: 'fail', check: 'no illustration available for the cover' });
+    // A book whose every page is intentionally text-only has no cover art by
+    // design - warn, don't fail, so the export gate doesn't refuse it.
+    const textOnly = pages.length > 0 && pages.every((p) => p.imageLocked);
+    qa.push({ where: 'cover', severity: textOnly ? 'warn' : 'fail', check: textOnly ? 'no illustrations in this book (every page intentionally text-only)' : 'no illustration available for the cover' });
   }
 
   const titleText = normaliseTypography(config.children.length ? `${config.children.join(' & ')}'s Story` : 'Magical Story');
@@ -506,6 +510,24 @@ serve(async (req) => {
     const web = await createPDF(config, pages, false, coverImage);
     const print = await createPDF(config, pages, true, coverImage);
     const qa = [...web.qa, ...print.qa.filter((p) => p.severity !== 'pass')];
+
+    // Fail closed: a defective book is refused BEFORE anything is stored,
+    // instead of shipping with an advisory QA list nobody reads.
+    const blockers = exportBlockers(qa);
+    if (blockers.length) {
+      console.error('Export refused by QA gate:', JSON.stringify(blockers));
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `This book did not pass its final quality checks (${blockers.map((b) => `${b.where}: ${b.check}`).join('; ')}). Please go back, shorten or rebalance the text, and try again.`,
+          blockers,
+        }),
+        {
+          status: 422,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      );
+    }
 
     // Keep the PDFs on the customer's account (a paid book survives a closed
     // tab, and printers fetch the print PDF from storage) and return short
