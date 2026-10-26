@@ -9,17 +9,20 @@
 export const DEFAULT_IMAGE_MODEL = 'gpt-image-2.5-sunburst'
 export const DEFAULT_IMAGE_QUALITY = 'medium'
 
-// gpt-image-2.5 adds xhigh/max/auto quality settings, which cost several times
-// more per image than high. Only the settings gpt-image-1 accepted are allowed
-// here so a mis-typed or over-eager secret cannot silently raise spend; the
-// production secret (low) and code default (medium) both stay valid.
+// gpt-image-2.5 adds xhigh/max/auto quality settings - higher-consumption
+// settings the product has never used. Only the settings gpt-image-1 accepted
+// are allowed here so a mis-typed or over-eager secret cannot silently change
+// per-image consumption; existing secret values stay valid.
 export const ALLOWED_IMAGE_QUALITIES = ['low', 'medium', 'high']
 export const ALLOWED_IMAGE_SIZES = ['1024x1024', '1024x1536', '1536x1024']
 
-// Hard per-book cap on OpenAI image API calls: every accepted or rejected
-// image costs money, so a book may never exceed cap calls no matter how
-// review retries behave. 21 = a 6-page book + cover (7 images) x 3 attempts.
-export const DEFAULT_MAX_IMAGES_PER_JOB = 21
+// Hard per-book bound on OpenAI image-generation API calls (NOT a monetary
+// cap and not a limit on review or story-text calls, which are bounded
+// separately by MAX_IMAGE_ATTEMPTS and the story functions). 63 covers the
+// app's largest supported book - 20 pages + cover (21 images) x 3 attempts -
+// so the bound never restricts a book the product can express; it only stops
+// retry loops or future changes from multiplying paid calls past that envelope.
+export const DEFAULT_MAX_IMAGES_PER_JOB = 63
 
 export type EnvGetter = (key: string) => string | undefined
 
@@ -53,7 +56,7 @@ export function maxImagesPerJob(env: EnvGetter): number {
 export function imageCapRejection(imageCount: number, maxAttempts: number, cap: number): string | null {
   const worstCase = imageCount * maxAttempts
   if (worstCase <= cap) return null
-  return `This book could need up to ${worstCase} image calls (${imageCount} images x ${maxAttempts} attempts), above the per-book cap of ${cap}. Shorten the book or raise MAX_IMAGES_PER_JOB.`
+  return `This book could need up to ${worstCase} image-generation calls (${imageCount} images x ${maxAttempts} attempts), above the per-book image-call limit of ${cap}. Raise MAX_IMAGES_PER_JOB to allow more.`
 }
 
 export function parseImageResponse(result: any): string {
@@ -62,6 +65,16 @@ export function parseImageResponse(result: any): string {
     throw new Error('OpenAI image API returned no image data')
   }
   return `data:image/jpeg;base64,${b64}`
+}
+
+// Log token usage only - never prompts, image data, or user identifiers - so a
+// real run produces a measured per-image cost basis instead of estimates.
+export function logUsage(result: any, model: string, size: string, quality: string): any {
+  const usage = result?.usage
+  if (usage) {
+    console.log(`OpenAI image usage: model=${model} size=${size} quality=${quality} input_tokens=${usage.input_tokens} output_tokens=${usage.output_tokens} total_tokens=${usage.total_tokens}`)
+  }
+  return result
 }
 
 type FetchLike = typeof fetch
@@ -95,7 +108,7 @@ export async function generateOneImage(
     throw new Error(`OpenAI image API error ${response.status}: ${errorText}`)
   }
 
-  return parseImageResponse(await response.json())
+  return parseImageResponse(logUsage(await response.json(), model, size, quality))
 }
 
 function dataUrlToBytes(dataUrl: string): Uint8Array {
@@ -147,5 +160,5 @@ export async function editImageWithReference(
     throw new Error(`OpenAI image edits API error ${response.status}: ${errorText}`)
   }
 
-  return parseImageResponse(await response.json())
+  return parseImageResponse(logUsage(await response.json(), model, size, quality))
 }
