@@ -17,6 +17,7 @@ function HomeRoute() {
 }
 const TestimonialPreview = import.meta.env.DEV && import.meta.env.VITE_SHOW_TESTIMONIAL_PREVIEW === "true" ? lazy(() => import("./pages/TestimonialPreview")) : null;
 const BookApp = lazy(() => import("./pages/BookApp"));
+const MyBooksFixture = lazy(() => import("./pages/MyBooksFixture"));
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -36,6 +37,7 @@ const App = () => (
                 <Suspense fallback={<p role="status" className="p-8 text-center">Opening your books...</p>}><BookApp /></Suspense>
               )}
             />
+            <Route path="/dev/my-books-fixture" element={<Suspense fallback={<p role="status">Loading fixture...</p>}><MyBooksFixture /></Suspense>} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
