@@ -1,3 +1,5 @@
+import {ScenePlanRepair} from './ScenePlanRepair';
+import {sceneLedgerIssues} from '../../supabase/functions/_shared/sceneLedger';
 import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,11 +9,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, BookOpen, Image, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
 import { StoryConfig, StoryPage, StoryOutline, StyleBible, PageSizePreset, PageLayout, OutlineItem } from '../types';
 import { api } from '../api';
-import { validateStoryConfig } from '../lib/validation';
+import { pagesNeedingTextFix, validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
-import { resolveAutoFormat } from '../lib/format';
+import { andList, coverFallbackNote, resolveAutoFormat } from '../lib/format';
 import { imageConfig } from '../lib/imageRequest';
-import { applyJobItems, runImageJob } from '../lib/imageJob';
+import { applyJobItems, finishedBookConfig, illustrationTracker, runImageJob } from '../lib/imageJob';
 import { CheckoutSheet } from './CheckoutSheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { clearCheckpoint, saveCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
@@ -51,6 +53,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const { user } = useAuth();
   const [showBookCheckout, setShowBookCheckout] = useState(false);
   const [pendingJob, setPendingJob] = useState<{ jobId: string; book: StoryConfig } | null>(null);
+  // Set when the illustration job finished with pictures missing: the way
+  // forward is the editor's regenerate, not a "complete" claim.
+  const [incompleteMissing, setIncompleteMissing] = useState<string[] | null>(null);
 
   const updateProgress = (newProgress: number) => {
     setProgress(newProgress);
@@ -74,7 +79,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
     }
   };
 
-  const generateStory = async () => {
+  const generateStory = async (useSavedPlan = false) => {
     try {
       // Validate config first
       const validationErrors = validateStoryConfig(config);
@@ -86,6 +91,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       }
 
       setError(null);
+      setIncompleteMissing(null);
       setStartTime(Date.now());
       setCurrentStep('planning');
       setIsGenerating(true);
@@ -98,7 +104,15 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
 
       // Step 1: Plan the story
       toast.info('Planning your story...');
-      const planResponse = await api.planStory(config, storyId);
+      const draft=useSavedPlan ? config.scenePlanDraft : undefined;
+      if(useSavedPlan && (!draft || sceneLedgerIssues(draft.outline.sceneLedger,config.lengthPages).length)) throw new Error('Repair the saved scene plan before continuing. No planner call made.');
+      const planResponse = draft || await api.planStory(config, storyId);
+      if ('needsSceneRepair' in planResponse && planResponse.needsSceneRepair) {
+        const next={...config,storyId,scenePlanDraft:{outline:planResponse.outline,styleBible:planResponse.styleBible,format:planResponse.format,issues:planResponse.issues || []}};
+        onConfigChange({storyId,scenePlanDraft:next.scenePlanDraft});
+        if(user)await saveBook(supabase,user.id,next);
+        setError('Scene plan saved for local repair. No writing, illustration or automatic paid retry started.');setIsGenerating(false);setCurrentStep('idle');return;
+      }
 
       // Auto format mode: the planner (or a per-book fallback heuristic) picks
       // the shape and layout for this particular story. Resolve it now and use
@@ -149,7 +163,6 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // Step 3: Illustrations, as a durable server-side job: one image
       // attempt per call, so no request hits the edge time limit, and the
       // job survives dropped connections and page reloads.
-      toast.info('Creating AI illustrations...');
       // Build a quick lookup for outline data
       const outlineByPage = new Map<number, OutlineItem>(planResponse.outline.pages.map((p: OutlineItem) => [p.page, p]));
       const imagePrompts = writeResponse.pages
@@ -170,11 +183,36 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         storyId,
         pageSize: effectivePageSize,
         pageLayout: effectivePageLayout,
+        scenePlanDraft: undefined,
         styleBible: planResponse.styleBible,
         outline: planResponse.outline,
         pages: writeResponse.pages,
       };
-      const { jobId } = await api.startImageJob(effectivePageSize, effectivePageLayout, imagePrompts, true, imageConfig(book), storyId);
+      // Text that still breaks the text contract is a draft, not a basis for
+      // paid illustrations: the customer must fix the wording first, and
+      // those edits would change the text the pictures were prompted and
+      // reviewed against. Keep the draft, flag the pages and go straight to
+      // the editor (the same contract gates export there, and the pictures
+      // can be generated once the wording passes). No paid image job starts.
+      const textFixPages = pagesNeedingTextFix(writeResponse.pages, config.readingLevel, effectivePageSize);
+      if (textFixPages.length) {
+        onConfigChange(book);
+        if (user) {
+          saveBook(supabase, user.id, book).catch((saveError) => console.error('Saving the draft failed', saveError));
+        }
+        toast.warning(`The wording on page${textFixPages.length > 1 ? 's' : ''} ${textFixPages.join(', ')} needs a quick fix before we draw. Your story is saved - fix the wording in the editor, then generate the pictures there.`);
+        setIsGenerating(false);
+        // The paid flow stops here; the editor route replaces this screen.
+        // If that navigation is ever delayed, nothing left behind may claim
+        // work is still coming: no spinner, no countdown.
+        setCurrentStep('idle');
+        setProgress(0);
+        setEstimatedTimeRemaining('');
+        onNext();
+        return;
+      }
+      toast.info('Creating AI illustrations...');
+      const { jobId } = await api.startImageJob(effectivePageSize, effectivePageLayout, imagePrompts, true, imageConfig(book), storyId, undefined, planResponse.outline.sceneLedger);
       saveCheckpoint(jobId, book);
       await illustrate(jobId, book);
     } catch (err) {
@@ -194,31 +232,36 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const illustrate = async (jobId: string, book: StoryConfig) => {
     const pages = book.pages || [];
     const total = pages.length + 1; // + cover
-    let finished = 0;
+    const tracker = illustrationTracker(total);
     setPendingJob({ jobId, book });
     setCurrentStep('images');
     setProgress(70);
     setEstimatedTimeRemaining(`0 of ${total} illustrations finished`);
     try {
       const items = await runImageJob(api, jobId, {
-        onItem: () => {
-          finished += 1;
-          setProgress(70 + Math.round((finished / total) * 29));
-          setEstimatedTimeRemaining(`${finished} of ${total} illustrations finished`);
+        onItem: (item) => {
+          tracker.onItem(item);
+          setProgress(70 + Math.round((tracker.finished / total) * 29));
+          setEstimatedTimeRemaining(tracker.label());
         },
       });
       const result = applyJobItems(pages, items);
-      if (result.failedPages.length) {
-        toast.warning(
-          `The illustration${result.failedPages.length > 1 ? 's' : ''} for page${result.failedPages.length > 1 ? 's' : ''} ${result.failedPages.join(', ')} didn't pass our quality check. You can regenerate ${result.failedPages.length > 1 ? 'them' : 'it'} from the editor.`
-        );
+      const failedPageLabels = result.failedPages.map((p) => `page ${p}`);
+      const failureNotes: string[] = [];
+      if (failedPageLabels.length) {
+        failureNotes.push(`The illustration${failedPageLabels.length > 1 ? 's' : ''} for ${andList(failedPageLabels)} didn't pass our quality check - regenerate ${failedPageLabels.length > 1 ? 'them' : 'it'} from the editor.`);
       }
-      const finishedBook: StoryConfig = {
-        ...book,
-        pages: result.pages,
-        coverImageUrl: result.coverImageUrl,
-        coverImageReview: result.coverImageReview,
-      };
+      if (result.coverFailed) {
+        // The editor has no cover regeneration; the export's intentional
+        // fallback composes the cover from the first illustrated page - so
+        // only promise it when a page picture actually exists to reuse.
+        failureNotes.push(`The cover didn't pass - ${coverFallbackNote(result.pages.some((p) => p.imageUrl && !p.imageLocked))}.`);
+      }
+      if (failureNotes.length) toast.warning(failureNotes.join(' '));
+      // The run's accepted cover REPLACES the book's lettering style (or
+      // clears it when the selector was off/unavailable): an inherited style
+      // must never describe new art. Page-only runs keep the existing style.
+      const finishedBook: StoryConfig = finishedBookConfig(book, result);
       onConfigChange(finishedBook);
       clearCheckpoint();
       // Keep the finished book on the customer's account (My books).
@@ -229,10 +272,31 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         });
       }
       setPendingJob(null);
-      updateProgress(100);
-      setCurrentStep('complete');
-      setEstimatedTimeRemaining('Complete!');
-      toast.success('Your story is ready!');
+      if (result.failedPages.length || result.coverFailed) {
+        // Explicit incomplete state: the book is saved and editable, but it
+        // is not ready. Progress stays where the pictures actually are - no
+        // 100%, no completed step, no success toast - and the way forward is
+        // the editor's regenerate (button below), not a false finish line.
+        const missing = [
+          ...(result.coverFailed ? ['the cover'] : []),
+          ...result.failedPages.map((p) => `page ${p}`),
+        ];
+        setIncompleteMissing(missing);
+        // Terminal stopped state: no work is still running, so no step may
+        // keep spinning (getStepStatus treats this as stopped below).
+        const missingBits: string[] = [];
+        if (result.failedPages.length) {
+          missingBits.push(`${andList(result.failedPages.map((p) => `page ${p}`))} still need${result.failedPages.length > 1 ? '' : 's'} an illustration - regenerate in the editor`);
+        }
+        if (result.coverFailed) missingBits.push(coverFallbackNote(result.pages.some((p) => p.imageUrl && !p.imageLocked)));
+        setEstimatedTimeRemaining(`Almost there - ${missingBits.join('; ')}.`);
+      } else {
+        setIncompleteMissing(null);
+        updateProgress(100);
+        setCurrentStep('complete');
+        setEstimatedTimeRemaining('Complete!');
+        toast.success('Your story is ready!');
+      }
     } catch (err) {
       // The job and its finished pictures are safe on the server; keep the
       // checkpoint so the customer can resume instead of starting again.
@@ -247,6 +311,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   const resumeIllustrations = async () => {
     if (!pendingJob) return;
     setError(null);
+    setIncompleteMissing(null);
     setIsGenerating(true);
     await illustrate(pendingJob.jobId, pendingJob.book);
     setIsGenerating(false);
@@ -258,6 +323,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
     if (!resume) return;
     onResumeHandled?.();
     setStartTime(Date.now());
+    setError(null);
+    setIncompleteMissing(null);
     setIsGenerating(true);
     toast.info('Picking up your illustrations where they left off...');
     illustrate(resume.jobId, resume.config).finally(() => setIsGenerating(false));
@@ -266,11 +333,15 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
 
   const getStepStatus = (step: GenerationStep) => {
     const stepOrder: GenerationStep[] = ['planning', 'writing', 'images', 'complete'];
-    const currentIndex = stepOrder.indexOf(currentStep);
+    // A job that ended with missing pictures is stopped, not mid-generation:
+    // planning/writing read complete, illustrations read not-yet-done, and
+    // nothing spins.
+    const stopped = !!incompleteMissing && !isGenerating;
+    const currentIndex = stepOrder.indexOf(stopped ? 'images' : currentStep);
     const stepIndex = stepOrder.indexOf(step);
 
     if (stepIndex < currentIndex) return 'complete';
-    if (stepIndex === currentIndex) return 'current';
+    if (!stopped && stepIndex === currentIndex) return 'current';
     return 'pending';
   };
 
@@ -287,6 +358,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         </p>
       </div>
 
+      {(config.scenePlanDraft || config.outline) && <ScenePlanRepair config={config} onConfigChange={onConfigChange} />}
+      {config.scenePlanDraft && <Button disabled={isGenerating || sceneLedgerIssues(config.scenePlanDraft.outline.sceneLedger,config.lengthPages).length>0} onClick={()=>void generateStory(true)}>Continue saved plan: write text and create illustrations</Button>}
       {/* Story Configuration Summary */}
       <Card className="story-card">
         <CardHeader>
@@ -428,9 +501,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Progress</span>
-                <div className="text-right">
+              <div className="flex justify-between gap-4 text-sm">
+                <span className="shrink-0">Progress</span>
+                <div className="text-right min-w-0 break-words">
                   <span>{progress}%</span>
                   {estimatedTimeRemaining && (
                     <div className="text-xs text-muted-foreground mt-1">
@@ -564,7 +637,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
           <CheckoutSheet
             item="export"
             storyId={config.storyId}
-            onSuccess={() => { setShowBookCheckout(false); void generateStory(); }}
+            onSuccess={() => { setShowBookCheckout(false); void generateStory(!!config.scenePlanDraft); }}
             onCancel={() => setShowBookCheckout(false)}
           />
         </DialogContent>
@@ -589,9 +662,9 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             </Button>
           )}
 
-          {currentStep === 'idle' && !pendingJob && (
+          {currentStep === 'idle' && !pendingJob && !config.scenePlanDraft && (
             <Button
-              onClick={generateStory}
+              onClick={()=>void generateStory()}
               size="lg"
               className="px-8 py-3 text-lg font-medium animate-gentle-bounce"
               disabled={isGenerating}
@@ -601,6 +674,17 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             </Button>
           )}
           
+          {incompleteMissing && !isGenerating && (
+            <Button
+              onClick={onNext}
+              size="lg"
+              className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"
+            >
+              <BookOpen className="w-5 h-5 mr-2" />
+              Fix in the editor
+            </Button>
+          )}
+
           {canProceed && (
             <Button
               onClick={onNext}
