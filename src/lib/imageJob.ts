@@ -130,4 +130,4 @@ export function finishedBookConfig(book: StoryConfig, result: ReturnType<typeof 
   if (!result.hadCoverItem) return base; // no cover work: existing style (if any) still matches existing art
   delete base.coverStyle;
   return result.coverStyle ? { ...base, coverStyle: result.coverStyle } : base;
-      }
+}
