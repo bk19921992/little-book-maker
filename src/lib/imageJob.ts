@@ -1,4 +1,4 @@
-import type { StoryPage } from '../types';
+import type { CoverStyleChoice, StoryConfig, StoryPage } from '../types';
 
 // Client side of the durable illustration job (server: generate-images
 // jobs.ts). Each step call is one generate->review attempt, so no request
@@ -14,6 +14,7 @@ export interface ImageJobItem {
   attempts: number;
   url?: string;
   review?: { pass: boolean; issues: string[]; skipped?: boolean };
+  coverStyle?: CoverStyleChoice; // cover item only: the art-directed lettering spec
   error?: string;
 }
 
@@ -65,6 +66,26 @@ export async function runImageJob(api: ImageJobApi, jobId: string, opts: RunOpti
   return (await api.imageJobStatus(jobId)).items;
 }
 
+// Truthful illustration progress: a FAILED item is terminal for the job but
+// it is not a finished picture. Counting failures as finished is how the UI
+// once said "11 of 11 illustrations finished" for a book missing page 7.
+export function illustrationTracker(total: number) {
+  let finished = 0;
+  let failed = 0;
+  return {
+    onItem(item: ImageJobItem) {
+      if (item.status === 'done') finished += 1;
+      else if (item.status === 'failed') failed += 1;
+    },
+    get finished() { return finished; },
+    get failed() { return failed; },
+    label(): string {
+      const base = `${finished} of ${total} illustrations finished`;
+      return failed ? `${base}, ${failed} failed` : base;
+    },
+  };
+}
+
 export const reviewStateOf = (review?: { skipped?: boolean }): ImageReviewState =>
   review?.skipped ? 'unreviewed' : 'passed';
 
@@ -85,7 +106,28 @@ export function applyJobItems(pages: StoryPage[], items: ImageJobItem[]) {
     pages: merged,
     coverImageUrl: cover?.status === 'done' ? cover.url : undefined,
     coverImageReview: cover?.status === 'done' ? reviewStateOf(cover.review) : undefined,
+    coverStyle: cover?.status === 'done' ? cover.coverStyle : undefined,
+    // Whether this run included cover work at all: the cover style may only
+    // be replaced or cleared by a run that actually made cover art.
+    hadCoverItem: cover !== undefined,
     failedPages: items.filter((i) => i.page !== null && i.status === 'failed').map((i) => i.page as number),
     coverFailed: cover?.status === 'failed',
   };
+}
+
+// The cover lettering style belongs to the artwork it was chosen from. When
+// a run made a new cover, the book's style is this run's selection or NONE
+// (cleared): an inherited style must never describe new art, and a cover
+// that failed or was removed takes its style with it. A run without cover
+// work (page-only regeneration) leaves an existing style untouched.
+export function finishedBookConfig(book: StoryConfig, result: ReturnType<typeof applyJobItems>): StoryConfig {
+  const base: StoryConfig = {
+    ...book,
+    pages: result.pages,
+    coverImageUrl: result.coverImageUrl,
+    coverImageReview: result.coverImageReview,
+  };
+  if (!result.hadCoverItem) return base; // no cover work: existing style (if any) still matches existing art
+  delete base.coverStyle;
+  return result.coverStyle ? { ...base, coverStyle: result.coverStyle } : base;
 }

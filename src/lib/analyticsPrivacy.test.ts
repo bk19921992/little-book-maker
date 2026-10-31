@@ -1,0 +1,8 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';
+import {publicAnalyticsEvent as gate,ANALYTICS_ORIGIN as origin} from './analyticsPrivacy.ts';
+const root=origin+'/';
+test('only exact production public root pageview survives with explicit fields',()=>assert.deepEqual(gate({type:'pageview',url:root+'?marker=synthetic#synthetic',extra:'private'} as any,root,''),{type:'pageview',url:root}));
+test('private and unknown route, wrong origin/protocol/port rejected for both event and current location',()=>{for(const bad of [origin+'/app',origin+'/unknown','http://little-book-maker.vercel.app/','https://little-book-maker.vercel.app:8443/','https://little-book-maker.vercel.app.evil.invalid/','not a url']){assert.equal(gate({type:'pageview',url:bad},root,''),null);assert.equal(gate({type:'pageview',url:root},bad,''),null)}});
+test('auth callbacks never counted even if event URL already scrubbed',()=>{for(const suffix of ['?code=SYNTHETIC','?token_hash=SYNTHETIC','#access_token=SYNTHETIC','#error_description=SYNTHETIC']){assert.equal(gate({type:'pageview',url:root+suffix},root,''),null);assert.equal(gate({type:'pageview',url:root},root+suffix,''),null)}});
+test('custom events blocked',()=>assert.equal(gate({type:'event',url:root},root,''),null));
+test('external/malformed/private/query referrer drops whole event; clean same-origin root allowed',()=>{for(const ref of ['https://external.invalid/path?private=synthetic','not a url',origin+'/app',root+'?code=SYNTHETIC',root+'#private'])assert.equal(gate({type:'pageview',url:root},root,ref),null);assert.ok(gate({type:'pageview',url:root},root,root))});

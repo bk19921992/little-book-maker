@@ -28,6 +28,7 @@ import { validateAddress, type ShippingAddress } from '../../supabase/functions/
 import { saveBook, withDownloadName } from '../lib/savedBooks';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
+import { continuityReadiness } from '../../supabase/functions/_shared/bookContinuity';
 
 // Print stays hidden until Phase 5 - the server refuses orders while the flag is off too.
 const PRINT_ENABLED = PRINT_ORDERS_ENABLED;
@@ -73,6 +74,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       return;
     }
 
+    const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
+    if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
     setIsExporting(true);
     try {
       const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
@@ -100,6 +103,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     // re-checked BEFORE checkout, so nobody pays for (or exports) unverified
     // art. Then billing (free first export or payment) is settled with the
     // server as before.
+    const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
+    if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
     setImageCheckMessage(null);
     setIsCheckingImages(true);
     try {
@@ -160,7 +165,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
   // Check the delivery address first (the same rules the server applies),
   // then take payment, then place the order.
-  const handlePrintClick = () => {
+  const handlePrintClick = async () => {
+    if (!(await continuityReadiness({...config,pages:config.pages || []},config.continuityReview)).ready) { toast.error('Resolve whole-book continuity before printing.'); return; }
     const checked = validateAddress(address);
     if ('errors' in checked) {
       setAddressErrors(checked.errors);

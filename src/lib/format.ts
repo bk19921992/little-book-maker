@@ -1,4 +1,4 @@
-import { PageSizePreset, PageLayout, StoryConfig, PlanFormatSuggestion } from '../types';
+import type { PageSizePreset, PageLayout, StoryConfig, PlanFormatSuggestion } from '../types.ts';
 
 // Canonical lists of pickable formats - keep in sync with FormatPicker options.
 export const PAGE_SIZE_VALUES: PageSizePreset[] = [
@@ -26,7 +26,8 @@ const isPageLayout = (v: unknown): v is PageLayout =>
 // Deterministic backup when the planner did not suggest a format (older
 // deployed function, missing fields, or invalid values). Still per-book:
 // keyed on story type, audience, and page count.
-const fallbackFormat = (config: StoryConfig): ResolvedFormat => {
+// Exported for tests.
+export const fallbackFormat = (config: StoryConfig): ResolvedFormat => {
   const storyType = (config.storyType || '').toLowerCase();
   const isBedtime =
     storyType.includes('bedtime') ||
@@ -37,8 +38,8 @@ const fallbackFormat = (config: StoryConfig): ResolvedFormat => {
   if (isBedtime || config.lengthPages >= 14) {
     return {
       pageSize: 'A4 landscape',
-      pageLayout: 'overlay',
-      reason: 'Wide full-page scenes suit a slow, cosy read aloud.',
+      pageLayout: 'split',
+      reason: 'Wide pages with the picture above the words suit a slow, cosy read aloud.',
       source: 'fallback',
     };
   }
@@ -60,8 +61,8 @@ const fallbackFormat = (config: StoryConfig): ResolvedFormat => {
   }
   return {
     pageSize: '210×210 mm square',
-    pageLayout: 'overlay',
-    reason: 'The classic square picture-book shape with full-page illustrations.',
+    pageLayout: 'split',
+    reason: 'The classic square picture-book shape, with the picture above the words.',
     source: 'fallback',
   };
 };
@@ -73,12 +74,28 @@ export const resolveAutoFormat = (
   suggestion?: PlanFormatSuggestion | null
 ): ResolvedFormat => {
   if (suggestion && isPageSize(suggestion.pageSize) && isPageLayout(suggestion.pageLayout)) {
+    // Auto mode offers split only (words never sit on the artwork). Coerce a
+    // stale planner suggestion; explicit user-picked overlay books never pass
+    // through this path and are untouched.
+    const pageLayout: PageLayout = suggestion.pageLayout === 'overlay' ? 'split' : suggestion.pageLayout;
     return {
       pageSize: suggestion.pageSize,
-      pageLayout: suggestion.pageLayout,
+      pageLayout,
       reason: (suggestion.reason || '').trim() || 'Picked to fit this story.',
       source: 'planner',
     };
   }
   return fallbackFormat(config);
 };
+
+// Human list joining: "a", "a and b", "a, b and c".
+export const andList = (items: string[]): string =>
+  items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+
+// Cover wording: the export's page-art fallback needs at least one page
+// picture to reuse. Never promise it for a zero-picture draft - that draft
+// cannot export at all until a page is drawn (editor, one page at a time).
+export const coverFallbackNote = (hasPageArt: boolean): string =>
+  hasPageArt
+    ? 'the cover will use page art at export'
+    : "the cover can reuse a page's art once a page has one";

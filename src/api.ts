@@ -1,26 +1,12 @@
+import {recoverSceneDraft} from './lib/sceneRecovery';
+import type { SceneLedger } from '../supabase/functions/_shared/sceneLedger';
 import { StoryConfig, StoryOutline, StoryPage, PlanResponse, WriteResponse, ExportResponse, PrintOrderResponse, PageSizePreset, PageLayout } from './types';
 import type { ImageConfig } from './lib/imageRequest';
 import type { ShippingAddress } from '../supabase/functions/create-print-order/print.ts';
 import type { ImageJobItem, ImageJobStep } from './lib/imageJob';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
+import { extractFunctionError } from './lib/functionError';
 
-
-// Read the friendly error message returned by an edge function (401/402/429/
-// validation/moderation responses) so the UI can show it to the user.
-const extractFunctionError = async (error: unknown): Promise<string> => {
-  try {
-    const context = (error as { context?: Response }).context;
-    if (context && typeof context.json === 'function') {
-      const body = await context.json();
-      if (body && typeof body.error === 'string' && body.error.trim()) {
-        return body.error;
-      }
-    }
-  } catch {
-    // fall through to the generic message
-  }
-  return error instanceof Error ? error.message : 'Edge Function error';
-};
 
 // API client for communicating with Supabase edge functions
 class APIClient {
@@ -33,6 +19,7 @@ class APIClient {
       const { data, error } = await supabase.functions.invoke(functionName, { body });
 
       if (error) {
+        if(functionName === 'story-plan') { const recovered=await recoverSceneDraft(error); if(recovered)return recovered as T; }
         console.error(`Error calling ${functionName}:`, error);
         const msg = error.message || 'Edge Function error';
         // Retry once if the request failed to send (common transient issue)
@@ -60,7 +47,7 @@ class APIClient {
   }
 
   async planStory(config: StoryConfig, storyId: string): Promise<PlanResponse> {
-    return this.invokeFunction<PlanResponse>('story-plan', { config, storyId });
+    return this.invokeFunction<PlanResponse>('story-plan', { config, storyId }, false);
   }
 
   async writeStory(config: StoryConfig, outline: StoryOutline, storyId: string): Promise<WriteResponse> {
@@ -77,9 +64,10 @@ class APIClient {
     includeCover: boolean,
     config: ImageConfig,
     storyId: string,
-    referenceImage?: string
+    referenceImage?: string,
+    sceneLedger?: SceneLedger
   ): Promise<{ jobId: string; items: ImageJobItem[] }> {
-    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, storyId, referenceImage }, false);
+    return this.invokeFunction('generate-images', { action: 'start', pageSize, pageLayout, prompts, includeCover, config, storyId, referenceImage, sceneLedger }, false);
   }
 
   async stepImageJob(jobId: string): Promise<ImageJobStep> {
