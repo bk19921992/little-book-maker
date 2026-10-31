@@ -1,4 +1,4 @@
-import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.118.0';
 
 export async function claimBook(service: SupabaseClient, userId: string, storyId: unknown): Promise<boolean> {
   if (typeof storyId !== 'string' || !storyId || storyId.length > 100) {
