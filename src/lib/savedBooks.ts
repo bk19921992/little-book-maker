@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { StoryConfig, StoryPage } from '../types.ts';
+import { andList, coverFallbackNote } from './format.ts';
 
 // Books saved on the customer's account (supabase/migrations/
 // 20260929120000_saved_books.sql). The book's setup and text live in the
@@ -18,12 +19,22 @@ export interface SavedBookSummary {
   pageCount: number;
   webPdfPath: string | null;
   printPdfPath: string | null;
+  // Explicit incomplete state from the last save, surfaced in My books.
+  incompletePages?: number[];
+  incompleteCover?: boolean;
+  // At least one page with an actual picture: the export's page-art cover
+  // fallback has something to reuse only when this is true.
+  hasPageArt?: boolean;
 }
 
 type StoredPage = Omit<StoryPage, 'imageUrl'> & { imagePath?: string };
 type StoredConfig = Omit<StoryConfig, 'pages' | 'coverImageUrl' | 'exports'> & {
   pages?: StoredPage[];
   coverImagePath?: string;
+  // Explicit incomplete state: page numbers saved without a picture, and
+  // whether the cover is missing. Absent (or empty) means complete.
+  incompletePages?: number[];
+  incompleteCover?: boolean;
 };
 
 export const imagePath = (userId: string, storyId: string, name: string, ext: string) =>
@@ -55,6 +66,18 @@ export async function blobToDataUrl(blob: Blob): Promise<string> {
 export const withDownloadName = (url: string, filename: string): string =>
   url.startsWith('http') ? `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(filename)}` : url;
 
+// The honest wording for a saved book's missing pictures: pages are
+// fixable in the editor (one page at a time); the cover note is promised
+// only when a page picture actually exists for the export's fallback to
+// reuse - a zero-picture draft cannot export at all until then.
+export function incompleteNotes(summary: Pick<SavedBookSummary, 'incompletePages' | 'incompleteCover' | 'hasPageArt'>): string[] {
+  const bits: string[] = [];
+  const missingPages = (summary.incompletePages ?? []).map((p) => `page ${p}`);
+  if (missingPages.length) bits.push(`Missing pictures: ${andList(missingPages)} · open the book to finish it`);
+  if (summary.incompleteCover) bits.push(`No cover picture yet - ${coverFallbackNote(!!summary.hasPageArt)}`);
+  return bits;
+}
+
 // Uploads are skipped for pictures already saved unchanged in this session.
 const uploaded = new Map<string, string>();
 // Compare the whole image. Equal length and equal base64 tails do not prove
@@ -65,7 +88,7 @@ const fingerprint = async (dataUrl: string) => {
 };
 
 // Save (or update) a book: upload its pictures, then write the row.
-export async function saveBook(db: SupabaseClient, userId: string, config: StoryConfig): Promise<void> {
+export async function saveBook(db: SupabaseClient, userId: string, config: StoryConfig): Promise<{ incompletePages: number[]; incompleteCover: boolean }> {
   const storyId = config.storyId;
   if (!storyId) throw new Error('This book has no id yet.');
 
@@ -82,15 +105,38 @@ export async function saveBook(db: SupabaseClient, userId: string, config: Story
   };
 
   const pages: StoredPage[] = [];
+  const incompletePages: number[] = [];
   for (const page of config.pages || []) {
     const { imageUrl, ...rest } = page;
     const path = await upload(imageUrl, `page-${page.page}`);
     pages.push(path ? { ...rest, imagePath: path } : rest);
+    // A page without a picture is an explicit incomplete state, never a
+    // silent gap: the book still saves (no work is lost) and the flag lets
+    // My books / the editor say so. Observed defect: page 7 once persisted
+    // with no image and nothing noticed until export. An imageLocked page is
+    // the customer choosing no picture for it - intentional, not incomplete.
+    if (!path && !page.imageLocked) incompletePages.push(page.page);
   }
   const coverImagePath = await upload(config.coverImageUrl, 'cover');
+  // A fully text-only book needs no cover picture either; a missing cover is
+  // incomplete only when at least one page carries (or awaits) a picture.
+  const anyIllustrated = (config.pages || []).some((p) => p.imageUrl || !p.imageLocked);
+  const incompleteCover = anyIllustrated && !coverImagePath;
 
-  const { pages: _p, coverImageUrl: _c, exports: _e, ...setup } = config;
-  const stored: StoredConfig = { ...setup, pages, ...(coverImagePath ? { coverImagePath } : {}) };
+  const { pages: _p, coverImageUrl: _c, exports: _e, ...setupRest } = config;
+  // Never carry flags from an earlier save: they are recomputed from the
+  // pictures being saved right now, so a completed book cannot stay marked
+  // incomplete after reopen + save.
+  const setup = { ...setupRest } as typeof setupRest & { incompletePages?: number[]; incompleteCover?: boolean };
+  delete setup.incompletePages;
+  delete setup.incompleteCover;
+  const stored: StoredConfig = {
+    ...setup,
+    pages,
+    ...(coverImagePath ? { coverImagePath } : {}),
+    ...(incompletePages.length ? { incompletePages } : {}),
+    ...(incompleteCover ? { incompleteCover: true } : {}),
+  };
   const { error } = await db.from('books').upsert({
     user_id: userId,
     story_id: storyId,
@@ -99,6 +145,7 @@ export async function saveBook(db: SupabaseClient, userId: string, config: Story
     updated_at: new Date().toISOString(),
   });
   if (error) throw error;
+  return { incompletePages, incompleteCover };
 }
 
 export async function listBooks(db: SupabaseClient): Promise<SavedBookSummary[]> {
@@ -116,6 +163,9 @@ export async function listBooks(db: SupabaseClient): Promise<SavedBookSummary[]>
     pageCount: (row.config as StoredConfig)?.pages?.length ?? 0,
     webPdfPath: row.web_pdf_path,
     printPdfPath: row.print_pdf_path,
+    incompletePages: (row.config as StoredConfig)?.incompletePages,
+    incompleteCover: (row.config as StoredConfig)?.incompleteCover,
+    hasPageArt: ((row.config as StoredConfig)?.pages ?? []).some((p) => p.imagePath && !p.imageLocked),
   }));
 }
 
@@ -136,7 +186,10 @@ export async function openBook(db: SupabaseClient, storyId: string): Promise<Sto
     const imageUrl = await load(path);
     pages.push(imageUrl ? { ...page, imageUrl } : page);
   }
-  const { coverImagePath, pages: _p, ...setup } = stored;
+  // The incomplete flags are save-time derived state: they are not part of
+  // the reopened setup (saveBook recomputes them), and spreading them would
+  // keep a finished book marked incomplete forever.
+  const { coverImagePath, pages: _p, incompletePages: _ip, incompleteCover: _ic, ...setup } = stored;
   const coverImageUrl = await load(coverImagePath);
   return { ...(setup as StoryConfig), storyId, pages, ...(coverImageUrl ? { coverImageUrl } : {}) };
 }
