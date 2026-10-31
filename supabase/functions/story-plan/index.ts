@@ -1,3 +1,4 @@
+import { sceneGateVerdict, sceneLedgerIssues, SCENE_PLAN_INSTRUCTIONS } from '../_shared/sceneLedger.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
@@ -6,6 +7,17 @@ import { moderateFreeText } from "../_shared/moderation.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 import { wordRange } from "../_shared/textContract.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
+import { coerceFormatSuggestion } from "./format.ts"
+
+// Vocabulary note for story types whose everyday meaning is ambiguous.
+// "Going to nursery" means childcare - the place a child goes to during the
+// day - not the baby's bedroom at home. Scoped to that exact phrase: other
+// "nursery" settings (e.g. a baby's room) are left alone.
+export function storyTypeNote(storyType?: string): string {
+  return storyType && /going to nursery/i.test(storyType.trim())
+    ? `- Note: in this story "nursery" means nursery school / childcare - the place the child goes to during the day, with carers and other children. It does NOT mean the child's bedroom at home.`
+    : '';
+}
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -91,6 +103,7 @@ serve(async (req) => {
 - Setting: ${config.setting}
 - Characters: ${config.characters.join(', ')}
 - Story type: ${config.storyType}
+${storyTypeNote(config.storyType)}
 - Reading level: ${config.readingLevel}
 - Narration Style: ${config.narrationStyle}
 - Educational focus: ${config.educationalFocus || 'none'}
@@ -118,6 +131,8 @@ Create exactly ${config.lengthPages} pages. Each page should have:
 - Word target based on reading level above
 - Visual brief (what happens visually)
 - Detailed image prompt for ${styleBible.renderingStyle} illustration that includes the specific characters, setting, and color palette
+
+${SCENE_PLAN_INSTRUCTIONS}
 
 Make sure to incorporate the personal details naturally throughout the story and use the specified narration style.
 
@@ -147,7 +162,7 @@ Return as JSON with a pages array containing page, wordCount, visualBrief, and i
           }
         ],
         response_format: { type: "json_object" },
-        max_completion_tokens: 2000,
+        max_completion_tokens: 6000,
       }),
     })
 
@@ -178,17 +193,15 @@ Return as JSON with a pages array containing page, wordCount, visualBrief, and i
       throw new Error('Story planner returned an unexpected shape.');
     }
 
+    if (outlineData.pages.length !== config.lengthPages || outlineData.pages.some((p: {page:number},i:number)=>!p || p.page!==i+1)) throw new Error('Story outline pages are missing or out of order.');
+    const sceneIssues = sceneLedgerIssues(outlineData.sceneLedger, config.lengthPages);
+    const planGate = sceneGateVerdict(sceneIssues.length, outlineData.sceneLedger == null, (k)=>Deno.env.get(k));
+    if (planGate === 'warn-allow') console.warn('SCENE_GATE_MODE=permissive: returning scene-less outline to a stale client', sceneIssues);
+    if (planGate === 'reject') return new Response(JSON.stringify({error:'The scene plan needs review before writing or drawing. No automatic paid retry was made.', code:'SCENE_PLAN_REVIEW_REQUIRED', draftOutline:outlineData, styleBible, format:config.formatMode === 'auto' ? coerceFormatSuggestion(outlineData.format) : null, issues:sceneIssues}), {status:422,headers:{...corsHeaders,'Content-Type':'application/json'}});
     // Auto format mode: pass through the planner's format suggestion when it is
     // a valid object. The client validates the values against its canonical
     // lists and falls back to a per-book heuristic when absent or invalid.
-    let formatSuggestion = null
-    if (config.formatMode === 'auto' && outlineData.format && typeof outlineData.format === 'object') {
-      formatSuggestion = {
-        pageSize: typeof outlineData.format.pageSize === 'string' ? outlineData.format.pageSize : undefined,
-        pageLayout: typeof outlineData.format.pageLayout === 'string' ? outlineData.format.pageLayout : undefined,
-        reason: typeof outlineData.format.reason === 'string' ? outlineData.format.reason : undefined,
-      }
-    }
+    const formatSuggestion = config.formatMode === 'auto' ? coerceFormatSuggestion(outlineData.format) : null
     delete outlineData.format
 
     return new Response(

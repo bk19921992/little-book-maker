@@ -26,8 +26,50 @@ export function effectiveDpi(imagePx: { width: number; height: number }, drawnPt
 export const DPI_RECOMMENDED = 300; // print-shop standard for crisp pictures
 export const DPI_MINIMUM = 150; // below this pictures look visibly soft or pixelated in print
 
-export function dpiCheck(where: string, dpi: number): { where: string; severity: 'pass' | 'warn' | 'fail'; check: string } {
-  if (dpi >= DPI_RECOMMENDED) return { where, severity: 'pass', check: `illustration ${dpi} dpi in print` };
-  if (dpi >= DPI_MINIMUM) return { where, severity: 'warn', check: `illustration ${dpi} dpi in print (${DPI_RECOMMENDED} recommended; acceptable, may look slightly soft)` };
-  return { where, severity: 'fail', check: `illustration only ${dpi} dpi in print (minimum ${DPI_MINIMUM}); it will look pixelated` };
+export function dpiCheck(where: string, dpi: number): { where: string; severity: 'pass' | 'warn' | 'fail'; check: string; kind: 'dpi' } {
+  if (dpi >= DPI_RECOMMENDED) return { where, severity: 'pass', check: `illustration ${dpi} dpi in print`, kind: 'dpi' };
+  if (dpi >= DPI_MINIMUM) return { where, severity: 'warn', check: `illustration ${dpi} dpi in print (${DPI_RECOMMENDED} recommended; acceptable, may look slightly soft)`, kind: 'dpi' };
+  return { where, severity: 'fail', check: `illustration only ${dpi} dpi in print (minimum ${DPI_MINIMUM}); it will look pixelated`, kind: 'dpi' };
+}
+
+// Contain-fit: scale artwork so the WHOLE picture fits inside a region,
+// centred, cropping nothing. Where the picture's shape differs from the
+// region's, the short side leaves paper margins - the illustration reads as
+// a framed plate, as in a printed storybook. The old cover-crop filled the
+// region and guillotined whatever fell outside it (heads, wings, paws).
+// Returns the draw rectangle in points, as offsets from the region's origin.
+// Full-bleed is only honest when the art's shape is the page's shape: the
+// crop stays within roughly the bleed allowance and only frame-edge
+// background can be lost. Beyond the tolerance the cover falls back to an
+// uncropped plate with paper margins, so important content is never cut.
+export const COVER_FULL_BLEED_TOLERANCE = 0.04;
+
+export function coverFullBleedOk(
+  page: { width: number; height: number },
+  image: { width: number; height: number },
+): boolean {
+  const pageRatio = page.width / page.height;
+  const artRatio = image.width / image.height;
+  return Math.abs(artRatio / pageRatio - 1) <= COVER_FULL_BLEED_TOLERANCE;
+}
+
+export function containFit(
+  region: { width: number; height: number },
+  image: { width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const scale = Math.min(region.width / image.width, region.height / image.height);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  return { x: (region.width - width) / 2, y: (region.height - height) / 2, width, height };
+}
+
+// Fail-closed export gate: which QA findings refuse the export. dpi findings
+// are advisory (the 150dpi floor already guards) and omitted: refusing them
+// would break older books customers can already buy, which is a product
+// decision, not a defect gate. Everything failing here already passes the
+// editor's client-side contract, so a blocker means the book reached export
+// by an unusual path (older book, direct API call) - exactly what the gate
+// exists for.
+export function exportBlockers<T extends { severity: string; kind?: string }>(qa: T[]): T[] {
+  return qa.filter((q) => q.severity === 'fail' && q.kind !== 'dpi');
 }

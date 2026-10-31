@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.118.0"
 import { CURRENCY, isPricedItem, priceFor } from "./pricing.ts"
 
 // What an entitlement is granted from: the fields of a Stripe PaymentIntent
