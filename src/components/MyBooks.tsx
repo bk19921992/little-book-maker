@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { supabase } from '@/integrations/supabase/client';
-import { deleteBook, listBooks, openBook, pdfDownloadLink, type SavedBookSummary } from '../lib/savedBooks';
+import { deleteBook, incompleteNotes, listBooks, openBook, pdfDownloadLink, type SavedBookSummary } from '../lib/savedBooks';
 import type { StoryConfig } from '../types';
 
 interface MyBooksProps {
@@ -106,6 +106,13 @@ export const MyBooks: React.FC<MyBooksProps> = ({ open, userId, onOpenChange, on
                     {book.pageCount} pages{book.pageSize ? ` · ${book.pageSize}` : ''} · saved {new Date(book.updatedAt).toLocaleDateString('en-GB')}
                     {book.exportedAt ? ' · PDF ready' : ''}
                   </div>
+                  {(() => {
+                    // Visible consumer of the saved incomplete state: a book
+                    // whose last save recorded missing pictures says so here.
+                    const bits = incompleteNotes(book);
+                    if (!bits.length) return null;
+                    return <div className="text-xs text-amber-800">{bits.join(' · ')}</div>;
+                  })()}
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => reopen(book)} disabled={!!busy}>
