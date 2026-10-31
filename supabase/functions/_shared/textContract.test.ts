@@ -1,51 +1,60 @@
-// Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { contractViolations, formatLineCapacity, lineBudget, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, pageLines, wordRange } from './textContract.ts';
+import { contractViolations, lineShapeViolations, wordRange, packLines } from './textContract.ts';
 
-test('line budget: Toddler 4 everywhere; others 6 portrait, 5 square/landscape/unknown', () => {
-  assert.equal(lineBudget('Toddler 2–3', 'A4 portrait'), 4);
-  assert.equal(lineBudget('Primary 6–8', 'A5 portrait'), 6);
-  assert.equal(lineBudget('Early 4–5', 'A4 portrait'), 6);
-  assert.equal(lineBudget('Primary 6–8', '210×210 mm square'), 5);
-  assert.equal(lineBudget('Primary 6–8', 'A4 landscape'), 5);
-  assert.equal(lineBudget('Primary 6–8', undefined), 5);
+// Early 4-5 on A4 landscape: 5 lines x 6 full-line words = 20-30 total.
+test('word range for Early 4-5 A4 landscape is 20-30', () => {
+  assert.deepEqual(wordRange('Early 4–5', 'A4 landscape'), { min: 20, max: 30 });
 });
 
-test('word ranges never exceed what the line budget can hold', () => {
-  for (const level of ['Toddler 2–3', 'Early 4–5', 'Primary 6–8']) {
-    for (const size of ['A5 portrait', 'A4 portrait', '210×210 mm square', 'A4 landscape', undefined]) {
-      const { min, max } = wordRange(level, size);
-      assert.ok(min < max, `${level} ${size}`);
-      assert.ok(max <= lineBudget(level, size) * MAX_LINE_WORDS, `${level} ${size}`);
-    }
-  }
-  assert.deepEqual(wordRange('Primary 6–8', 'A5 portrait'), { min: 24, max: 36 });
-  assert.deepEqual(wordRange('Primary 6–8', 'A4 landscape'), { min: 24, max: 30 });
-  assert.deepEqual(wordRange('Toddler 2–3', 'A5 portrait'), { min: 5, max: 24 });
+// The exact observed defect: 31 words in 5 contract-clean lines (7+6+6+6+6)
+// passed the old line-shape-only check and shipped to the editor, which then
+// blocked export on the total word count.
+test('31 words in 5 compliant lines is a contract violation', () => {
+  const page = 'Alex puts on his yellow shirt.\nPip wags her shiny black tail.\nAlex picks up his blue truck.\nThey walk to the big front door.\nAlex smiles when Pip is near.';
+  assert.equal(page.split(/\s+/).filter(Boolean).length, 31);
+  const v = contractViolations(page, 'Early 4–5', 'A4 landscape');
+  assert.ok(v.some((s) => s.includes('31 words (max 30)')), 'expected total-word violation, got: ' + v.join('; '));
 });
 
-test('violations name line count, words per line and characters per line', () => {
-  assert.deepEqual(contractViolations('One short line.\nAnother short line.', 'Primary 6–8', 'A5 portrait'), []);
-  const v = contractViolations('a b c d e f g h\n' + 'x'.repeat(40) + '\n3\n4\n5', 'Toddler 2–3', 'A5 portrait');
-  assert.ok(v.some((m) => m.startsWith('5 lines (max 4)')));
-  assert.ok(v.some((m) => m.includes('8 words')));
-  assert.ok(v.some((m) => m.includes('40 characters')));
+test('30 words in compliant lines passes', () => {
+  const page = 'Alex puts on his yellow shirt.\nAlex picks up his blue truck.\nThey walk to the front door.\nAlex smiles when Pip is near.\nPip wags her soft black tail.';
+  assert.equal(page.split(/\s+/).filter(Boolean).length, 30);
+  assert.deepEqual(contractViolations(page, 'Early 4–5', 'A4 landscape'), []);
 });
 
-test('packLines never produces a line over the word or character limit', () => {
-  const text = 'Grandmother whispered that everybody deserves kindness while fireflies twinkled beautifully across the meadow and everyone gathered underneath the enormous chestnut tree';
-  const lines = pageLines(packLines(text));
-  assert.ok(lines.every((l) => l.split(' ').length <= MAX_LINE_WORDS && l.length <= MAX_LINE_CHARS), lines.join(' | '));
-  assert.equal(lines.join(' '), text);
+test('under-minimum word count is a violation', () => {
+  const page = 'Alex hugs Pip.\nPip wags her tail.\nHome feels safe.';
+  const v = contractViolations(page, 'Early 4–5', 'A4 landscape');
+  assert.ok(v.some((s) => s.includes('(min 20)')), 'expected min-word violation, got: ' + v.join('; '));
 });
 
-test('copy at the word ceiling packs within the line budget', () => {
-  // Typical children's copy (~4.3 letters/word) at the Primary portrait max.
-  const sample = 'Mia and Pip ran down the lane past the bakery and the old church. The wind was cold and very strong so they held their bright scarves tight. At the park they found a red kite';
-  const n = sample.split(' ').length;
-  assert.equal(n, wordRange('Primary 6–8', 'A5 portrait').max);
-  assert.ok(pageLines(packLines(sample)).length <= lineBudget('Primary 6–8', 'A5 portrait'));
-  const small = sample.split(' ').slice(0, wordRange('Primary 6–8', 'A4 landscape').max).join(' ');
-  assert.ok(pageLines(packLines(small)).length <= formatLineCapacity('A4 landscape'));
+test('packLines preserves words - it never cuts to force a pass', () => {
+  const page = 'Alex puts on his yellow shirt. Pip wags her shiny black tail. Alex picks up his blue truck. They walk to the big front door. Alex smiles when Pip is near.';
+  const packed = packLines(page);
+  assert.equal(packed.split(/\s+/).filter(Boolean).length, 31);
+  assert.ok(contractViolations(packed, 'Early 4–5', 'A4 landscape').some((s) => s.includes('31 words')));
+});
+
+test('lineShapeViolations ignores a word-count-only breach (packLines cannot fix totals)', () => {
+  // 33 words in clean lines for a level capped at 30: only the total is out
+  // of range, so the deterministic repack must not trigger on this page.
+  const text = [
+    'Pip can run and hop and play.',
+    'Will can hop and skip and jump.',
+    'They go to nursery every day.',
+    'All their friends wave hello now.',
+    'Time to hang your coat up now.',
+  ].join('\n');
+  // A4 landscape caps Early 4-5 at 30 words and 5 lines.
+  const violations = contractViolations(text, 'Early 4–5', 'A4 landscape');
+  assert.ok(violations.some((v) => v.includes('words (max')), 'fixture must breach the word total');
+  assert.equal(violations.length, 1, 'fixture must breach ONLY the word total');
+  assert.deepEqual(lineShapeViolations(text, 'Early 4–5', 'A4 landscape'), []);
+});
+
+test('lineShapeViolations flags over-word and over-long lines', () => {
+  const text = 'This particular line has far too many words on it for one single typeset line.';
+  assert.ok(lineShapeViolations(text, 'Early 4–5', 'A4 portrait').length > 0);
+  assert.deepEqual(lineShapeViolations('Pip wags her tail.', 'Early 4–5', 'A4 portrait'), []);
 });
