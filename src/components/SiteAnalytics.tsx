@@ -1,18 +1,9 @@
-import { Analytics, type BeforeSendEvent } from "@vercel/analytics/react";
-
-const PRODUCTION_HOST = "little-book-maker.vercel.app";
-
-// Page views only: production host only, query string and hash removed.
+import { Analytics, type BeforeSendEvent } from '@vercel/analytics/react';
+import { publicAnalyticsEvent } from '../lib/analyticsPrivacy';
+// The installed hook survives SPA navigation. Check CURRENT location as well
+// as event URL. Deny referrers we cannot safely retain; this undercounts.
 function beforeSend(event: BeforeSendEvent): BeforeSendEvent | null {
-  try {
-    const url = new URL(event.url);
-    if (url.hostname !== PRODUCTION_HOST) return null;
-    return { ...event, url: `${url.origin}${url.pathname}` };
-  } catch {
-    return null;
-  }
+  return publicAnalyticsEvent(event,window.location.href,document.referrer);
 }
-
 const SiteAnalytics = () => <Analytics mode="production" beforeSend={beforeSend} />;
-
 export default SiteAnalytics;
