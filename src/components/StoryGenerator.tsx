@@ -47,7 +47,7 @@ export const StoryGenerator: React.FC = () => {
   const [myBooksOpen, setMyBooksOpen] = useState(false);
   const openSavedBook = (book: StoryConfig) => {
     updateConfig({ ...book, exports: undefined, coverImageUrl: book.coverImageUrl, coverImageReview: book.coverImageReview });
-    setStep('edit');
+    setStep(book.scenePlanDraft ? 'preview' : 'edit');
   };
 
   // Autosave while editing and exporting (text edits, redone pictures), so
@@ -55,11 +55,11 @@ export const StoryGenerator: React.FC = () => {
   // export step also saves explicitly before checkout.
   const lastSaved = useRef<string>('');
   useEffect(() => {
-    if (!user || !config.storyId || !config.pages?.length) return;
-    if (currentStep !== 'edit' && currentStep !== 'export') return;
+    if (!user || !config.storyId || (!config.pages?.length && !config.scenePlanDraft)) return;
+    if (currentStep !== 'edit' && currentStep !== 'export' && !config.scenePlanDraft) return;
     // Cheap change fingerprint: text plus each picture's length and tail.
     const pic = (url?: string) => (url ? `${url.length}:${url.slice(-24)}` : '');
-    const snapshot = JSON.stringify([config.storyId, config.pages.map((p) => [p.page, p.text, pic(p.imageUrl), p.imageLocked]), pic(config.coverImageUrl)]);
+    const snapshot = JSON.stringify([config.storyId, (config.pages || []).map((p) => [p.page, p.text, pic(p.imageUrl), p.imageLocked]), pic(config.coverImageUrl),config.outline?.sceneLedger,config.scenePlanDraft]);
     if (snapshot === lastSaved.current) return;
     const timer = setTimeout(() => {
       saveBook(supabase, user.id, config)
@@ -68,6 +68,13 @@ export const StoryGenerator: React.FC = () => {
     }, 1500);
     return () => clearTimeout(timer);
   }, [user, config, currentStep]);
+
+  // A step change is a new screen: start it at the top. Without this the
+  // old scroll position carries over and the sticky header covers the new
+  // screen's title (desktop header is sticky; mobile is not).
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [currentStep]);
 
   const handleNext = () => {
     switch (currentStep) {
