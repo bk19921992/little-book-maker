@@ -1,3 +1,5 @@
+import type { SequenceReview } from '../supabase/functions/_shared/bookContinuity';
+import type { SceneLedger } from '../supabase/functions/_shared/sceneLedger';
 // Core types for the storybook generator
 
 export type ReadingLevel = 'Toddler 2–3' | 'Early 4–5' | 'Primary 6–8';
@@ -10,10 +12,25 @@ export type PageLayout = 'split' | 'overlay';
 // Who picks the book format: 'auto' = AI decides per story, 'manual' = user picks
 export type FormatMode = 'auto' | 'manual';
 
+// Cover lettering style the art-direction step picked for this book's cover
+// (generate-images). Deliberately loose: export-pdf re-validates and clamps
+// every field against the bounded vocabulary before rendering, so a stale or
+// hand-edited value can never break an export.
+export interface CoverStyleChoice {
+  typeface?: string;
+  treatment?: string;
+  titleColor?: string;
+  accentColor?: string;
+  subtitleColor?: string;
+  rationale?: string;
+  skipped?: boolean;
+}
+
 export interface StoryConfig {
   children: string[];               // may be empty
   coverImageUrl?: string;             // dedicated cover illustration, when generated
   coverImageReview?: 'passed' | 'unreviewed';
+  coverStyle?: CoverStyleChoice;      // art-directed cover lettering, when selected
   storyType: string;                // preset or custom
   themePreset?: string | null;      // eg 'Calm pastels'
   themeCustom?: string | null;
@@ -40,6 +57,9 @@ export interface StoryConfig {
   formatReason?: string | null;  // why the AI picked this format (auto mode)
   imageSeed?: number | null;
 
+  continuityReview?: SequenceReview;
+  scenePlanDraft?: {outline:StoryOutline;styleBible:StyleBible;format?:PlanFormatSuggestion|null;issues:string[]};
+
   // Generated
   styleBible?: StyleBible;
   outline?: StoryOutline;
@@ -60,6 +80,7 @@ export interface StyleBible {
 }
 
 export interface StoryOutline {
+  sceneLedger?: SceneLedger;
   pages: OutlineItem[];
 }
 
@@ -75,6 +96,10 @@ export interface StoryPage {
   text: string;
   imageUrl?: string;
   imageLocked?: boolean;
+  // Set by story-write when the page text still breaks the shared text
+  // contract: a draft to fix in the editor before its picture is drawn.
+  textNeedsFix?: boolean;
+  textContractIssues?: string[];
   imageReview?: 'passed' | 'unreviewed'; // 'unreviewed': QA reviewer was down; re-checked before checkout
 }
 
@@ -127,6 +152,8 @@ export interface PlanFormatSuggestion {
 }
 
 export interface PlanResponse {
+  needsSceneRepair?: boolean;
+  issues?: string[];
   outline: StoryOutline;
   styleBible: StyleBible;
   format?: PlanFormatSuggestion | null;
