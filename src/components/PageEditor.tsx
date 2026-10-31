@@ -1,3 +1,5 @@
+import { ScenePlanRepair } from './ScenePlanRepair';
+import { sceneLedgerIssues } from '../../supabase/functions/_shared/sceneLedger';
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,10 +22,10 @@ import {
 import { StoryConfig, StoryPage } from '../types';
 import { imageConfig, pickReferenceImage } from '../lib/imageRequest';
 import { applyJobItems, runImageJob } from '../lib/imageJob';
-import { countWords, getPageTextStatus, getWordCountStatus, pageFitAdvice, wordCountTargets } from '../lib/validation';
-import { packLines } from '../../supabase/functions/_shared/textContract.ts';
+import { editorExportIssues, fitPageLines, countWords, getPageTextStatus, getWordCountStatus, pageFitAdvice, wordCountTargets } from '../lib/validation';
 import { toast } from 'sonner';
 import { api } from '../api';
+import { ContinuityReview } from './ContinuityReview';
 
 interface PageEditorProps {
   config: StoryConfig;
@@ -38,6 +40,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
   onNext,
   onBack,
 }) => {
+  const [continuityReady, setContinuityReady] = useState(false);
   const [selectedPage, setSelectedPage] = useState(1);
   const [isRegeneratingImage, setIsRegeneratingImage] = useState(false);
 
@@ -48,8 +51,11 @@ export const PageEditor: React.FC<PageEditorProps> = ({
   const currentFitAdvice = currentPage ? pageFitAdvice(currentPage.text, config.readingLevel, config.pageSize) : null;
 
   const updatePageText = (pageNumber: number, text: string) => {
+    // Editing the wording settles the generation-time contract flag: the
+    // editor's own gate recomputes the shared contract from the current
+    // text, so the stale flag must not linger on the page object.
     const updatedPages = pages.map(page =>
-      page.page === pageNumber ? { ...page, text } : page
+      page.page === pageNumber ? { ...page, text, textNeedsFix: undefined, textContractIssues: undefined } : page
     );
     onConfigChange({ pages: updatedPages });
   };
@@ -76,6 +82,8 @@ export const PageEditor: React.FC<PageEditorProps> = ({
       return;
     }
 
+    const sceneIssues = sceneLedgerIssues(config.outline.sceneLedger,config.lengthPages);
+    if (sceneIssues.length) { toast.error('This older scene plan needs a continuity update before generating more pictures. Your current book is unchanged.'); return; }
     setIsRegeneratingImage(true);
     try {
       const prompt = outlinePage.imagePrompt || outlinePage.visualBrief || 'storybook illustration';
@@ -85,7 +93,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
       const reference = pickReferenceImage(pages.filter((p) => p.imageReview !== 'unreviewed'), pageNumber);
       const { jobId } = await api.startImageJob(config.pageSize, config.pageLayout, [
         { page: pageNumber, prompt, text: storyPage.text, visualBrief: outlinePage.visualBrief },
-      ], false, imageConfig(config), config.storyId || '', reference);
+      ], false, imageConfig(config), config.storyId || '', reference, config.outline.sceneLedger);
       const result = applyJobItems(pages, await runImageJob(api, jobId));
 
       if (result.failedPages.length) {
@@ -113,10 +121,14 @@ export const PageEditor: React.FC<PageEditorProps> = ({
     };
   };
 
-  const canExport = pages.every(page => {
-    const status = getPageStatus(page);
-    return status.overall === 'complete';
-  });
+  const exportIssues = editorExportIssues(pages, config.readingLevel, config.pageSize);
+  const canExport = pages.length > 0 && exportIssues.length === 0;
+  const fitLinesForPage = (pageNumber: number) => {
+    const page = pages.find(p => p.page === pageNumber);
+    if (!page) return;
+    const fitted = fitPageLines(page.text, config.readingLevel, config.pageSize);
+    if (fitted !== null) updatePageText(pageNumber, fitted);
+  };
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-8 animate-fade-in">
@@ -128,6 +140,33 @@ export const PageEditor: React.FC<PageEditorProps> = ({
           Fine-tune your story and make it perfect
         </p>
       </div>
+
+      {!canExport && (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription className="space-y-3">
+            <p>Fix these pages before exporting. Fit lines changes line breaks only, not the words.</p>
+            {!pages.length && <p>Add story pages before exporting.</p>}
+            <ul className="space-y-3">
+              {exportIssues.map((issue, index) => (
+                <li key={`${issue.page}-${index}`} className="space-y-2">
+                  <p>{issue.message}</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setSelectedPage(issue.page)}>
+                      Review page {issue.page}
+                    </Button>
+                    {issue.canFitLines && (
+                      <Button variant="outline" size="sm" onClick={() => fitLinesForPage(issue.page)}>
+                        Fit lines on page {issue.page}
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid lg:grid-cols-4 gap-8">
         {/* Page List */}
@@ -172,7 +211,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                       </div>
                     </div>
                     <div className="text-xs opacity-70 mt-1">
-                      {wordCount} words • {page.imageUrl ? 'Image ready' : page.imageLocked ? 'No image' : 'Image needed'}
+                      {wordCount} words • {page.imageUrl ? 'Image ready' : page.imageLocked ? 'Text only' : 'Image needed'}
                     </div>
                   </button>
                 );
@@ -230,7 +269,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => updatePageText(currentPage.page, packLines(currentPage.text))}
+                            onClick={() => fitLinesForPage(currentPage.page)}
                           >
                             Fit lines
                           </Button>
@@ -244,7 +283,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
               {/* Image Editor */}
               <Card className="story-card">
                 <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
+                  <CardTitle className="flex flex-wrap items-center justify-between gap-y-2">
                     <div className="flex items-center gap-2">
                       <Image className="w-5 h-5 text-primary" />
                       Page {currentPage.page} Illustration
@@ -258,7 +297,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                         />
                         <Label htmlFor={`lock-${currentPage.page}`} className="flex items-center gap-1">
                           {currentPage.imageLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                          Lock {currentPage.imageLocked ? 'without' : 'with'} image
+                          {currentPage.imageLocked ? 'Text-only page (no picture)' : 'Illustrated page'}
                         </Label>
                       </div>
                       
@@ -308,16 +347,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                 </CardContent>
               </Card>
 
-              {/* Validation Alerts */}
-              {!canExport && (
-                <Alert>
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>
-                    Some pages need attention before you can export your story. 
-                    Check word counts and ensure all pages have images or are locked without them.
-                  </AlertDescription>
-                </Alert>
-              )}
+
             </div>
           ) : (
             <Card className="story-card">
@@ -329,6 +359,9 @@ export const PageEditor: React.FC<PageEditorProps> = ({
         </div>
       </div>
 
+      <ContinuityReview config={config} onConfigChange={onConfigChange} onReady={setContinuityReady} />
+
+      <ScenePlanRepair config={config} onConfigChange={onConfigChange} />
       {/* Action Buttons */}
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={onBack} className="w-full sm:w-auto">
@@ -337,7 +370,7 @@ export const PageEditor: React.FC<PageEditorProps> = ({
         
         <Button
           onClick={onNext}
-          disabled={!canExport}
+          disabled={!canExport || !continuityReady}
           size="lg"
           className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"
         >
