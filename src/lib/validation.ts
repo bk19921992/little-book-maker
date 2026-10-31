@@ -173,3 +173,49 @@ export const pageFitAdvice = (
     canFitLines: fixable,
   };
 };
+
+// Pages whose text still breaks the shared text contract. The client
+// recomputes the contract itself (the module is shared with the backend),
+// so the gate holds even when the server's textNeedsFix flag is absent -
+// for example while an older story-write is still deployed. PreviewGenerate
+// refuses to spend on illustrations for these until the wording is fixed
+// in the editor: edits after the fact would change the text the pictures
+// were prompted and reviewed against.
+export function pagesNeedingTextFix(
+  pages: ReadonlyArray<{ page: number; text?: string; textNeedsFix?: boolean }> = [],
+  readingLevel: string = 'Early 4–5',
+  pageSize?: string,
+): number[] {
+  return pages
+    .filter((p) => p?.textNeedsFix || contractViolations(p?.text || '', readingLevel, pageSize).length > 0)
+    .map((p) => p.page);
+}
+
+// Export readiness uses the editor's exact contract, never the loose legacy
+// validation tolerance. Reflow is offered only when the same words fully pass.
+export const editorExportIssues = (
+  pages: { page: number; text: string; imageUrl?: string; imageLocked?: boolean }[],
+  readingLevel: ReadingLevel,
+  pageSize?: PageSizePreset,
+): { page: number; message: string; canFitLines: boolean }[] => pages.flatMap(page => {
+  const status = getPageTextStatus(page.text, readingLevel, pageSize);
+  const issues: { page: number; message: string; canFitLines: boolean }[] = [];
+  if (status.status !== 'good') {
+    const range = wordCountTargets(readingLevel, pageSize);
+    const count = countWords(page.text);
+    const details = [
+      ...(count < range.min || count > range.max ? [`${count} words (target ${range.min}-${range.max})`] : []),
+      ...status.issues,
+    ];
+    issues.push({ page: page.page, message: `Page ${page.page}: ${details.join('; ')}.`,
+      canFitLines: getPageTextStatus(packLines(page.text), readingLevel, pageSize).status === 'good' });
+  }
+  if (!page.imageUrl && !page.imageLocked) issues.push({ page: page.page,
+    message: `Page ${page.page}: add an image or lock the page without one.`, canFitLines: false });
+  return issues;
+});
+
+export const fitPageLines = (text: string, readingLevel: ReadingLevel, pageSize?: PageSizePreset): string | null => {
+  const packed = packLines(text);
+  return getPageTextStatus(packed, readingLevel, pageSize).status === 'good' ? packed : null;
+};
