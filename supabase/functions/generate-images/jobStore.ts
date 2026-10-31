@@ -125,4 +125,4 @@ export class SupabaseJobStore<R, P> implements JobStore<R, P> {
     }
     return jobId
   }
-  }
+}
