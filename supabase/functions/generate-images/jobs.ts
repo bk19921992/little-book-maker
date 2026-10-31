@@ -220,4 +220,4 @@ export function buildItems<P extends { page: number }>(prompts: P[], includeCove
   const items: JobItem<P>[] = pages.map((p, i) => ({ ...blank, item_key: `page:${p.page}`, seq: i, page: p.page, prompt: p }))
   if (includeCover) items.push({ ...blank, item_key: 'cover', seq: pages.length, page: null, prompt: null })
   return items
-  }
+}
