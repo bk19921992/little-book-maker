@@ -44,8 +44,11 @@ export function wordRange(readingLevel: string, pageSize?: string): { min: numbe
 const words = (s: string) => s.split(/\s+/).filter(Boolean);
 export const pageLines = (text: string) => text.split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
 
-// Human-readable contract breaches for one page; empty when it complies.
-export function contractViolations(text: string, readingLevel: string, pageSize?: string): string[] {
+// Line-shape breaches only: line count and per-line length. packLines can
+// repair exactly these; it cannot change the word total, so a word-range
+// breach alone must never trigger the deterministic repack - that would just
+// discard the model's line breaks (rhyme placement) for nothing.
+export function lineShapeViolations(text: string, readingLevel: string, pageSize?: string): string[] {
   const lines = pageLines(text);
   const budget = lineBudget(readingLevel, pageSize);
   const out: string[] = [];
@@ -55,6 +58,19 @@ export function contractViolations(text: string, readingLevel: string, pageSize?
     if (line.length > MAX_LINE_CHARS) out.push(`line ${i + 1} has ${line.length} characters (max ${MAX_LINE_CHARS})`);
   });
   return out;
+}
+
+// Human-readable contract breaches for one page; empty when it complies.
+export function contractViolations(text: string, readingLevel: string, pageSize?: string): string[] {
+  // Total word range is part of the contract: line-shape limits alone leave
+  // up to (lineBudget * MAX_LINE_WORDS - ceiling) slack words, which is how a
+  // 31-word page once shipped for a 20-30 word level.
+  const out: string[] = [];
+  const range = wordRange(readingLevel, pageSize);
+  const total = words(text).length;
+  if (total > range.max) out.push(`${total} words (max ${range.max})`);
+  if (total < range.min) out.push(`${total} words (min ${range.min})`);
+  return out.concat(lineShapeViolations(text, readingLevel, pageSize));
 }
 
 // Deterministic last resort: repack the word stream greedily into lines of
