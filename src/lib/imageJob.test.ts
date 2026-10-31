@@ -1,8 +1,8 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { StoryPage } from '../types.ts';
-import { applyJobItems, type ImageJobItem, type ImageJobStep, runImageJob } from './imageJob.ts';
+import type { StoryConfig, StoryPage } from '../types.ts';
+import { applyJobItems, finishedBookConfig, illustrationTracker, type ImageJobItem, type ImageJobStep, runImageJob } from './imageJob.ts';
 
 const done = (page: number | null, extra: Partial<ImageJobItem> = {}): ImageJobItem =>
   ({ key: page === null ? 'cover' : `page:${page}`, page, status: 'done', attempts: 1, url: `data:image/jpeg;base64,${page}`, review: { pass: true, issues: [] }, ...extra });
@@ -57,4 +57,69 @@ test('applyJobItems: done items set images and review state; failures keep the p
   assert.deepEqual(out.failedPages, [2]);
   assert.equal(out.coverImageUrl, undefined);
   assert.equal(out.coverFailed, true);
+});
+
+test('illustrationTracker counts failures truthfully, never as finished', () => {
+  const tracker = illustrationTracker(11);
+  for (let i = 0; i < 10; i++) tracker.onItem({ key: `page:${i}`, page: i, status: 'done', attempts: 1 } as any);
+  tracker.onItem({ key: 'page:7', page: 7, status: 'failed', attempts: 3, error: 'Quality review failed' } as any);
+  assert.equal(tracker.finished, 10);
+  assert.equal(tracker.failed, 1);
+  assert.equal(tracker.label(), '10 of 11 illustrations finished, 1 failed');
+});
+
+test('illustrationTracker with no failures labels plainly', () => {
+  const tracker = illustrationTracker(3);
+  tracker.onItem({ key: 'cover', page: null, status: 'done', attempts: 1 } as any);
+  tracker.onItem({ key: 'page:1', page: 1, status: 'done', attempts: 1 } as any);
+  tracker.onItem({ key: 'page:2', page: 2, status: 'done', attempts: 1 } as any);
+  assert.equal(tracker.label(), '3 of 3 illustrations finished');
+});
+
+
+test('applyJobItems carries the cover art-direction spec through with the cover', () => {
+  const style = { typeface: 'bouncy', treatment: 'bounce', titleColor: '#282C42', accentColor: '#C24B5A', subtitleColor: '#282C42' };
+  const pages: StoryPage[] = [{ page: 1, text: 'one' }];
+  const result = applyJobItems(pages, [done(1), done(null, { coverStyle: style })]);
+  assert.deepEqual(result.coverStyle, style);
+});
+
+test('applyJobItems reports no cover style for a missing, failed or style-less cover', () => {
+  const pages: StoryPage[] = [{ page: 1, text: 'one' }];
+  assert.equal(applyJobItems(pages, [done(1)]).coverStyle, undefined);
+  assert.equal(applyJobItems(pages, [done(1), { ...done(null), status: 'failed' as const }]).coverStyle, undefined);
+  assert.equal(applyJobItems(pages, [done(1), done(null)]).coverStyle, undefined);
+});
+
+
+const bookWithStyle = (coverStyle?: unknown): StoryConfig =>
+  ({ children: [], storyType: 'adventure', setting: 'woods', palette: [], characters: [], readingLevel: 'Early 4–5', lengthPages: 2, narrationStyle: 'Simple prose', personal: {}, contentSafety: true, imageStyle: 'Picture-book', formatMode: 'auto', pageSize: 'A5 portrait', pageLayout: 'split', coverImageUrl: 'data:image/jpeg;base64,oldcover', ...(coverStyle ? { coverStyle: coverStyle as never } : {}) });
+
+test('finishedBookConfig: a new cover replaces the style with this run\'s selection', () => {
+  const style = { typeface: 'chunky', treatment: 'arc' };
+  const result = applyJobItems([{ page: 1, text: 'one' }], [done(1), done(null, { coverStyle: style })]);
+  const finished = finishedBookConfig(bookWithStyle({ typeface: 'bouncy' }), result);
+  assert.deepEqual(finished.coverStyle, style);
+});
+
+test('finishedBookConfig: gate off or selector skipped CLEARS the inherited style - old style never describes new art', () => {
+  const result = applyJobItems([{ page: 1, text: 'one' }], [done(1), done(null)]); // cover done, no style
+  const finished = finishedBookConfig(bookWithStyle({ typeface: 'bouncy' }), result);
+  assert.equal('coverStyle' in finished, false, 'style key removed, not inherited');
+  assert.equal(finished.coverImageUrl, 'data:image/jpeg;base64,null', 'new cover art kept');
+});
+
+test('finishedBookConfig: a failed cover clears both the cover and its style', () => {
+  const result = applyJobItems([{ page: 1, text: 'one' }], [done(1), { ...done(null), status: 'failed' as const }]);
+  const finished = finishedBookConfig(bookWithStyle({ typeface: 'bouncy' }), result);
+  assert.equal('coverStyle' in finished, false);
+  assert.equal(finished.coverImageUrl, undefined);
+});
+
+test('finishedBookConfig: a page-only run (no cover item) preserves the existing style', () => {
+  const result = applyJobItems([{ page: 1, text: 'one' }], [done(1)]);
+  const finished = finishedBookConfig(bookWithStyle({ typeface: 'bouncy' }), result);
+  assert.deepEqual(finished.coverStyle, { typeface: 'bouncy' }, 'no cover work: the style still matches the untouched art');
+  // Note: applyJobItems has always cleared coverImageUrl on a run with no
+  // done cover item - pre-existing behaviour, unchanged here.
 });
