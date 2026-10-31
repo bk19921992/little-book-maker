@@ -115,6 +115,7 @@ export function logUsage(result: any, model: string, size: string, quality: stri
   return result
 }
 
+
 type FetchLike = typeof fetch
 
 export async function generateOneImage(
