@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2"
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.118.0"
 
 // Where a saved book's files live in the private 'books' bucket (see
 // supabase/migrations/20260929120000_saved_books.sql).
@@ -36,4 +36,4 @@ export async function storeBookPdfs(
     return data.signedUrl
   }
   return { webUrl: await sign(paths.web), printUrl: await sign(paths.print) }
-}
+         }
