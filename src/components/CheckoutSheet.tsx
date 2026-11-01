@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 import {
   Elements,
@@ -11,23 +11,28 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { supabase } from '@/integrations/supabase/client';
+import { publishableKey, stripeRuntime } from '@/lib/stripeRuntime';
 import { PRICES, PAID_CHECKOUT_ENABLED, PAID_CHECKOUT_NOTICE } from '@/lib/pricing';
 
-const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+// The publishable key (public by design) comes from the build-time env var
+// when present, otherwise from the backend's public-config endpoint at
+// runtime, so checkout does not depend on a Vercel rebuild to get the key.
+const envPublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined;
 
-let stripePromise: Promise<Stripe | null> | null = null;
-
-if (PAID_CHECKOUT_ENABLED && publishableKey) {
-  stripePromise = loadStripe(publishableKey);
-} else {
-  if (import.meta.env.DEV) {
-    // Surface a clear warning during development so missing configuration
-    // doesn't silently break checkout flows.
-    console.warn(
-      '[CheckoutSheet] Missing VITE_STRIPE_PUBLISHABLE_KEY. Stripe checkout will be disabled.'
-    );
+async function resolvePublishableKey(): Promise<string | undefined> {
+  const configured = publishableKey(envPublishableKey);
+  if (configured) return configured;
+  try {
+    const { data, error } = await supabase.functions.invoke<{ stripePublishableKey?: string | null }>('public-config', { body: {} });
+    if (error) throw error;
+    return publishableKey(data?.stripePublishableKey);
+  } catch (err) {
+    console.error('[CheckoutSheet] Could not load payment configuration.');
+    return undefined;
   }
 }
+
+const getStripe = stripeRuntime<Stripe>(resolvePublishableKey, loadStripe);
 
 interface CheckoutSheetProps {
   item: 'export' | 'print' | 'subscription';
@@ -126,6 +131,21 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [intent, setIntent] = useState<BillingIntentResponse | null>(null);
+  const [stripe, setStripe] = useState<Stripe | null>(null);
+
+  // Warm the Stripe instance while the customer reads the price, so the
+  // payment form appears without a pause once the server creates an intent.
+  useEffect(() => {
+    let live = true;
+    if (PAID_CHECKOUT_ENABLED) {
+      void getStripe().then((instance) => {
+        if (live) setStripe(instance);
+      });
+    }
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const handleContinue = async () => {
     setLoading(true);
@@ -152,10 +172,12 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
         return;
       }
       if (!data?.clientSecret) throw new Error('Payment could not be started. Please try again.');
-      if (!stripePromise) {
-        console.error('[CheckoutSheet] VITE_STRIPE_PUBLISHABLE_KEY is not set; card payments are disabled.');
+      const stripeInstance = await getStripe();
+      if (!stripeInstance) {
+        console.error('[CheckoutSheet] No Stripe publishable key available; card payments are disabled.');
         throw new Error("Card payments aren't available right now. Please try again later.");
       }
+      setStripe(stripeInstance);
       setIntent(data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to start checkout');
@@ -188,8 +210,8 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
 
         {error && <div className="text-sm text-destructive bg-destructive/10 p-2 rounded">{error}</div>}
 
-        {intent && stripePromise ? (
-          <Elements stripe={stripePromise} options={{ clientSecret: intent.clientSecret, appearance: { theme: 'stripe' } }}>
+        {intent && stripe ? (
+          <Elements stripe={stripe} options={{ clientSecret: intent.clientSecret, appearance: { theme: 'stripe' } }}>
             <PayForm {...props} amount={intent.amount} />
           </Elements>
         ) : (

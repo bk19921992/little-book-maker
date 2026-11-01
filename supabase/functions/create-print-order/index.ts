@@ -11,8 +11,8 @@ import { paddedPageCount, peechoOrderBody, TRIM_CM, validateAddress } from "./pr
 //    stripe-webhook record it) - one payment buys exactly one order;
 //  - uses the book's stored, server-generated print PDF (never a URL from
 //    the browser), padded with blank pages to the printer's minimum;
-//  - records the order in print_orders, so a retry after a printer error
-//    reuses the same payment and a submitted order is never placed twice.
+//  - atomically reserves each payment in print_orders before submission;
+//    ambiguous failures require reconciliation, never an automatic retry.
 //
 // Printer: Peecho, the one printer integrated. The request shape comes from
 // the original integration and has not been exercised against Peecho from
@@ -92,18 +92,27 @@ serve(async (req) => {
       : { data: [], error: null };
     if (ordersError) throw ordersError;
     const byPayment = new Map((orders || []).map((o) => [o.payment_intent_id as string, o]));
-    const unused = paymentIds.find((id) => byPayment.get(id)?.status !== 'submitted');
+    // Only an entirely unused payment can start a provider submission.
+    // Pending/failed rows may represent an order accepted upstream before a
+    // timeout or DB write failure. Never auto-retry these ambiguous states.
+    const unused = paymentIds.find((id) => !byPayment.has(id));
     if (!unused) {
       const placed = (orders || []).find((o) => o.status === 'submitted');
-      return placed
-        ? json(200, { ok: true, provider: 'PEECHO', orderId: placed.provider_order_id, alreadyPlaced: true })
+      if (placed) return json(200, { ok: true, provider: 'PEECHO', orderId: placed.provider_order_id, alreadyPlaced: true });
+      return orders?.length
+        ? json(409, { ok: false, error: 'Your print order needs a status check before it can be retried. Please contact support.' })
         : json(402, { ok: false, error: 'Payment required. Please complete checkout for your printed book.' });
     }
 
-    const { error: pendingError } = await db.from('print_orders').upsert({
+    // Atomic one-shot reservation: the payment primary key ensures exactly
+    // one concurrent caller can reach the provider. Never upsert/reset it.
+    const { error: pendingError } = await db.from('print_orders').insert({
       payment_intent_id: unused, user_id: user.id, story_id: storyId, provider: 'PEECHO',
       status: 'pending', shipping: address, error: null, updated_at: new Date().toISOString(),
     });
+    if (pendingError?.code === '23505') {
+      return json(409, { ok: false, error: 'Your print order is already being processed. Please check its status.' });
+    }
     if (pendingError) throw pendingError;
     const fail = async (status: number, message: string) => {
       await db.from('print_orders').update({ status: 'failed', error: message, updated_at: new Date().toISOString() }).eq('payment_intent_id', unused);
@@ -138,22 +147,31 @@ serve(async (req) => {
     const orderRef = `SPROUT-${unused.slice(-12)}`;
     const response = await fetch(Deno.env.get('PEECHO_API_URL') || PEECHO_TEST_URL, {
       method: 'POST',
+      // A timeout is ambiguous: the printer may already have accepted it.
+      // Keep the atomic reservation and require reconciliation, never retry.
+      signal: AbortSignal.timeout(20_000),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(peechoOrderBody({ apiKey, offeringId, orderRef, pdfUrl: signed.signedUrl, pageSize: format, pageCount, title: book.title || 'Storybook', address })),
     });
     if (!response.ok) {
-      const detail = (await response.text()).slice(0, 500);
-      console.error('Peecho order failed:', response.status, detail);
-      return fail(502, "The printer couldn't accept the order just now. Please try again - your payment is kept for this book.");
+      // Never read/log upstream bodies: provider errors may echo secrets.
+      console.error('Peecho order failed:', response.status);
+      return fail(502, "The printer couldn't accept the order just now. Please contact support to check its status before retrying.");
     }
     const result = await response.json();
-    await db.from('print_orders').update({
-      status: 'submitted', provider_order_id: String(result?.id ?? ''), page_count: pageCount, error: null, updated_at: new Date().toISOString(),
+    const providerId = result?.id;
+    if ((typeof providerId !== 'string' && typeof providerId !== 'number') ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(String(providerId))) {
+      throw new Error('Invalid printer acknowledgement');
+    }
+    const { error: submittedError } = await db.from('print_orders').update({
+      status: 'submitted', provider_order_id: String(providerId), page_count: pageCount, error: null, updated_at: new Date().toISOString(),
     }).eq('payment_intent_id', unused);
-    console.log('Print order placed:', result?.id, 'user', user.id, 'story', storyId, 'pages', pageCount);
-    return json(200, { ok: true, provider: 'PEECHO', orderId: result?.id, pageCount });
+    if (submittedError) throw new Error('Could not record printer acknowledgement');
+    console.log('Print order recorded');
+    return json(200, { ok: true, provider: 'PEECHO', orderId: String(providerId), pageCount });
   } catch (error) {
-    console.error('Error creating print order:', error);
-    return json(500, { ok: false, error: 'Something went wrong placing your order. Please try again.' });
+    console.error('Error creating print order');
+    return json(500, { ok: false, error: 'Your print order status needs checking. Please contact support before retrying.' });
   }
 });
