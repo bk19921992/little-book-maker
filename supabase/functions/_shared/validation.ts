@@ -11,6 +11,13 @@ export function validateStoryConfig(config: Record<string, unknown>): string | n
   if (!text(config.setting)) return 'Please choose a setting.';
   if (text(config.setting).length > 100) return 'Setting is too long (100 characters max).';
 
+  // Optional explicit cover title: no client input path exists yet, but a
+  // config that carries one must stay inside the renderer's contract.
+  const title = text(config.title);
+  if (title.length > 80) return 'Title must be 80 characters or fewer.';
+  if (/[\u0000-\u001F\u007F-\u009F]/.test(title)) return 'Title cannot contain line breaks or control characters.';
+
+
   const children = Array.isArray(config.children) ? config.children : [];
   if (children.length > 4) return 'Please use at most 4 children.';
   for (const name of children) {

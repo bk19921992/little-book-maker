@@ -53,9 +53,9 @@ function scriptedWorker(script: Record<string, ('pass' | 'reject' | 'throw')[]>)
   return { worker, seen }
 }
 
-async function drain(store: MemoryStore, worker: Parameters<typeof runStep>[1], jobId = 'j1') {
+async function drain(store: MemoryStore, worker: Parameters<typeof runStep>[1], jobId = 'j1', hook?: Parameters<typeof runStep>[5]) {
   for (let i = 0; i < 50; i++) {
-    const r = await runStep(store, worker, jobId, 'u1')
+    const r = await runStep(store, worker, jobId, 'u1', undefined, hook)
     if (r?.jobStatus === 'done') return r
   }
   throw new Error('job did not finish')
@@ -174,4 +174,93 @@ test('another user cannot step or read a job', async () => {
   const { worker, seen } = scriptedWorker({})
   assert.equal(await runStep(store, worker, 'j1', 'someone-else'), null)
   assert.equal(seen.length, 0)
+})
+
+
+test('accepted cover art is persisted BEFORE the style hook runs; a hook failure never loses the art', async () => {
+  const store = new MemoryStore()
+  store.create('j1', [{ page: 1 }], true)
+  const events: string[] = []
+  const base = store.updateItem.bind(store)
+  store.updateItem = async (jobId: string, key: string, patch: Partial<JobItem<Prompt>>) => {
+    events.push(`update:${key}:${'cover_style' in patch ? 'style' : patch.status}`)
+    return base(jobId, key, patch)
+  }
+  const worker = async () => ({ url: 'data:image/jpeg;base64,paid-art', review: { pass: true, issues: [] } })
+  const hook = async () => { events.push('hook'); throw new Error('selector died (wall clock / timeout)') }
+  const final = await drain(store, worker, 'j1', hook)
+  const cover = store.item('j1', 'cover')
+  assert.equal(cover.status, 'done')
+  assert.equal(cover.image_url, 'data:image/jpeg;base64,paid-art', 'paid accepted art persisted')
+  assert.equal(cover.cover_style, undefined, 'no style from a failed selector')
+  assert.equal(final?.jobStatus, 'done', 'the job completes despite the styling failure')
+  assert.ok(events.indexOf('update:cover:done') !== -1 && events.indexOf('update:cover:done') < events.indexOf('hook'),
+    `art persisted before the hook ran: ${events.join(' | ')}`)
+})
+
+test('a style from the post-pass hook is stored on the already-saved cover and summarised', async () => {
+  const store = new MemoryStore()
+  store.create('j1', [{ page: 1 }], true)
+  const events: string[] = []
+  const base = store.updateItem.bind(store)
+  store.updateItem = async (jobId: string, key: string, patch: Partial<JobItem<Prompt>>) => {
+    events.push(`update:${key}:${'cover_style' in patch ? 'style' : patch.status}`)
+    return base(jobId, key, patch)
+  }
+  const style = { typeface: 'bouncy', treatment: 'bounce', titleColor: '#282C42' }
+  const worker = async () => ({ url: 'data:image/jpeg;base64,paid-art', review: { pass: true, issues: [] } })
+  const hook = async ({ coverUrl }: { coverUrl: string }) => {
+    events.push(`hook:${coverUrl}`)
+    return style
+  }
+  const final = await drain(store, worker, 'j1', hook)
+  assert.deepEqual(store.item('j1', 'cover').cover_style, style)
+  assert.deepEqual(final?.item?.coverStyle, style, 'the step summary carries the style to the client')
+  assert.equal(store.item('j1', 'page:1').cover_style, undefined, 'pages never carry a style')
+  assert.deepEqual(events.filter((e) => e.includes('cover') || e.startsWith('hook')),
+    ['update:cover:done', 'hook:data:image/jpeg;base64,paid-art', 'update:cover:style'],
+    `order: art, then hook (with the accepted art), then style: ${events.join(' | ')}`)
+})
+
+test('a failed style WRITE keeps the accepted cover done with default lettering', async () => {
+  const store = new MemoryStore()
+  store.create('j1', [], true)
+  const base = store.updateItem.bind(store)
+  store.updateItem = async (jobId: string, key: string, patch: Partial<JobItem<Prompt>>) => {
+    if ('cover_style' in patch) throw new Error('database write failed')
+    return base(jobId, key, patch)
+  }
+  const worker = async () => ({ url: 'data:image/jpeg;base64,paid-art', review: { pass: true, issues: [] } })
+  const final = await drain(store, worker, 'j1', async () => ({ typeface: 'bouncy' }))
+  const cover = store.item('j1', 'cover')
+  assert.equal(cover.status, 'done')
+  assert.equal(cover.image_url, 'data:image/jpeg;base64,paid-art', 'art survived the failed style write')
+  assert.equal(cover.cover_style, undefined)
+  assert.equal(final?.jobStatus, 'done')
+})
+
+test('the style hook runs for the accepted cover only - never for pages or rejected art', async () => {
+  const store = new MemoryStore()
+  store.create('j1', [{ page: 1 }, { page: 2 }], false) // pages only, no cover item
+  let calls = 0
+  const hook = async () => { calls++; return { typeface: 'bouncy' } }
+  await drain(store, async () => ({ url: 'u', review: { pass: true, issues: [] } }), 'j1', hook)
+  assert.equal(calls, 0, 'no cover item: hook never runs')
+
+  const store2 = new MemoryStore()
+  store2.create('j2', [], true)
+  const rejected = async () => ({ url: 'u2', review: { pass: false, issues: ['bad'] } })
+  let calls2 = 0
+  await runStep(store2, rejected, 'j2', 'u1', undefined, async () => { calls2++; return {} })
+  assert.equal(calls2, 0, 'rejected cover: hook never runs')
+})
+
+test('without a style hook (gate off), no cover_style is written anywhere', async () => {
+  const store = new MemoryStore()
+  store.create('j1', [{ page: 1 }], true)
+  const patches: Partial<JobItem<Prompt>>[] = []
+  const base = store.updateItem.bind(store)
+  store.updateItem = async (jobId: string, key: string, patch: Partial<JobItem<Prompt>>) => { patches.push(patch); return base(jobId, key, patch) }
+  await drain(store, async () => ({ url: 'u', review: { pass: true, issues: [] } }))
+  assert.equal(patches.some((p) => 'cover_style' in p), false, 'gate off: the column is never written')
 })

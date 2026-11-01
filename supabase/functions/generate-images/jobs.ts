@@ -18,6 +18,7 @@
 // reclaims the item and the lost attempt still counts, so a request that
 // always times out cannot loop forever.
 
+import { isArtDirectionTestClaim } from '../_shared/coverStyle.ts'
 export const MAX_ATTEMPTS = 3
 // Longer than any edge-function request can live, so a lease only expires
 // after its call is certainly dead.
@@ -42,6 +43,9 @@ export interface JobItem<P = unknown> {
   lease_until: string | null
   image_url: string | null
   review: ItemReview | null
+  // Cover items only: the clamped lettering spec the art-director step chose
+  // for the accepted artwork (or its skipped marker). Persisted as a column.
+  cover_style?: unknown
   error: string | null
 }
 
@@ -75,6 +79,13 @@ export interface AttemptInput<R, P> {
 
 export type AttemptWorker<R, P> = (input: AttemptInput<R, P>) => Promise<{ url: string; review: ItemReview }>
 
+// Optional post-pass hook for the COVER item (cover art direction). It runs
+// only AFTER the accepted artwork has been persisted, so a wall-clock kill
+// or a styling failure loses at most the style - never the paid art. Its
+// result is stored on the item; hook errors and write failures are logged
+// and swallowed (the cover ships with default lettering).
+export type AfterAcceptedCover<R> = (input: { request: R; coverUrl: string }) => Promise<unknown>
+
 export interface ItemSummary {
   key: string
   page: number | null
@@ -82,6 +93,7 @@ export interface ItemSummary {
   attempts: number
   url?: string
   review?: ItemReview
+  coverStyle?: unknown
   error?: string
 }
 
@@ -100,6 +112,7 @@ export function summarise(item: JobItem): ItemSummary {
     attempts: item.attempts,
     ...(item.image_url ? { url: item.image_url } : {}),
     ...(item.review ? { review: item.review } : {}),
+    ...(item.cover_style != null && !isArtDirectionTestClaim(item.cover_style) ? { coverStyle: item.cover_style } : {}),
     ...(item.error ? { error: item.error } : {}),
   }
 }
@@ -122,6 +135,7 @@ export async function runStep<R, P>(
   jobId: string,
   userId: string,
   now: () => Date = () => new Date(),
+  afterAcceptedCover?: AfterAcceptedCover<R>,
 ): Promise<StepResult | null> {
   const job = await store.getJob(jobId, userId)
   if (!job) return null
@@ -155,8 +169,29 @@ export async function runStep<R, P>(
     const { url, review } = await worker({ request: job.request, item: next, reference: job.reference_url, feedback: next.last_issues })
     if (review.pass) {
       patch = { status: 'done', attempts: attempt, image_url: url, review, error: null, lease_until: null }
+      // Persist the accepted art BEFORE any optional post-pass work: a
+      // wall-clock kill or styling failure then costs at most the style.
+      await store.updateItem(jobId, next.item_key, patch)
       // A rejected page never becomes the reference; the cover never does.
       if (next.page !== null && !job.reference_url) await store.setReferenceIfUnset(jobId, url)
+      let coverStyle: unknown
+      if (next.page === null && afterAcceptedCover) {
+        try {
+          coverStyle = await afterAcceptedCover({ request: job.request, coverUrl: url })
+        } catch (styleError) {
+          console.error('Cover post-pass work failed; the accepted cover ships with default lettering:', styleError)
+        }
+        if (coverStyle !== undefined) {
+          try {
+            await store.updateItem(jobId, next.item_key, { cover_style: coverStyle })
+          } catch (styleWriteError) {
+            console.error('Storing the cover style failed; the accepted cover ships with default lettering:', styleWriteError)
+            coverStyle = undefined
+          }
+        }
+      }
+      const updatedPass = { ...next, ...patch, ...(coverStyle !== undefined ? { cover_style: coverStyle } : {}) } as JobItem<P>
+      return finish(store, jobId, updatedPass, remainingAfter(next.item_key))
     } else {
       patch = attempt >= MAX_ATTEMPTS
         ? { status: 'failed', attempts: attempt, last_issues: review.issues, review, error: `Quality review failed after ${MAX_ATTEMPTS} attempts: ${review.issues.join('; ')}`, lease_until: null }

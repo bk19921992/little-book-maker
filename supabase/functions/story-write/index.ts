@@ -1,3 +1,4 @@
+import { sceneGateVerdict, sceneLedgerIssues, sceneContext } from '../_shared/sceneLedger.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
@@ -5,7 +6,7 @@ import { serviceClient } from "../_shared/auth.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
 import { castDetailLines, fallbackPageText, speciesRule, storySubject } from "./castText.ts"
-import { contractViolations, lineBudget, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
+import { contractViolations, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -23,7 +24,6 @@ serve(async (req) => {
     }
 
     const { config, outline, storyId } = await req.json()
-
     const validationError = validateStoryConfig(config)
     if (validationError) {
       return new Response(JSON.stringify({ error: validationError }), {
@@ -31,6 +31,12 @@ serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
+
+    const continuityIssues = sceneLedgerIssues(outline?.sceneLedger,config.lengthPages);
+    const writeGate = sceneGateVerdict(continuityIssues.length, outline?.sceneLedger == null, (k)=>Deno.env.get(k));
+    if(writeGate === 'reject') throw new Error(`Scene plan is incomplete; no pages written: ${continuityIssues.join(' ')}`);
+    if(writeGate === 'warn-allow') console.warn('SCENE_GATE_MODE=permissive: writing pages without a scene plan', continuityIssues);
+
 
     if (!await claimBook(serviceClient(), user.id, storyId)) return bookPaymentRequired(corsHeaders)
 
@@ -53,6 +59,8 @@ serve(async (req) => {
     // Generate story text for all pages in parallel for speed
     console.log(`Generating ${outline.pages.length} pages in parallel...`)
     
+    const sequenceContext = outline?.sceneLedger ? JSON.stringify(outline.sceneLedger) : '';
+    const pageSceneContext = (page:number) => outline?.sceneLedger ? sceneContext(outline.sceneLedger,page) : '';
     const pagePromises = outline.pages.map(async (pageOutline: { page: number; wordCount?: number; wordsTarget?: number; imagePrompt?: string; visualBrief?: string; summary?: string }) => {
       const writingPrompt = `Write page ${pageOutline.page} of a children's story:
 
@@ -78,9 +86,13 @@ Personal Touches to Include Naturally:
 ${config.personal.pets ? `- Pets: ${config.personal.pets}` : ''}
 ${config.personal.dedication ? `- Special Note: ${config.personal.dedication}` : ''}
 
+Whole-book scene sequence (do not contradict neighbouring pages, invent props, clothing changes or locations):
+${sequenceContext}
+
 Page Requirements:
 - Target word count: ${pageOutline.wordCount || pageOutline.wordsTarget} words
 - Visual brief: ${pageOutline.visualBrief}
+${pageSceneContext(pageOutline.page)}
 - This is page ${pageOutline.page} of ${config.lengthPages}
 
 CRITICAL READING LEVEL REQUIREMENTS FOR ${config.readingLevel}:
@@ -224,7 +236,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: 'You reformat children\'s story pages for typesetting. You never drop meaning.' },
-              { role: 'user', content: `Rewrite this children's book page as newline-separated lines: ${lineRule}. All limits are hard. You may reword and compress freely to fit them, but keep the story beats, all proper nouns, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `Rewrite this children's book page as newline-separated lines: ${lineRule}. Total words on the page: between ${min} and ${max}. All limits are hard. You may reword and compress freely to fit them, but keep the story beats, all proper nouns, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -237,9 +249,12 @@ Important Instructions:
           break
         }
       }
-      if (needsRebreak(pageText)) {
-        // Deterministic last resort: LLM word- and character-counting is
-        // unreliable, so repack the word stream in code. Line length is then
+      if (lineShapeViolations(pageText, config.readingLevel, config.pageSize).length) {
+        // Deterministic last resort, for line-shape breaches only: packLines
+        // repairs line length and line count but cannot change the word
+        // total, so a word-count-only breach skips it (running it would
+        // discard the model's line breaks - rhyme placement - for nothing)
+        // and is flagged for the editor below instead. Line length is then
         // guaranteed; line COUNT holds whenever the copy is within the word
         // range (the adjust pass above targets that). Rhyme placement
         // degrades on this path - it is the safety net, not the norm.
@@ -252,11 +267,20 @@ Important Instructions:
           console.warn(`Page ${pageOutline.page} still exceeds the text contract after repack: ${remaining.join('; ')}`)
         }
       }
+      const contractIssues = contractViolations(pageText, config.readingLevel, config.pageSize)
+      if (contractIssues.length) {
+        // Recoverable, not silent: the text ships intact (no deterministic
+        // cutting - that would trade meaning for a green light) and the page
+        // is flagged so the customer fixes it in the editor, whose gate uses
+        // the same shared contract and blocks export until it passes.
+        console.warn(`Page ${pageOutline.page} needs an editor fix for the text contract: ${contractIssues.join('; ')}`)
+      }
       console.log(`Final text length for page ${pageOutline.page}:`, countWords(pageText))
 
       return {
         page: pageOutline.page,
-        text: pageText
+        text: pageText,
+        ...(contractIssues.length ? { textNeedsFix: true as const, textContractIssues: contractIssues } : {})
       }
     })
 

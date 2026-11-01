@@ -1,3 +1,4 @@
+import { imageSceneIssues, sceneContext, sceneGateVerdict, type SceneLedger } from '../_shared/sceneLedger.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
@@ -5,7 +6,8 @@ import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 import { buildItems, MAX_ATTEMPTS, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
-import { acceptedReferenceImage, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
+import { acceptedReferenceImage, buildCoverArtDirectionPrompt, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, ART_DIRECTION_SKIPPED, artDirectionEnabled, artDirectionOutcome, interpretArtDirectionResponse, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
+import { ART_DIRECTION_TEST_MODEL, isServiceRoleRequest, runArtDirectionSelfTest } from "./artDirectionTest.ts"
 import { editImageWithReference, generateOneImage, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
 
 interface ImageReview {
@@ -58,12 +60,65 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
   return { pass: true, issues: [], skipped: true }
 }
 
+// Cover art direction: once the cover illustration has PASSED the vision
+// gate, the same class of model art-directs the lettering for THIS cover. It
+// sees the actual accepted artwork (not just the text config) and answers
+// from a bounded vocabulary; the answer is clamped server-side BEFORE it is
+// stored, so the model can be creative but never unsafe. Like the reviewer,
+// an outage never blocks the book: the result is marked skipped and the
+// export renders the default lettering.
+// One bounded call: the accepted cover art is ALREADY persisted when this
+// runs (jobs.ts persist-first), so there is no retry loop to stretch the
+// step - a slow or failed selector simply ships default lettering.
+const ART_DIRECTION_TIMEOUT_MS = 30_000
+
+async function directCoverStyle(openaiKey: string, reviewModel: string, coverImageUrl: string, config: StoryConfig | undefined, title?: string): Promise<Record<string, unknown>> {
+  // The WHOLE optional step is fail-soft, prompt build and clamp included:
+  // any failure ships default lettering. Styling trouble must NEVER reject
+  // or regenerate the already-accepted cover artwork (that art cost money).
+  try {
+    const prompt = buildCoverArtDirectionPrompt(config || {}, title || '')
+    let verdict
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: reviewModel,
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: coverImageUrl } },
+          ] }],
+          max_completion_tokens: 400,
+          response_format: { type: 'json_object' },
+        }),
+        signal: AbortSignal.timeout(ART_DIRECTION_TIMEOUT_MS),
+      })
+      const body = await response.json().catch(() => null)
+      verdict = interpretArtDirectionResponse(response.status, body)
+    } catch (networkError) {
+      verdict = { verdict: 'unavailable' as const, reason: networkError instanceof Error ? networkError.message : String(networkError) }
+    }
+    const outcome = artDirectionOutcome(verdict)
+    if (outcome.done) {
+      console.log(`Cover art direction: ${JSON.stringify(outcome.value)}`)
+      return outcome.value
+    }
+    console.error(`Cover art direction unavailable: ${outcome.reason}`)
+    return ART_DIRECTION_SKIPPED
+  } catch (unexpected) {
+    console.error('Cover art direction failed unexpectedly; default lettering used:', unexpected)
+    return ART_DIRECTION_SKIPPED
+  }
+}
+
 // What a job stores once for all its items.
 type JobRequest = {
   pageSize: string
   pageLayout: string
   size: string
   config?: StoryConfig
+  title?: string
 }
 
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -98,7 +153,10 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
     }
     const review = await reviewImage(openaiKey, reviewModel, url, {
       label: isCover ? COVER_REVIEW_LABEL : label,
-      brief: isCover ? COVER_REVIEW_BRIEF : pageScene(item.prompt!),
+      // The reviewer sees the page's printed words as well as the scene
+      // brief, so text/image drift (named clothing, props, setting) is
+      // actually checked - the image prompt alone never contained them.
+      brief: isCover ? COVER_REVIEW_BRIEF : pageScene(item.prompt!) + (item.prompt!.text ? `\nPage text: ${item.prompt!.text}` : ''),
       config: request.config,
       referenceDataUrl: reference || undefined,
     })
@@ -113,6 +171,34 @@ serve(async (req) => {
   }
 
   try {
+    const body = await req.json()
+
+    // One-shot art-direction self-test: service-role only, one paid selector
+    // call against one already-accepted cover, atomically claimed so repeats
+    // can never spend twice. Sits BEFORE user auth (the bearer is the
+    // service key, not a user JWT) and never reads COVER_ART_DIRECTION -
+    // the production gate stays off for the whole test.
+    if (body.action === 'art-direction-selftest') {
+      const json = (payload: unknown, status = 200) =>
+        new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      if (!isServiceRoleRequest(req, (key) => Deno.env.get(key))) return unauthorisedResponse(corsHeaders)
+      if (typeof body.jobId !== 'string' || !JOB_ID.test(body.jobId)) return json({ error: 'Unknown illustration job.' }, 400)
+      const openaiKey = Deno.env.get('OPENAI_API_KEY')
+      if (!openaiKey) throw new Error('OPENAI_API_KEY is required. Add it to your Supabase function secrets.')
+      const result = await runArtDirectionSelfTest({
+        db: serviceClient(),
+        openaiKey,
+        // Fixed model - never an env override - so the quoted cost cap
+        // (computed against gpt-4.1 list pricing) is the real bound.
+        model: ART_DIRECTION_TEST_MODEL,
+        jobId: body.jobId,
+        // Route stays inert until ART_DIRECTION_TEST_JOB_ID is set to the
+        // one approved job; unset env = disabled by default.
+        boundJobId: Deno.env.get('ART_DIRECTION_TEST_JOB_ID'),
+      })
+      return json(result.body, result.status)
+    }
+
     let user
     try {
       user = await requireUser(req)
@@ -121,7 +207,6 @@ serve(async (req) => {
       throw authError
     }
 
-    const body = await req.json()
     const { pageSize, pageLayout, prompts, includeCover } = body
 
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
@@ -162,7 +247,15 @@ serve(async (req) => {
       if (typeof body.jobId !== 'string' || !JOB_ID.test(body.jobId)) return json({ error: 'Unknown illustration job.' }, 400)
       const store = new SupabaseJobStore<JobRequest, ImagePrompt>(serviceClient())
       if (body.action === 'step') {
-        const result = await runStep(store, jobWorker(openaiKey), body.jobId, user.id)
+        // Cover art direction runs as the post-pass hook ONLY when explicitly
+        // enabled (COVER_ART_DIRECTION=on): it is a new paid completion, and
+        // deploying this code alone must never turn on spend. The hook runs
+        // after the accepted cover art is safely persisted.
+        const styleHook = artDirectionEnabled((key) => Deno.env.get(key))
+          ? ({ request, coverUrl }: { request: JobRequest; coverUrl: string }) =>
+              directCoverStyle(openaiKey, Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1', coverUrl, request.config, request.title)
+          : undefined
+        const result = await runStep(store, jobWorker(openaiKey), body.jobId, user.id, undefined, styleHook)
         return result ? json(result) : json({ error: 'Unknown illustration job.' }, 404)
       }
       const job = await store.getJob(body.jobId, user.id)
@@ -177,6 +270,12 @@ serve(async (req) => {
     if (prompts.length > 20) {
       throw new Error('prompts must contain at most 20 pages')
     }
+
+    // Stale clients cannot start paid illustration work without a complete scene plan.
+    const sceneIssues = imageSceneIssues(body.sceneLedger,prompts);
+    const imageGate = sceneGateVerdict(sceneIssues.length, body.sceneLedger == null, (k)=>Deno.env.get(k));
+    if(imageGate === 'reject') return json({error:'Scene plan needs review before any illustration work. Your existing art is unchanged.',code:'SCENE_PLAN_REVIEW_REQUIRED',issues:sceneIssues},422);
+    if(imageGate === 'warn-allow') console.warn('SCENE_GATE_MODE=permissive: illustration job started without a scene plan (ledger absent)', sceneIssues);
 
     // Validate image config and the per-book image-call bound up front,
     // BEFORE any book claim or daily-usage accounting: failures here consume
@@ -209,10 +308,13 @@ serve(async (req) => {
         pageLayout: pageLayout || 'split',
         size: resolveImageSize((key: string) => Deno.env.get(key), OPENAI_SIZES[pageSize] || '1024x1536'),
         config: body.config || prompts[0]?.config,
+        // The art-direction prompt personalises to the book's title when the
+        // caller has one; today no UI field supplies it, so usually absent.
+        ...(typeof body.title === 'string' && body.title.trim() ? { title: body.title.trim().slice(0, 120) } : {}),
       }
       // The config is stored once on the job, not on every item.
       const pagePrompts: ImagePrompt[] = (prompts as ImagePrompt[]).map((p) => ({
-        page: Number(p.page), prompt: p.prompt, text: p.text, visualBrief: p.visualBrief,
+        page: Number(p.page), prompt: `${p.prompt || ''}\n${body.sceneLedger ? sceneContext(body.sceneLedger as SceneLedger,Number(p.page)) : ''}`, text: p.text, visualBrief: `${p.visualBrief || ''}\n${body.sceneLedger ? sceneContext(body.sceneLedger as SceneLedger,Number(p.page)) : ''}`,
       }))
       if (pagePrompts.some((p) => !Number.isInteger(p.page)) || new Set(pagePrompts.map((p) => p.page)).size !== pagePrompts.length) {
         return json({ error: 'Each page must have a unique page number.' }, 400)
