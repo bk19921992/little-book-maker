@@ -60,6 +60,15 @@ serve(async (req) => {
       );
     }
 
+    // Default-off server gate for NEW paid intents only. Free/owned exports
+    // above remain available. Confirmation/webhooks must still honour money
+    // already paid, even while creation of new charges is disabled.
+    if (Deno.env.get('PAID_CHECKOUT_ENABLED') !== 'true') {
+      return new Response(JSON.stringify({ error: 'Paid checkout is not available yet.' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const amount = priceFor(item);
     if (amount === null) {
       // Print without PRINT_PRICE_PENCE: never charge a made-up price.
@@ -103,9 +112,9 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error('Error creating billing intent:', error);
+    console.error('Error creating billing intent');
     return new Response(
-      JSON.stringify({ success: false, error: (error instanceof Error ? error.message : 'Unexpected server error') }),
+      JSON.stringify({ success: false, error: 'Payment setup is unavailable. Please try again later.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }
