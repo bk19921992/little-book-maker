@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 import {
   Elements,
@@ -85,9 +85,13 @@ const PayForm = ({ item, storyId, amount, onSuccess, onCancel }: CheckoutSheetPr
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const paymentStarted = useRef(false);
+  const [attempted, setAttempted] = useState(false);
 
   const handlePayment = async () => {
-    if (!stripe || !elements) return;
+    if (!stripe || !elements || paymentStarted.current) return;
+    paymentStarted.current = true;
+    setAttempted(true);
     setLoading(true);
     setError(null);
     try {
@@ -97,12 +101,13 @@ const PayForm = ({ item, storyId, amount, onSuccess, onCancel }: CheckoutSheetPr
         await confirmWithServer(item, storyId, paymentIntent.id);
         onSuccess();
       } else if (paymentIntent?.status === 'processing') {
-        setNotice("Your payment is processing. Your book unlocks as soon as your bank confirms it - you won't be charged twice.");
+        setNotice("Your payment is processing. Do not start another payment. Your book unlocks when the payment is confirmed.");
       } else {
-        throw new Error('The payment was not completed. You have not been charged.');
+        setNotice('The payment outcome is not confirmed. Do not start another payment. Check the payment status before trying again.');
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Payment failed');
+      setError(err instanceof Error ? err.message : 'Payment status could not be confirmed');
+      setNotice('Do not start another payment until its status has been checked. Your book may still unlock if the payment completed.');
     } finally {
       setLoading(false);
     }
@@ -115,7 +120,7 @@ const PayForm = ({ item, storyId, amount, onSuccess, onCancel }: CheckoutSheetPr
       {notice && <div className="text-sm bg-muted p-2 rounded">{notice}</div>}
       <div className="flex gap-2">
         <Button variant="outline" onClick={onCancel} disabled={loading} className="flex-1">Cancel</Button>
-        <Button onClick={handlePayment} disabled={loading || !stripe || !elements || !!notice} className="flex-1">
+        <Button onClick={handlePayment} disabled={loading || attempted || !stripe || !elements || !!notice} className="flex-1">
           {loading ? 'Processing...' : `Pay ${formatPrice(amount)}`}
         </Button>
       </div>
