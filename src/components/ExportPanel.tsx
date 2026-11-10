@@ -75,7 +75,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     }
 
     const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
-    if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
+    if (!continuity.ready) { toast.error('Return to Edit, open Whole-book continuity, check the cover and every page, then save the full review. Any later wording or picture change needs a fresh review.'); return; }
     setIsExporting(true);
     try {
       const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
@@ -104,7 +104,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     // art. Then billing (free first export or payment) is settled with the
     // server as before.
     const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
-    if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
+    if (!continuity.ready) { toast.error('Return to Edit, open Whole-book continuity, check the cover and every page, then save the full review. Any later wording or picture change needs a fresh review.'); return; }
     setImageCheckMessage(null);
     setIsCheckingImages(true);
     try {
@@ -209,7 +209,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             Export Your Story
           </h1>
           <p className="text-lg text-muted-foreground">
-            Download your storybook. Printed orders are coming soon.
+            Download your storybook. {PRINT_ENABLED ? 'Review your book before ordering a printed copy.' : 'Printed orders are coming soon.'}
           </p>
         </div>
         <Button variant="ghost" onClick={handleCreateAnother} className="self-center sm:self-auto">
@@ -266,7 +266,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             <div className="flex items-center gap-2">
               <Badge variant="secondary">Includes print-ready & web PDF</Badge>
               <Badge variant="outline" className="text-story-nature border-story-nature">
-                First export is free
+                Your first book is free
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
