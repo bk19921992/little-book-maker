@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPageTextStatus, pagesNeedingTextFix, wordCountTargets } from './validation.ts';
+import { getPageTextStatus, pagesNeedingTextFix, wordCountTargets, validateStoryConfig } from './validation.ts';
 
 test('editor word targets follow the text contract, not the old 40-90 Primary range', () => {
   assert.deepEqual(wordCountTargets('Primary 6–8', 'A5 portrait'), { min: 24, max: 36 });
@@ -87,4 +87,24 @@ test('reflow refuses too few words, too many words, oversized words and excess p
     assert.equal(fitPageLines(text, 'Early 4–5', 'A4 landscape'), null);
   }
   assert.match(editorExportIssues([{page: 3, text: 'Too short.'}], 'Early 4–5', 'A4 landscape')[1].message, /Page 3: add an image/);
+});
+
+const setupConfig = {children:[], storyType:'Adventure', themePreset:null, themeCustom:null, palette:[], characters:['A fox'], setting:'Forest', educationalFocus:'none', readingLevel:'Early 4–5', lengthPages:10, narrationStyle:'Simple prose', personal:{}, contentSafety:true, imageStyle:'Picture-book', formatMode:'auto', pageSize:'A5 portrait', pageLayout:'split'} as any;
+test('setup readiness requires a theme even after all other required choices', () => {
+ assert.deepEqual(validateStoryConfig(setupConfig).map(e=>e.field), ['theme']);
+});
+test('preset and nonblank custom themes both complete setup without changing the config', () => {
+ for(const patch of [{themePreset:'Calm pastels'}, {themeCustom:'Warm and gentle'}]) {
+  const config={...setupConfig,...patch}; const before=structuredClone(config);
+  assert.deepEqual(validateStoryConfig(config), []);assert.deepEqual(config,before);
+ }
+});
+test('empty and whitespace custom themes do not complete setup', () => {
+ for(const themeCustom of ['', '  ']) assert.deepEqual(validateStoryConfig({...setupConfig,themeCustom}).map(e=>e.field),['theme']);
+});
+test('required choices and restored safety/length errors remain in the common validator', () => {
+ assert.deepEqual(validateStoryConfig({...setupConfig,storyType:' ',setting:' ',characters:[],contentSafety:false,lengthPages:21}).map(e=>e.field),['storyType','setting','characters','contentSafety','lengthPages','theme']);
+});
+test('blank optional names and personal details never block valid setup', () => {
+ assert.deepEqual(validateStoryConfig({...setupConfig,themePreset:'Calm pastels',children:[],personal:{}}),[]);
 });

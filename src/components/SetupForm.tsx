@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, X, BookOpen, Palette, Users, MapPin } from 'lucide-react';
 import { StoryConfig, ReadingLevel } from '../types';
 import { FormatPicker } from './FormatPicker';
+import { validateStoryConfig } from '../lib/validation';
 import { themePresets, storyTypePresets, characterPresets, settingPresets } from '../lib/presets';
 
 interface SetupFormProps {
@@ -25,6 +26,14 @@ export const SetupForm: React.FC<SetupFormProps> = ({
   onNext,
   canProceed,
 }) => {
+  const missingChoices = validateStoryConfig(config);
+  const choiceTargets: Record<string, { id: string; label: string }> = {
+    storyType: { id: 'story-type', label: 'Story type' },
+    theme: { id: 'story-theme', label: 'Colour theme' },
+    setting: { id: 'story-setting', label: 'Setting' },
+    characters: { id: 'story-characters', label: 'A character' },
+  };
+
   const [showCustomTheme, setShowCustomTheme] = useState(false);
   const [showCustomStoryType, setShowCustomStoryType] = useState(false);
   const [showCustomSetting, setShowCustomSetting] = useState(false);
@@ -96,7 +105,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="w-5 h-5 text-primary" />
-              Children's Names
+              Children's Names <span className="text-xs font-normal text-muted-foreground">Optional</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -128,11 +137,11 @@ export const SetupForm: React.FC<SetupFormProps> = ({
         </Card>
 
         {/* Story Type */}
-        <Card className="story-card">
+        <Card id="story-type" className="story-card scroll-mt-44">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <BookOpen className="w-5 h-5 text-primary" />
-              Story Type
+              Story Type <span className="text-xs font-normal text-muted-foreground">Required</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -142,6 +151,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                   key={preset.name}
                   variant={config.storyType === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('storyType', preset.name)}
+                  aria-pressed={config.storyType === preset.name}
                   className="h-auto p-4 text-left flex-col items-start justify-start min-h-[100px] max-w-full whitespace-normal"
                 >
                   <span className="font-medium text-sm leading-tight w-full text-left break-words">{preset.name}</span>
@@ -171,11 +181,11 @@ export const SetupForm: React.FC<SetupFormProps> = ({
         </Card>
 
         {/* Theme */}
-        <Card className="story-card">
+        <Card id="story-theme" className="story-card scroll-mt-44">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Palette className="w-5 h-5 text-primary" />
-              Color Theme
+              Colour Theme <span className="text-xs font-normal text-muted-foreground">Required</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -185,6 +195,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                   key={preset.name}
                   variant={config.themePreset === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('theme', preset.name)}
+                  aria-pressed={config.themePreset === preset.name}
                   className="h-auto p-3 text-left justify-start whitespace-normal"
                 >
                   <div className="flex items-center gap-3 w-full min-w-0">
@@ -228,11 +239,11 @@ export const SetupForm: React.FC<SetupFormProps> = ({
         </Card>
 
         {/* Setting */}
-        <Card className="story-card">
+        <Card id="story-setting" className="story-card scroll-mt-44">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <MapPin className="w-5 h-5 text-primary" />
-              Setting
+              Setting <span className="text-xs font-normal text-muted-foreground">Required</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -242,10 +253,11 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                   key={preset.name}
                   variant={config.setting === preset.name ? "default" : "outline"}
                   onClick={() => selectPreset('setting', preset.name)}
+                  aria-pressed={config.setting === preset.name}
                   className="h-auto p-3 text-left flex-col items-start justify-start min-h-[80px] max-w-full whitespace-normal text-xs"
                 >
                   <span className="font-medium text-xs leading-tight w-full text-left break-words">{preset.name}</span>
-                  <span className="text-[10px] opacity-70 mt-1 leading-relaxed w-full text-left break-words hyphens-auto">
+                  <span className="text-xs opacity-70 mt-1 leading-relaxed w-full text-left break-words hyphens-auto">
                     {preset.description}
                   </span>
                 </Button>
@@ -272,9 +284,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
       </div>
 
       {/* Characters Section */}
-      <Card className="story-card">
+      <Card id="story-characters" className="story-card scroll-mt-44">
         <CardHeader>
-          <CardTitle>Characters</CardTitle>
+          <CardTitle>Characters <span className="text-xs font-normal text-muted-foreground">Required</span></CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -283,6 +295,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 key={preset.name}
                 variant={config.characters.includes(preset.name) ? "default" : "outline"}
                 onClick={() => selectPreset('character', preset.name)}
+                  aria-pressed={config.characters.includes(preset.name)}
                 className="h-auto p-3 text-left flex-col items-start justify-start min-h-[80px] whitespace-normal"
                 size="sm"
               >
@@ -521,13 +534,29 @@ export const SetupForm: React.FC<SetupFormProps> = ({
         Every story is gentle and age-appropriate - no violence, scares or upsetting themes.
       </p>
 
+      <div id="setup-readiness" role="status" aria-live="polite" aria-atomic="true" className="rounded-xl border bg-background p-4 text-sm">
+        {missingChoices.length > 0 ? (
+          <>
+            <p className="font-medium">Still to choose before you create your story:</p>
+            <ul className="mt-2 space-y-1 list-disc pl-5">
+              {missingChoices.map(({ field, message }) => (
+                <li key={field}>
+                  {choiceTargets[field] ? <a className="underline underline-offset-4" href={`#${choiceTargets[field].id}`}>{choiceTargets[field].label}</a> : message}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : <p>Your choices are ready. You can create your story.</p>}
+      </div>
+
       {/* Next Button */}
       <div className="flex justify-center">
         <Button
           onClick={onNext}
           disabled={!canProceed}
+          aria-describedby="setup-readiness"
           size="lg"
-          className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium animate-gentle-bounce w-full sm:w-auto"
+          className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"
         >
           Create My Story
         </Button>
