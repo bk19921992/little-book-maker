@@ -8,3 +8,11 @@ html:root {
 .sprout-app-entry a:focus-visible,.sprout-app-entry button:focus-visible {outline: 3px solid hsl(var(--ring)); outline-offset: 3px;}
 .sprout-app-entry input {min-height: 44px;}
 .sprout-app-entry button {min-height: 44px;}
+
+/* Authentication and portalled dialogs sit outside the app-entry wrapper. */
+.sprout-auth :is(a,button,input):focus-visible,
+.sprout-dialog :is(a,button,input,select,textarea):focus-visible {outline:3px solid hsl(var(--ring));outline-offset:3px;}
+.sprout-auth :is(input,button),.sprout-dialog :is(input,button,select) {min-height:44px;}
+@media (prefers-reduced-motion: reduce) {
+  .sprout-app-entry *, .sprout-auth *, .sprout-dialog, .sprout-dialog * {animation:none !important; transition:none !important; scroll-behavior:auto !important;}
+}
