@@ -14,6 +14,8 @@ import { PreviewGenerate } from './PreviewGenerate';
 import { PageEditor } from './PageEditor';
 import { ExportPanel } from './ExportPanel';
 import heroImage from '../assets/storybook-hero.jpg';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { PAID_CHECKOUT_ENABLED, PRINT_ORDERS_ENABLED } from '../lib/pricing';
 
 export const StoryGenerator: React.FC = () => {
   const {
@@ -26,11 +28,25 @@ export const StoryGenerator: React.FC = () => {
   const { user, signOut } = useAuth();
 
   const { currentStep, config } = state;
+  const [accountHasBook, setAccountHasBook] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    setAccountHasBook(null);
+    if (user) {
+      // Same export entitlement used by claim_book. A generation claim already
+      // uses the first book; counting downloaded PDFs would be misleading.
+      (supabase as SupabaseClient).from('entitlements').select('story_id')
+        .eq('user_id', user.id).eq('item', 'export').limit(1)
+        .then(({ data, error }) => { if (active && !error) setAccountHasBook(!!data?.length); });
+    }
+    return () => { active = false; };
+  }, [user?.id, config.storyId, currentStep]);
 
   // A book whose illustrations were still being made when the page closed
   // or reloaded (see lib/generationCheckpoint.ts).
-  const [savedBook, setSavedBook] = useState<GenerationCheckpoint | null>(() => loadCheckpoint());
+  const [savedBook, setSavedBook] = useState<GenerationCheckpoint | null>(() => user ? loadCheckpoint(user.id) : null);
   const [resuming, setResuming] = useState<GenerationCheckpoint | null>(null);
+  useEffect(() => { setSavedBook(user ? loadCheckpoint(user.id) : null); setResuming(null); }, [user?.id]);
   const resumeSavedBook = () => {
     if (!savedBook) return;
     updateConfig(savedBook.config);
@@ -39,7 +55,7 @@ export const StoryGenerator: React.FC = () => {
     setStep('preview');
   };
   const discardSavedBook = () => {
-    clearCheckpoint();
+    if (user) clearCheckpoint(user.id);
     setSavedBook(null);
   };
 
@@ -182,7 +198,8 @@ export const StoryGenerator: React.FC = () => {
               <img src={heroImage} width="1429" height="804" alt="" className="hidden sm:block w-28 rounded-xl shrink-0" />
               <div className="min-w-0">
                 <p className="font-display text-lg font-semibold">A story to make your own</p>
-                <p className="mt-1 text-sm text-muted-foreground">Choose the characters and setting, review the story, then download a PDF. Your first book is free. Paid downloads and printed orders are not available yet.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Choose the characters and setting, review the story, then download a PDF. Your first book is free. {PAID_CHECKOUT_ENABLED ? 'Prices for additional books appear before payment.' : 'Paid downloads are not available yet.'} {PRINT_ORDERS_ENABLED ? 'Printed orders are available after your book is reviewed.' : 'Printed orders are not available yet.'}</p>
+                {accountHasBook && <p className="mt-3 rounded-lg border bg-muted/50 p-3 text-sm" role="status">Your account already has a book. Open it from My books to continue working on it. {PAID_CHECKOUT_ENABLED ? 'For another book, you will see the price before payment.' : 'Your first free book has been claimed; creating additional books is not available yet.'}</p>}
               </div>
             </div>
           </section>
