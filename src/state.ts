@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { AppState, StoryConfig, AppStep, ValidationError } from './types';
+import { validateStoryConfig } from './lib/validation';
 
 // Initial state for the app
 const createInitialConfig = (): StoryConfig => ({
@@ -74,31 +75,8 @@ export const useAppState = () => {
 
   // Validation helpers
   const validateConfig = useCallback((): ValidationError[] => {
-    const errors: ValidationError[] = [];
-    const { config } = state;
-
-    if (!config.contentSafety) {
-      errors.push({ field: 'contentSafety', message: 'Content safety agreement is required' });
-    }
-
-    if (!config.storyType.trim()) {
-      errors.push({ field: 'storyType', message: 'Please select or enter a story type' });
-    }
-
-    if (!config.setting.trim()) {
-      errors.push({ field: 'setting', message: 'Please select or enter a setting' });
-    }
-
-    if (config.characters.length === 0) {
-      errors.push({ field: 'characters', message: 'Please add at least one character' });
-    }
-
-    if (config.lengthPages < 6 || config.lengthPages > 20) {
-      errors.push({ field: 'lengthPages', message: 'Story length must be between 6 and 20 pages' });
-    }
-
-    return errors;
-  }, [state]);
+    return validateStoryConfig(state.config);
+  }, [state.config]);
 
   const canProceedToNext = useCallback(() => {
     return validateConfig().length === 0;
