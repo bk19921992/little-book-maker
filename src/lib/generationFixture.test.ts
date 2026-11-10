@@ -14,8 +14,8 @@ test('offline six-page fixture: resume, image completion, review and save preser
   try {
     const values = new Map<string, string>();
     const storage = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); }, removeItem: (k: string) => { values.delete(k); } };
-    saveCheckpoint('local-fixture-job', sixPageBook, storage);
-    const checkpoint = loadCheckpoint(storage)!;
+    saveCheckpoint('local-fixture-job', sixPageBook, 'local-fixture-user', storage);
+    const checkpoint = loadCheckpoint('local-fixture-user', storage)!;
     assert.equal(checkpoint.config.pages!.length, 6);
     const items = await runImageJob({
       async stepImageJob() { return { jobStatus: 'done', outcome: 'finished', remaining: 0 }; },
