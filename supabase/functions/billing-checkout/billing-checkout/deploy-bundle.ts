@@ -470,6 +470,14 @@ function stripeBillingProvider(config) {
   };
 }
 
+// supabase/functions/_shared/billingAdmission.ts
+var paidCreationAllowedForUser = (env, userId) => {
+  if (env.get("PAID_CHECKOUT_ENABLED") !== "true") return false;
+  const allowlist = (env.get("BILLING_ALLOWED_USER_IDS") ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  if (typeof userId !== "string" || userId.length === 0) return false;
+  return allowlist.includes(userId);
+};
+
 // supabase/functions/billing-checkout/index.ts
 var json = (corsHeaders, status, body) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 serve(async (req) => {
@@ -511,7 +519,10 @@ serve(async (req) => {
         config: {
           namespace: stripeConfig.namespace,
           catalogue: { amount, currency: "gbp" },
-          creationEnabled: Deno.env.get("PAID_CHECKOUT_ENABLED") === "true"
+          // Global flag AND per-user allowlist: while a controlled test
+          // journey is being verified, only BILLING_ALLOWED_USER_IDS may
+          // create or resume a charge. Unset allowlist = closed for everyone.
+          creationEnabled: paidCreationAllowedForUser(Deno.env, user.id)
         },
         authenticate: async () => user,
         authorizeStory: async (userId, storyId) => {
