@@ -58,20 +58,20 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-gradient-soft px-4">
+    <main className="sprout-auth min-h-screen flex items-center justify-center bg-gradient-soft px-4">
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center space-y-2">
           <Link to="/" className="text-sm underline underline-offset-4">Story Sprout home</Link>
           <h1 className="text-2xl font-display font-semibold leading-none tracking-tight">
-            {mode === 'sign-in' ? 'Sign in to continue' : 'Create your account'}
+            {confirmationSent ? 'Check your email' : mode === 'sign-in' ? 'Sign in to continue' : 'Create your account'}
           </h1>
           <p className="text-sm text-muted-foreground">
-            Sign in to make a story. Every book you make is saved to your account - find them any time under My books.
+            {confirmationSent ? 'Confirm your email to finish setting up your account.' : mode === 'sign-in' ? 'Sign in to make a story or open your saved books.' : 'Create an account to make your first book free and keep your books in one place.'}
           </p>
         </CardHeader>
         <CardContent>
-          {confirmationSent && <p role="status" className="mb-4 rounded-lg bg-muted p-4 text-sm">Check your email for a confirmation link, then return here to sign in.</p>}
-          <form className="space-y-4" onSubmit={handleSubmit}>
+          {confirmationSent && <div role="status" className="mb-4 space-y-3 rounded-lg bg-muted p-4 text-sm"><p>We sent a confirmation link to {email}. Check your inbox and spam folder, then return here to sign in.</p><Button variant="outline" className="w-full" onClick={() => { setSearchParams({ mode: 'sign-in' }); setConfirmationSent(false); setPassword(''); clearError(); }}>Go to sign in</Button></div>}
+          {!confirmationSent && <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="auth-email">Email</label>
               <Input
@@ -96,9 +96,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="••••••••"
-                minLength={8}
+                minLength={mode === 'sign-up' ? 8 : undefined}
+                aria-describedby={mode === 'sign-up' ? 'auth-password-hint' : undefined}
                 required
               />
+              {mode === 'sign-up' && <p id="auth-password-hint" className="text-xs text-muted-foreground">Use at least 8 characters.</p>}
             </div>
 
             {error && (
@@ -117,9 +119,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
               )}
               {mode === 'sign-in' ? 'Sign In' : 'Create Account'}
             </Button>
-          </form>
+          </form>}
 
-          <div className="mt-4 text-center text-sm text-muted-foreground">
+          {!confirmationSent && <div className="mt-4 text-center text-sm text-muted-foreground">
             {mode === 'sign-in' ? (
               <button
                 className="text-primary font-medium"
@@ -145,7 +147,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
                 Have an account? Sign in
               </button>
             )}
-          </div>
+          </div>}
         </CardContent>
       </Card>
     </main>
