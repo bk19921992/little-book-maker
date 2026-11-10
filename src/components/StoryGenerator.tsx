@@ -106,30 +106,6 @@ export const StoryGenerator: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-soft">
-      {/* Hero Section - Only show on setup */}
-      {currentStep === 'setup' && (
-        <section aria-label="About your storybook" className="relative overflow-hidden bg-gradient-story">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-16 text-center">
-            <div className="mb-6 sm:mb-8">
-              <img
-                width="1429" height="804" src={heroImage}
-                alt="Magical storybook coming to life"
-                className="w-full max-w-lg sm:max-w-xl lg:max-w-2xl mx-auto rounded-2xl shadow-[var(--shadow-story)] "
-              />
-            </div>
-            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-display font-bold text-white mb-3 sm:mb-4">
-              Create Magical Stories
-            </h1>
-            <p className="text-lg sm:text-xl text-white/90 mb-6 sm:mb-8 max-w-2xl mx-auto px-4">
-              Generate personalized children's storybooks with beautiful illustrations, 
-              ready to download as a PDF. Printed orders are coming soon.
-            </p>
-          </div>
-          {/* Decorative gradient overlay */}
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/20" />
-        </section>
-      )}
-
       {/* Header */}
       <header className="border-b bg-background/80 backdrop-blur-sm sm:sticky sm:top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
@@ -163,31 +139,33 @@ export const StoryGenerator: React.FC = () => {
               </div>
             )}
 
-            {/* Step indicator */}
-            <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto">
-              {['Setup', 'Preview', 'Edit', 'Export'].map((step, index) => {
-                const stepNames = ['setup', 'preview', 'edit', 'export'];
-                const isActive = stepNames[index] === currentStep;
-                const isComplete = stepNames.indexOf(currentStep) > index;
-                
-                return (
-                  <div
-                    key={step}
-                    className={`
-                      flex-1 sm:flex-none text-center px-2 sm:px-3 py-1.5 rounded-full text-xs sm:text-sm font-medium transition-all
-                      ${isActive 
-                        ? 'bg-primary text-primary-foreground' 
-                        : isComplete 
-                        ? 'bg-story-nature text-white' 
-                        : 'bg-muted text-muted-foreground'
-                      }
-                    `}
-                  >
-                    {step}
-                  </div>
-                );
-              })}
-            </div>
+            <nav aria-label="Book progress" className="w-full sm:w-auto">
+              <ol className="flex items-center gap-1 sm:gap-2">
+                {[
+                  { key: 'setup', label: 'Set up' },
+                  { key: 'preview', label: 'Create' },
+                  { key: 'edit', label: 'Edit' },
+                  { key: 'export', label: 'Download' },
+                ].map((step, index, steps) => {
+                  const isActive = step.key === currentStep;
+                  const isComplete = steps.findIndex(({ key }) => key === currentStep) > index;
+                  return (
+                    <li
+                      key={step.key}
+                      aria-current={isActive ? 'step' : undefined}
+                      className={`flex-1 sm:flex-none text-center px-2 sm:px-3 py-2 rounded-full text-xs sm:text-sm font-medium ${
+                        isActive ? 'bg-primary text-primary-foreground' :
+                        isComplete ? 'bg-secondary text-secondary-foreground' : 'bg-muted text-muted-foreground'
+                      }`}
+                    >
+                      <span className="sr-only">Step </span>{index + 1}<span aria-hidden="true">. </span>
+                      <span className="sr-only">: </span>{step.label}
+                      {isComplete && <span className="sr-only">, completed</span>}
+                    </li>
+                  );
+                })}
+              </ol>
+            </nav>
           </div>
         </div>
       </header>
@@ -198,6 +176,17 @@ export const StoryGenerator: React.FC = () => {
 
       {/* Main Content */}
       <main className="py-6 sm:py-8">
+        {currentStep === 'setup' && (
+          <section aria-label="Before you start" className="max-w-4xl mx-auto px-4 sm:px-6 mb-6">
+            <div className="flex items-center gap-4 rounded-2xl border bg-background p-4 sm:p-5">
+              <img src={heroImage} width="1429" height="804" alt="" className="hidden sm:block w-28 rounded-xl shrink-0" />
+              <div className="min-w-0">
+                <p className="font-display text-lg font-semibold">A story to make your own</p>
+                <p className="mt-1 text-sm text-muted-foreground">Choose the characters and setting, review the story, then download a PDF. Your first book is free. Paid downloads and printed orders are not available yet.</p>
+              </div>
+            </div>
+          </section>
+        )}
         {currentStep === 'setup' && savedBook && (
           <div className="max-w-4xl mx-auto px-4 sm:px-6 mb-6">
             <Alert>
