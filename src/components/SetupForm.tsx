@@ -226,7 +226,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               </Button>
               {showCustomTheme && (
                 <Textarea
-                  placeholder="Describe your color theme and mood"
+                  placeholder="Describe your colour theme and mood"
                   value={config.themeCustom || ''}
                   onChange={(e) => onConfigChange({ 
                     themeCustom: e.target.value,
@@ -407,9 +407,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Your town (appears in the story)</Label>
+                <Label htmlFor="personal-town">Your town (appears in the story)</Label>
                 <Input
-                  placeholder="Brighton"
+                  id="personal-town" placeholder="Brighton"
                   value={config.personal.town || ''}
                   onChange={(e) => onConfigChange({
                     personal: { ...config.personal, town: e.target.value }
@@ -417,9 +417,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 />
               </div>
               <div className="space-y-2">
-                <Label>Favourite Toy</Label>
+                <Label htmlFor="personal-toy">Favourite Toy</Label>
                 <Input
-                  placeholder="teddy bear"
+                  id="personal-toy" placeholder="teddy bear"
                   value={config.personal.favouriteToy || ''}
                   onChange={(e) => onConfigChange({
                     personal: { ...config.personal, favouriteToy: e.target.value }
@@ -427,9 +427,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 />
               </div>
               <div className="space-y-2">
-                <Label>Favourite Colour</Label>
+                <Label htmlFor="personal-colour">Favourite Colour</Label>
                 <Input
-                  placeholder="blue"
+                  id="personal-colour" placeholder="blue"
                   value={config.personal.favouriteColour || ''}
                   onChange={(e) => onConfigChange({
                     personal: { ...config.personal, favouriteColour: e.target.value }
@@ -437,9 +437,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 />
               </div>
               <div className="space-y-2">
-                <Label>Pets</Label>
+                <Label htmlFor="personal-pets">Pets</Label>
                 <Input
-                  placeholder="cat named Whiskers"
+                  id="personal-pets" placeholder="A pet and its name"
                   value={config.personal.pets || ''}
                   onChange={(e) => onConfigChange({
                     personal: { ...config.personal, pets: e.target.value }
@@ -448,9 +448,9 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Dedication (optional)</Label>
+              <Label htmlFor="personal-dedication">Dedication (optional)</Label>
               <Textarea
-                placeholder="For my wonderful daughter Emma..."
+                id="personal-dedication" placeholder="A message for the first page"
                 value={config.personal.dedication || ''}
                 onChange={(e) => onConfigChange({
                   personal: { ...config.personal, dedication: e.target.value }
