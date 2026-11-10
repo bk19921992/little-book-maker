@@ -16,9 +16,9 @@ const config = {
 
 test('checkpoint keeps the job id and book text but no images or exports', () => {
   const s = memoryStorage();
-  saveCheckpoint('job-1', config, s, 1000);
+  saveCheckpoint('job-1', config, 'user-a', s, 1000);
   assert.doesNotMatch([...s.m.values()][0], /base64/);
-  const cp = loadCheckpoint(s, 2000)!;
+  const cp = loadCheckpoint('user-a', s, 2000)!;
   assert.equal(cp.jobId, 'job-1');
   assert.deepEqual(cp.config.pages, [{ page: 1, text: 'Hello' }]);
   assert.equal(cp.config.storyId, 's1');
@@ -26,18 +26,46 @@ test('checkpoint keeps the job id and book text but no images or exports', () =>
 
 test('checkpoint expires after 24 hours and can be cleared', () => {
   const s = memoryStorage();
-  saveCheckpoint('job-1', config, s, 0);
-  assert.equal(loadCheckpoint(s, 24 * 3600 * 1000 + 1), null);
+  saveCheckpoint('job-1', config, 'user-a', s, 0);
+  assert.equal(loadCheckpoint('user-a', s, 24 * 3600 * 1000 + 1), null);
   assert.equal(s.m.size, 0);
-  saveCheckpoint('job-2', config, s, 0);
-  clearCheckpoint(s);
-  assert.equal(loadCheckpoint(s, 1), null);
+  saveCheckpoint('job-2', config, 'user-a', s, 0);
+  clearCheckpoint('user-a', s);
+  assert.equal(loadCheckpoint('user-a', s, 1), null);
 });
 
 test('missing or broken storage never throws', () => {
   const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('full'); }, removeItem: () => { throw new Error('blocked'); } };
-  assert.doesNotThrow(() => saveCheckpoint('j', config, broken));
-  assert.equal(loadCheckpoint(broken), null);
-  assert.doesNotThrow(() => clearCheckpoint(broken));
-  assert.equal(loadCheckpoint(null), null);
+  assert.doesNotThrow(() => saveCheckpoint('j', config, 'user-a', broken));
+  assert.equal(loadCheckpoint('user-a', broken), null);
+  assert.doesNotThrow(() => clearCheckpoint('user-a', broken));
+  assert.equal(loadCheckpoint('user-a', null), null);
+});
+
+
+test('checkpoint story text is isolated between accounts on the same browser', () => {
+  const s = memoryStorage();
+  saveCheckpoint('job-a', config, 'user-a', s, 1000);
+  assert.equal(loadCheckpoint('user-b', s, 2000), null);
+  saveCheckpoint('job-b', { ...config, storyId: 'other-book' }, 'user-b', s, 1000);
+  clearCheckpoint('user-b', s);
+  assert.equal(loadCheckpoint('user-b', s, 2000), null);
+  assert.equal(loadCheckpoint('user-a', s, 2000)?.jobId, 'job-a');
+});
+test('legacy unowned text and mismatched owners are never restored', () => {
+  const s = memoryStorage();
+  s.setItem('story-sprout.pending-illustrations', JSON.stringify({v:1,jobId:'legacy',savedAt:1000,config}));
+  assert.equal(loadCheckpoint('user-a', s, 2000), null);
+  saveCheckpoint('job-a', config, 'user-a', s, 1000);
+  const key = [...s.m.keys()].find(k=>k.includes('.v2.'))!;
+  s.setItem(key, JSON.stringify({...JSON.parse(s.getItem(key)!),ownerId:'user-b'}));
+  assert.equal(loadCheckpoint('user-a', s, 2000), null);
+});
+test('invalid checkpoint clocks and missing identities fail closed', () => {
+  const s = memoryStorage();
+  saveCheckpoint('job-a', config, '', s, 1000);
+  assert.equal(s.m.size, 0);
+  saveCheckpoint('job-a', config, 'user-a', s, 3000);
+  assert.equal(loadCheckpoint('user-a', s, 2000), null);
+  assert.equal(loadCheckpoint('', s, 2000), null);
 });
