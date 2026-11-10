@@ -153,7 +153,7 @@ export const StoryGenerator: React.FC = () => {
                     <li
                       key={step.key}
                       aria-current={isActive ? 'step' : undefined}
-                      className={`flex-1 sm:flex-none text-center px-2 sm:px-3 py-2 rounded-full text-xs sm:text-sm font-medium ${
+                      className={`flex-1 sm:flex-none text-center px-1.5 sm:px-3 py-2 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap ${
                         isActive ? 'bg-primary text-primary-foreground' :
                         isComplete ? 'bg-secondary text-secondary-foreground' : 'bg-muted text-muted-foreground'
                       }`}
