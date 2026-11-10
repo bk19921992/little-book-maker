@@ -59,24 +59,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
 
   const updateProgress = (newProgress: number) => {
     setProgress(newProgress);
-    // Simple estimation based on typical generation times
-    if (newProgress > 0 && newProgress < 100) {
-      const estimates = {
-        5: '2-3 minutes', // planning
-        25: '1-2 minutes', // writing  
-        70: '30-60 seconds', // images
-        100: 'Complete!'
-      };
-      const currentEstimate = Object.entries(estimates)
-        .reverse()
-        .find(([threshold]) => newProgress >= parseInt(threshold));
-      
-      if (currentEstimate) {
-        setEstimatedTimeRemaining(currentEstimate[1]);
-      }
-    } else {
-      setEstimatedTimeRemaining('');
-    }
+    // Progress follows completed stages, not an unmeasured time promise.
+    setEstimatedTimeRemaining('');
   };
 
   const generateStory = async (useSavedPlan = false) => {
@@ -213,7 +197,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       }
       toast.info('Creating AI illustrations...');
       const { jobId } = await api.startImageJob(effectivePageSize, effectivePageLayout, imagePrompts, true, imageConfig(book), storyId, undefined, planResponse.outline.sceneLedger);
-      saveCheckpoint(jobId, book);
+      if (user) saveCheckpoint(jobId, book, user.id);
       await illustrate(jobId, book);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate story';
@@ -263,7 +247,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // must never describe new art. Page-only runs keep the existing style.
       const finishedBook: StoryConfig = finishedBookConfig(book, result);
       onConfigChange(finishedBook);
-      clearCheckpoint();
+      if (user) clearCheckpoint(user.id);
       // Keep the finished book on the customer's account (My books).
       if (user) {
         saveBook(supabase, user.id, finishedBook).catch((saveError) => {
@@ -300,7 +284,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
     } catch (err) {
       // The job and its finished pictures are safe on the server; keep the
       // checkpoint so the customer can resume instead of starting again.
-      const message = "We lost contact while drawing your pictures. Your progress is saved - press Resume illustrations to carry on.";
+      const message = "We lost contact while drawing your pictures. Press Resume illustrations to check the existing job and carry on. Keep this tab open if possible; reload recovery depends on this browser retaining its saved checkpoint.";
       console.error('Illustration job interrupted', err);
       setError(message);
       toast.error(message);
@@ -474,7 +458,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                 ))}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">Color Palette:</span>
+                <span className="text-sm font-medium">Colour palette:</span>
                 {config.palette.map((color, index) => (
                   <div key={index} className="flex items-center gap-1">
                     <div 
@@ -506,13 +490,13 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                 <div className="text-right min-w-0 break-words">
                   <span>{progress}%</span>
                   {estimatedTimeRemaining && (
-                    <div className="text-xs text-muted-foreground mt-1">
+                    <div role="status" aria-live="polite" className="text-xs text-muted-foreground mt-1">
                       {estimatedTimeRemaining}
                     </div>
                   )}
                 </div>
               </div>
-              <Progress value={progress} className="h-3" />
+              <Progress value={progress} className="h-3" aria-label="Story creation progress" />
             </div>
 
             <div className="grid gap-4">
@@ -670,7 +654,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
               disabled={isGenerating}
             >
               <Sparkles className="w-5 h-5 mr-2" />
-              Generate Story
+              Create story
             </Button>
           )}
           
