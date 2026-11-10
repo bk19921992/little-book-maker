@@ -87,6 +87,14 @@ function priceFor(item) {
 }
 var isPricedItem = (item) => typeof item === "string" && (item === "print" || Object.prototype.hasOwnProperty.call(PRICES, item));
 
+// supabase/functions/_shared/billingAdmission.ts
+var paidCreationAllowedForUser = (env, userId) => {
+  if (env.get("PAID_CHECKOUT_ENABLED") !== "true") return false;
+  const allowlist = (env.get("BILLING_ALLOWED_USER_IDS") ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  if (typeof userId !== "string" || userId.length === 0) return false;
+  return allowlist.includes(userId);
+};
+
 // supabase/functions/billing-intent/index.ts
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -132,7 +140,7 @@ serve(async (req) => {
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    if (Deno.env.get("PAID_CHECKOUT_ENABLED") !== "true") {
+    if (!paidCreationAllowedForUser(Deno.env, user.id)) {
       return new Response(JSON.stringify({ error: "Paid checkout is not available yet." }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" }
