@@ -8,7 +8,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { containFit, coverFullBleedOk, dpiCheck, effectiveDpi, exportBlockers, printBoxes } from "./printSpec.ts";
+import { containFit, coverFullBleedOk, coverTextBlockBottom, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, SAFE_MARGIN_PT } from "./printSpec.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
 
 const PAGE_SIZES = {
@@ -202,6 +202,9 @@ async function embedAny(pdfDoc: PDFDocument, imageData: { bytes: Uint8Array; mim
 
 async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
   const pdfDoc = await PDFDocument.create();
+  // Print PDFs carry the profile marker the order path requires; web PDFs
+  // stay unmarked so a web export can never be ordered.
+  if (includeBleed) pdfDoc.setKeywords([PRINT_PROFILE_MARKER]);
   const qa: QaEntry[] = [];
 
   const fonts = await embedFonts(pdfDoc);
@@ -244,11 +247,15 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   });
 
   const pageSize = (PAGE_SIZES as Record<string, (typeof PAGE_SIZES)['A5 portrait']>)[config.pageSize] || PAGE_SIZES['A5 portrait'];
-  const dimensions = includeBleed ? pageSize.withBleed : pageSize.content;
+  // Print profile (includeBleed=true): the page IS the trim size - the
+  // printer adds bleed itself (Peecho file spec, 10 Nov 2026) - with a
+  // fixed 10 mm safe margin around all art and text. Web keeps the
+  // proportional inset and is unchanged.
+  const dimensions = pageSize.content;
 
   const pageWidth = mmToPdfPoints(dimensions.width);
   const pageHeight = mmToPdfPoints(dimensions.height);
-  const safeInset = pageWidth * SAFE;
+  const safeInset = includeBleed ? SAFE_MARGIN_PT : pageWidth * SAFE;
 
   // ---- Cover ----
   // Dedicated cover art is composed with title space reserved. If it cannot
@@ -257,13 +264,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // dedicated cover art use the first story image.
   const coverArtPage = pages.find((p) => p.imageUrl && !p.imageLocked);
   let fullBleedCover = false;
-  // Print pages carry TrimBox/BleedBox so printers know the finished size.
-  const markPrintBoxes = (page: ReturnType<typeof pdfDoc.addPage>) => {
-    if (!includeBleed) return;
-    const { trim, bleed } = printBoxes(pageWidth, pageHeight);
-    page.setBleedBox(bleed.x, bleed.y, bleed.width, bleed.height);
-    page.setTrimBox(trim.x, trim.y, trim.width, trim.height);
-  };
+  // Print pages are trim-sized with no boxes: the printer's system
+  // generates bleed and cut marks (Peecho file spec, 10 Nov 2026).
+  const markPrintBoxes = (_page: ReturnType<typeof pdfDoc.addPage>) => {};
 
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
   markPrintBoxes(coverPage);
@@ -352,7 +355,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       // Full-bleed only when the art's shape matches the page closely enough
       // that the crop stays within the bleed allowance; anything else is
       // shown whole above the title band, so framing never cuts content.
-      fullBleedCover = fromDedicated && coverFullBleedOk({ width: pageWidth, height: pageHeight }, img);
+      // Print never cover-crops: no bleed exists to absorb the cut.
+      fullBleedCover = fromDedicated && !includeBleed && coverFullBleedOk({ width: pageWidth, height: pageHeight }, img);
       if (fullBleedCover) {
         // Composed for the cover at the page's shape: full-bleed, title on a
         // plate in the reserved calm space.
@@ -370,14 +374,22 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const coverTitleTop = (coverBandHeight + coverBlockHeight) / 2;
         const coverRegionBottom = coverTitleTop + titleSize * 0.35;
         const coverRegionH = Math.max(coverBandHeight, pageHeight - safeInset - coverRegionBottom);
-        const fit = containFit(
-          { width: pageWidth, height: coverRegionH },
-          { width: img.width, height: img.height },
-        );
-        drawW = fit.width;
-        drawH = fit.height;
-        const coverSpare = coverRegionH - fit.height;
-        coverPage.drawImage(img, { x: fit.x, y: coverRegionBottom + (coverSpare * 1.15) / 2.15, width: fit.width, height: fit.height });
+        // Print keeps the cover art inside the 10 mm side margins too.
+        const coverRegion = { width: pageWidth - (includeBleed ? safeInset * 2 : 0), height: coverRegionH };
+        const fit = containFit(coverRegion, { width: img.width, height: img.height });
+        // Print: never upscale - cap at the art's native 300 dpi dimensions.
+        const placed = includeBleed
+          ? printPlacement(coverRegion, { width: img.width, height: img.height })
+          : { width: fit.width, height: fit.height };
+        drawW = placed.width;
+        drawH = placed.height;
+        const coverSpare = coverRegionH - placed.height;
+        coverPage.drawImage(img, {
+          x: (includeBleed ? safeInset : 0) + fit.x + (fit.width - placed.width) / 2,
+          y: coverRegionBottom + (coverSpare * 1.15) / 2.15,
+          width: placed.width,
+          height: placed.height,
+        });
         qa.push({ where: 'cover', severity: 'pass', check: fromDedicated ? 'cover illustration shown whole, uncropped, title on paper band (art shape differs from the page)' : 'cover illustration present, uncropped, title on paper band (page art fallback)' });
       }
       if (dedicatedUnreadable) qa.push({ where: 'cover', severity: 'warn', check: 'dedicated cover illustration could not be read; reused page art, uncropped' });
@@ -484,7 +496,11 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     }
   } else {
     // Title block centred in the paper band; dedication (if any) beneath it.
-    const blockBottom = (coverBandHeight - coverBlockHeight) / 2;
+    // Print: the whole block - including the lowest line's descent (the
+    // dedication or subtitle, whichever is last) - stays at or above the
+    // 10 mm safe inset.
+    const lowestCoverText = dedicationText ? coverDedSize : (subtitleLines.length ? subtitleSize : titleSize);
+    const blockBottom = coverTextBlockBottom((coverBandHeight - coverBlockHeight) / 2, includeBleed, safeInset, lowestCoverText);
     const titleBaseline = blockBottom + coverBlockHeight - titleSize * 0.9;
     drawCoverTitle(titleBaseline);
     let baseline = titleBaseline - (titleLines.length - 1) * titleSize * 1.15;
@@ -540,7 +556,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       if (imageData) {
         try {
           const embeddedImage = await embedAny(pdfDoc, imageData);
-          if (overlay) {
+          if (overlay && !includeBleed) {
             // Full-bleed picture behind the whole page; the band sits on it.
             const scale = Math.max(pageWidth / embeddedImage.width, pageHeight / embeddedImage.height);
             const drawW = embeddedImage.width * scale;
@@ -557,17 +573,26 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
             // above the band, centred. Nothing is cropped; where the art's
             // shape differs from the region's, paper margins frame it. The
             // art can no longer spill into the band, so no mask is needed.
-            const fit = containFit(
-              { width: pageWidth, height: artHeight },
-              { width: embeddedImage.width, height: embeddedImage.height },
-            );
+            // Print keeps the art inside the 10 mm safe margin on every
+            // side (Peecho file spec); web fills to the page edge.
+            const region = includeBleed
+              ? { width: pageWidth - safeInset * 2, height: Math.max(artHeight - safeInset, artHeight * 0.5) }
+              : { width: pageWidth, height: artHeight };
+            const pixels = { width: embeddedImage.width, height: embeddedImage.height };
+            const fit = containFit(region, pixels);
+            // Print: never upscale - cap the draw size at the art's native
+            // 300 dpi dimensions (Peecho file spec), centred in the region.
+            const placed = includeBleed ? printPlacement(region, pixels) : { width: fit.width, height: fit.height };
             storyPage.drawImage(embeddedImage, {
-              x: fit.x,
-              y: bandTop + fit.y,
-              width: fit.width,
-              height: fit.height,
+              x: (includeBleed ? safeInset : 0) + fit.x + (fit.width - placed.width) / 2,
+              y: bandTop + fit.y + (fit.height - placed.height) / 2,
+              width: placed.width,
+              height: placed.height,
             });
-            if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: fit.width, height: fit.height })));
+            // DPI QA measures the ACTUAL placed size (capped at native
+            // 300 dpi by printPlacement), never the region fit - measuring
+            // the region fit false-warns ~175 dpi on art that prints at 300.
+            if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: placed.width, height: placed.height })));
           }
           imagePlaced = true;
         } catch (imageError) {
@@ -665,11 +690,50 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const folioWidth = fonts.text.widthOfTextAtSize(folio, folioSize);
     storyPage.drawText(folio, {
       x: pageWidth - safeInset - folioWidth,
-      y: safeInset * 0.55,
+      // Print: baseline high enough that the descent still ends inside the
+      // 10 mm safe inset; web keeps its subtler placement.
+      y: includeBleed ? printFolioBaseline(safeInset, folioSize) : safeInset * 0.55,
       size: folioSize,
       font: fonts.text,
       color: INK,
       opacity: 0.6,
+    });
+  }
+
+  // ---- Back cover (print only) ----
+  // Peecho softcover spec (support.peecho.com 19731377793564, 10 Nov 2026):
+  // one PDF containing front cover, content and back cover as single pages
+  // in this order; the LAST page becomes the back cover, and an odd page
+  // count leaves it white. Order-time padding therefore inserts blanks
+  // BEFORE this page. Web PDFs keep their existing shape.
+  if (includeBleed) {
+    const backPage = pdfDoc.addPage([pageWidth, pageHeight]);
+    markPrintBoxes(backPage);
+    backPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    // Same sanitized, normalised title as the front cover, fitted INSIDE
+    // the 10 mm safe area: shrink toward a readable floor, then wrap to two
+    // bounded lines - a raw title is never drawn past the margins.
+    const backText = titleText || (config.children?.length ? `${config.children.join(' & ')}'s Story` : 'My Story');
+    const backSafeWidth = pageWidth - safeInset * 2;
+    const backFit = fitCoverSubtext(backText, fonts.text, backSafeWidth, 14, 10, 2);
+    // Bounds regression with the real font metrics: every drawn line must
+    // measure inside the safe width. This trips if the fit pipeline ever
+    // regresses, not just when a constant changes.
+    const backOverflow = backFit.lines.some((line) => fonts.text.widthOfTextAtSize(line, backFit.size) > backSafeWidth + 0.5);
+    qa.push({
+      where: 'back',
+      severity: backOverflow ? 'fail' : 'pass',
+      check: `back cover title sanitised and fitted inside the safe margin (${backFit.lines.length} line(s) at ${Math.round(backFit.size)}pt)`,
+    });
+    backFit.lines.forEach((line, i) => {
+      const w = fonts.text.widthOfTextAtSize(line, backFit.size);
+      backPage.drawText(line, {
+        x: (pageWidth - w) / 2,
+        y: pageHeight / 2 + ((backFit.lines.length - 1) / 2 - i) * backFit.size * 1.3,
+        size: backFit.size,
+        font: fonts.text,
+        color: INK,
+      });
     });
   }
 
