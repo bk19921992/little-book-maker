@@ -95,7 +95,7 @@ export function exportBlockers<T extends { severity: string; kind?: string }>(qa
 // professional enough"): flat story-type cover colour, title above the
 // framed art, and a real back cover (blurb, spot art, sign-off). v5 books
 // keep the band cover and blank back, so the order path must refuse them.
-export const PRINT_PROFILE_VERSION = 6;
+export const PRINT_PROFILE_VERSION = 7;
 export const PRINT_PROFILE_MARKER = `story-sprout-print-profile:${PRINT_PROFILE_VERSION}`;
 
 // Peecho recommends 300 dpi; 150 dpi is the acceptable floor (dpiCheck
