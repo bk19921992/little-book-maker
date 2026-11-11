@@ -79,7 +79,7 @@ test('reference edit failures propagate: 400/422/500 never trigger plain generat
   }
   const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
   assert.ok(!source.includes('isReferenceSpecificEditFailure'), 'index.ts must not contain a fallback gate')
-  assert.equal(source.split('editImageWithReference(').length - 1, 3, 'worker + page + cover call the edit directly, no fallback wrapper')
+  assert.equal(source.split('editImageWithReference(').length - 1, 4, 'worker + page + cover + cover-suite call the edit directly, no fallback wrapper')
 })
 
 test('API errors carry their HTTP status', async () => {
