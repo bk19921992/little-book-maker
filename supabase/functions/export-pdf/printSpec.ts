@@ -91,7 +91,11 @@ export function exportBlockers<T extends { severity: string; kind?: string }>(qa
 // v5 enlarges print art (cover and story pages) up to the 150 dpi floor,
 // answering the 11 Nov 2026 owner review; v4 books keep the small plates,
 // so the order path must refuse them and force regeneration.
-export const PRINT_PROFILE_VERSION = 5;
+// v6 redesigns the covers (11 Nov 2026 owner review: "doesn't look
+// professional enough"): flat story-type cover colour, title above the
+// framed art, and a real back cover (blurb, spot art, sign-off). v5 books
+// keep the band cover and blank back, so the order path must refuse them.
+export const PRINT_PROFILE_VERSION = 6;
 export const PRINT_PROFILE_MARKER = `story-sprout-print-profile:${PRINT_PROFILE_VERSION}`;
 
 // Peecho recommends 300 dpi; 150 dpi is the acceptable floor (dpiCheck
@@ -132,4 +136,28 @@ export function coverTextBlockBottom(
 ): number {
   if (!forPrint) return bandBottom;
   return Math.max(bandBottom, safeInsetPt + lowestTextSize * TEXT_DESCENT_RATIO);
+}
+
+// ---- Cover palette (v6) ----
+// The print covers sit on a flat colour that wraps front and back, with a
+// pre-paired ink whose contrast is known in advance (all pairs >= 4.5:1, the
+// same gate as ink on paper). This replaces the white page behind the cover
+// art and keeps the rule that title ink never sits on unverified art.
+// Keyed by lowercase story type; anything unknown takes the default.
+export interface CoverPalette {
+  background: string; // hex
+  ink: string;        // hex
+}
+export const COVER_PALETTES: Record<string, CoverPalette> = {
+  bedtime: { background: '#1F2A44', ink: '#FFF6E9' },
+  adventure: { background: '#1E4634', ink: '#FFF6E9' },
+  learning: { background: '#155E63', ink: '#FFF6E9' },
+  friendship: { background: '#B23A48', ink: '#FFF6E9' },
+  fantasy: { background: '#4B2A5A', ink: '#FFF6E9' },
+  'problem solving': { background: '#2E4A6B', ink: '#FFF6E9' },
+};
+export const COVER_PALETTE_DEFAULT: CoverPalette = { background: '#F2B544', ink: '#2B2118' };
+export function resolveCoverPalette(storyType?: string): CoverPalette {
+  const key = (storyType || '').trim().toLowerCase();
+  return COVER_PALETTES[key] ?? COVER_PALETTE_DEFAULT;
 }
