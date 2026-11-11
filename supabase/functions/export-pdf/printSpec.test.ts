@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BLEED_MM, containFit, dpiCheck, effectiveDpi, MM_TO_PT, printBoxes } from './printSpec.ts';
+import { BLEED_MM, containFit, dpiCheck, effectiveDpi, MM_TO_PT, PRINT_PROFILE_MARKER, printBoxes, printPlacement } from './printSpec.ts';
 import { pagePoints } from './testFont.ts';
 
 test('print boxes: TrimBox is the finished A5 size inside a 3 mm bleed', () => {
@@ -75,4 +75,24 @@ test('contain-fit: exact-ratio art fills the region with no margins', () => {
 test('contain-fit: small art scales UP to fill its bound, never crops', () => {
   const fit = containFit({ width: 800, height: 600 }, { width: 400, height: 300 });
   assert.deepEqual(fit, { x: 0, y: 0, width: 800, height: 600 });
+});
+
+test('print placement never upscales: draw size is capped at pixels * 72 / 300', () => {
+  // 300x200 px art in a 400x500 pt region: native 300 dpi size is 72x48 pt,
+  // so the art draws at 72x48 even though the region could hold more.
+  const placed = printPlacement({ width: 400, height: 500 }, { width: 300, height: 200 });
+  assert.equal(Math.round(placed.width * 100) / 100, 72);
+  assert.equal(Math.round(placed.height * 100) / 100, 48);
+});
+
+test('print placement uses the region when the art exceeds 300 dpi natively', () => {
+  // 3000x2000 px art in a 400x500 pt region: native size 720x480 pt, capped
+  // by the region at 400x266.67 pt - effective dpi stays above 300.
+  const placed = printPlacement({ width: 400, height: 500 }, { width: 3000, height: 2000 });
+  assert.equal(Math.round(placed.width * 100) / 100, 400);
+  assert.ok(Math.abs(placed.height - 266.67) < 0.01);
+});
+
+test('print profile marker names the current version', () => {
+  assert.equal(PRINT_PROFILE_MARKER, 'story-sprout-print-profile:4');
 });
