@@ -5,10 +5,11 @@ import type { PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
 import * as fontkit from "https://esm.sh/@pdf-lib/fontkit@1.1.1";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN } from "./typeset.ts";
+import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN, wrapToMeasure } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { containFit, coverFullBleedOk, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, SAFE_MARGIN_PT } from "./printSpec.ts";
+import { containFit, coverFullBleedOk, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
+import { blurbSignOff, fallbackBlurb, validateBlurb } from "../_shared/blurb.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
 
 const PAGE_SIZES = {
@@ -38,6 +39,7 @@ function mmToPdfPoints(mm: number): number {
 // below. Dark ink on paper always passes contrast; no strokes or halos.
 const PAPER = rgb(1, 0.976, 0.941);      // #FFF9F0
 const INK = rgb(0.169, 0.149, 0.133);    // #2B2622
+const WHITE = rgb(1, 1, 1);
 
 const FONT_URLS = {
   text: "https://cdn.jsdelivr.net/fontsource/fonts/nunito@5.3.0/latin-600-normal.ttf",
@@ -137,7 +139,9 @@ interface StoryConfigInput {
   pageSize: string;
   pageLayout?: string;
   storyType?: string;
-  personal?: { dedication?: string };
+  setting?: string;
+  blurb?: unknown;
+  personal?: { dedication?: string; childName?: string; name?: string };
 }
 
 interface QaEntry {
@@ -200,7 +204,7 @@ async function embedAny(pdfDoc: PDFDocument, imageData: { bytes: Uint8Array; mim
   return await pdfDoc.embedJpg(imageData.bytes);
 }
 
-async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
+async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
   const pdfDoc = await PDFDocument.create();
   // Print PDFs carry the profile marker the order path requires; web PDFs
   // stay unmarked so a web export can never be ordered.
@@ -233,9 +237,16 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     check: `cover style: ${coverStyle.typeface}/${coverStyle.treatment}, title ${coverStyle.titleColor}, accent ${coverStyle.accentColor}`,
   });
   const rgb01 = (hex: string) => { const c = coverHexToRgb(hex); return rgb(c.r, c.g, c.b); };
-  const titleInk = rgb01(coverStyle.titleColor);
-  const accentInk = rgb01(coverStyle.accentColor);
-  const subtitleInk = rgb01(coverStyle.subtitleColor);
+  // v6 print covers: flat story-type colour with a pre-paired ink whose
+  // contrast is verified here on every export. The title and all cover text
+  // draw on that colour - never on the art. Web keeps the per-book
+  // art-direction inks on paper.
+  const coverPalette = resolveCoverPalette(config.storyType);
+  const paletteBg = rgb01(coverPalette.background);
+  const paletteInk = rgb01(coverPalette.ink);
+  const titleInk = includeBleed ? paletteInk : rgb01(coverStyle.titleColor);
+  const accentInk = includeBleed ? paletteInk : rgb01(coverStyle.accentColor);
+  const subtitleInk = includeBleed ? paletteInk : rgb01(coverStyle.subtitleColor);
   const ratio = contrastRatio(
     { r: 0.169, g: 0.149, b: 0.133 },
     { r: 1, g: 0.976, b: 0.941 },
@@ -251,11 +262,22 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // printer adds bleed itself (Peecho file spec, 10 Nov 2026) - with a
   // fixed 10 mm safe margin around all art and text. Web keeps the
   // proportional inset and is unchanged.
+  if (includeBleed) {
+    qa.push({
+      where: 'cover',
+      severity: 'pass',
+      check: `print cover colour: ${(config.storyType || 'default').toLowerCase()} palette ${coverPalette.background} with ${coverPalette.ink} ink (contrast ${contrastRatio({ r: paletteBg.red, g: paletteBg.green, b: paletteBg.blue }, { r: paletteInk.red, g: paletteInk.green, b: paletteInk.blue }).toFixed(1)}:1, gate 4.5:1)`,
+    });
+  }
   const dimensions = pageSize.content;
 
   const pageWidth = mmToPdfPoints(dimensions.width);
   const pageHeight = mmToPdfPoints(dimensions.height);
   const safeInset = includeBleed ? SAFE_MARGIN_PT : pageWidth * SAFE;
+  // v6 print cover geometry is specified in mm for a 210mm square page;
+  // scale it for other trim sizes so the composition holds.
+  const coverScale = pageWidth / mmToPdfPoints(210);
+  const cv = (mm: number) => mmToPdfPoints(mm) * coverScale;
 
   // ---- Cover ----
   // Dedicated cover art is composed with title space reserved. If it cannot
@@ -270,7 +292,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
 
   const coverPage = pdfDoc.addPage([pageWidth, pageHeight]);
   markPrintBoxes(coverPage);
-  coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+  coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: includeBleed ? paletteBg : PAPER });
 
   // The explicit title field is untrusted input (no client path exists for
   // it): sanitise before typesetting and say so when sanitising changed it.
@@ -279,6 +301,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   if (rawTitle.trim() && sanitised.changed) {
     qa.push({ where: 'cover', severity: 'warn', check: `cover title sanitised (control characters removed, capped at 80 chars); review the book config` });
   }
+  const coverChildName = ((config.children ?? []).map((n) => (n || '').trim()).filter(Boolean)[0])
+    || (typeof config.personal?.childName === 'string' ? config.personal.childName.trim() : '')
+    || (typeof config.personal?.name === 'string' ? config.personal.name.trim() : '');
   const titleText = normaliseTypography(coverTitle(config));
   const subtitleText = normaliseTypography(coverSubtitle(config.storyType));
   const dedicationText = config.personal?.dedication ? normaliseTypography(config.personal.dedication) : '';
@@ -289,8 +314,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // the page edge. Fitting is not passing: a title below the readable
   // threshold BLOCKS the export (severity fail) - a printed cover the child
   // cannot read is a defect, not a warning.
-  const maxTitleWidth = pageWidth * TEXT_MEASURE;
-  const fitted = fitCoverTitle(titleText, coverFonts.display, maxTitleWidth, Math.round(pageWidth * 0.085), Math.round(pageWidth * 0.05));
+  // Print (v6): the title sits above the art on a 170mm measure at up to
+  // 40pt (30pt when it wraps to two lines). Web keeps its own measure.
+  const maxTitleWidth = includeBleed ? cv(170) : pageWidth * TEXT_MEASURE;
+  const fitted = fitCoverTitle(titleText, coverFonts.display, maxTitleWidth, includeBleed ? Math.max(24, Math.round(40 * coverScale)) : Math.round(pageWidth * 0.085), Math.round(pageWidth * 0.05));
   const titleSize = fitted.size;
   const titleLines = fitted.lines;
   if (fitted.belowReadable) {
@@ -366,16 +393,25 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         coverPage.drawImage(img, { x: (pageWidth - drawW) / 2, y: (pageHeight - drawH) / 2, width: drawW, height: drawH });
         qa.push({ where: 'cover', severity: 'pass', check: 'dedicated cover illustration, full-bleed, title space reserved' });
       } else {
-        // Page-art fallback, or dedicated art whose shape differs from the
-        // page: contain-fit the whole illustration. The art is optically
-        // centred between the title block and the top safe margin (a little
-        // more air below than above), so the cover gets balanced whitespace
-        // instead of a large dead gap over the title.
+        // Print cover (v6): the art plates full-frame inside a white mount
+        // on the cover colour, uncropped, upscaled only to the 150 dpi
+        // floor (never beyond). A dedication raises the plate so the bottom
+        // text stays inside the safe margin. (Web keeps the band system:
+        // the art above a paper band carrying the title.)
+        const platePt = includeBleed ? cv(dedicationText ? 128 : 136) : 0;
+        const plateX = includeBleed ? (pageWidth - platePt) / 2 : 0;
+        const plateY = includeBleed ? cv(dedicationText ? 34 : 26) : 0;
+        if (includeBleed) {
+          const framePt = cv(2);
+          coverPage.drawRectangle({ x: plateX - framePt, y: plateY - framePt, width: platePt + framePt * 2, height: platePt + framePt * 2, color: WHITE });
+        }
         const coverTitleTop = (coverBandHeight + coverBlockHeight) / 2;
         const coverRegionBottom = coverTitleTop + titleSize * 0.35;
         const coverRegionH = Math.max(coverBandHeight, pageHeight - safeInset - coverRegionBottom);
         // Print keeps the cover art inside the 10 mm side margins too.
-        const coverRegion = { width: pageWidth - (includeBleed ? safeInset * 2 : 0), height: coverRegionH };
+        const coverRegion = includeBleed
+          ? { width: platePt, height: platePt }
+          : { width: pageWidth - (includeBleed ? safeInset * 2 : 0), height: coverRegionH };
         const fit = containFit(coverRegion, { width: img.width, height: img.height });
         // Print: upscale only to the 150 dpi acceptable floor (v5, larger
         // art per the 11 Nov 2026 owner review) - never beyond 150.
@@ -384,14 +420,23 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
           : { width: fit.width, height: fit.height };
         drawW = placed.width;
         drawH = placed.height;
-        const coverSpare = coverRegionH - placed.height;
-        coverPage.drawImage(img, {
-          x: (includeBleed ? safeInset : 0) + fit.x + (fit.width - placed.width) / 2,
-          y: coverRegionBottom + (coverSpare * 1.15) / 2.15,
-          width: placed.width,
-          height: placed.height,
-        });
-        qa.push({ where: 'cover', severity: 'pass', check: fromDedicated ? 'cover illustration shown whole, uncropped, title on paper band (art shape differs from the page)' : 'cover illustration present, uncropped, title on paper band (page art fallback)' });
+        if (includeBleed) {
+          coverPage.drawImage(img, {
+            x: plateX + fit.x + (fit.width - placed.width) / 2,
+            y: plateY + fit.y + (fit.height - placed.height) / 2,
+            width: placed.width,
+            height: placed.height,
+          });
+        } else {
+          const coverSpare = coverRegionH - placed.height;
+          coverPage.drawImage(img, {
+            x: fit.x + (fit.width - placed.width) / 2,
+            y: coverRegionBottom + (coverSpare * 1.15) / 2.15,
+            width: placed.width,
+            height: placed.height,
+          });
+        }
+        qa.push({ where: 'cover', severity: 'pass', check: includeBleed ? (fromDedicated ? 'dedicated cover illustration plated full-frame in a white mount, uncropped, title above on the cover colour' : 'cover illustration plated full-frame in a white mount, uncropped, title above (page art fallback)') : (fromDedicated ? 'cover illustration shown whole, uncropped, title on paper band (art shape differs from the page)' : 'cover illustration present, uncropped, title on paper band (page art fallback)') });
       }
       if (dedicatedUnreadable) qa.push({ where: 'cover', severity: 'warn', check: 'dedicated cover illustration could not be read; reused page art, uncropped' });
       if (includeBleed) qa.push(dpiCheck('cover', effectiveDpi(img, { width: drawW, height: drawH })));
@@ -495,11 +540,55 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         });
       });
     }
+  } else if (includeBleed) {
+    // Print cover (v6): the title sits ABOVE the art on the flat cover
+    // colour - ink on a contrast-verified pair, never on the art. One line
+    // at 40pt with its baseline at 34mm; two lines at 26 and 38mm.
+    const titleBaseline = pageHeight - cv(titleLines.length > 1 ? 26 : 34);
+    drawCoverTitle(titleBaseline);
+    qa.push({
+      where: 'cover',
+      severity: 'pass',
+      check: `print cover title above the art (${titleLines.length} line(s) at ${titleSize}pt) on the cover colour`,
+    });
+    // Byline under the art: the story type, personalised when the child's
+    // name is known ("A bedtime story for Amelia"), 11pt at 194mm.
+    const storyTypeLower = (config.storyType || '').trim().toLowerCase();
+    const bylineText = coverChildName && storyTypeLower
+      ? `A ${storyTypeLower} story for ${coverChildName}`
+      : (coverChildName ? `A story for ${coverChildName}` : subtitleText);
+    const bylineFit = fitSubtext(bylineText, Math.max(9, Math.round(11 * coverScale)), 9, 2, 'byline', 'shorten the story type');
+    const bylineBaseline = pageHeight - cv(dedicationText ? 186 : 194);
+    bylineFit.lines.forEach((line, i) => {
+      const w = coverFonts.text.widthOfTextAtSize(line, bylineFit.size);
+      coverPage.drawText(line, {
+        x: (pageWidth - w) / 2,
+        y: bylineBaseline - i * bylineFit.size * 1.3,
+        size: bylineFit.size,
+        font: coverFonts.text,
+        color: titleInk,
+      });
+    });
+    // The family's dedication is never dropped: it sits beneath the byline
+    // (the art plate is raised to make room - see the cover art block).
+    if (dedicationText) {
+      const dedStart = bylineBaseline - Math.max(bylineFit.size * 1.6, coverDedSize * 1.8);
+      coverDedLines.forEach((line, i) => {
+        const w = coverFonts.text.widthOfTextAtSize(line, coverDedSize);
+        coverPage.drawText(line, {
+          x: (pageWidth - w) / 2,
+          y: dedStart - i * coverDedSize * 1.2,
+          size: coverDedSize,
+          font: coverFonts.text,
+          color: titleInk,
+        });
+      });
+    }
   } else {
-    // Title block centred in the paper band; dedication (if any) beneath it.
-    // Print: the whole block - including the lowest line's descent (the
-    // dedication or subtitle, whichever is last) - stays at or above the
-    // 10 mm safe inset.
+    // Web band: title block centred in the paper band; dedication (if any)
+    // beneath it. The whole block - including the lowest line's descent
+    // (the dedication or subtitle, whichever is last) - stays at or above
+    // the safe inset.
     const lowestCoverText = dedicationText ? coverDedSize : (subtitleLines.length ? subtitleSize : titleSize);
     const blockBottom = coverTextBlockBottom((coverBandHeight - coverBlockHeight) / 2, includeBleed, safeInset, lowestCoverText);
     const titleBaseline = blockBottom + coverBlockHeight - titleSize * 0.9;
@@ -710,34 +799,114 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // count leaves it white. Order-time padding therefore inserts blanks
   // BEFORE this page. Web PDFs keep their existing shape.
   if (includeBleed) {
+    // Back cover (v6): the same flat cover colour as the front, a real
+    // blurb, an optional spot illustration in a white mount, a sign-off and
+    // the wordmark. No bare title. The bottom-right 45x30mm stays clear in
+    // case the printer stamps a barcode.
     const backPage = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(backPage);
-    backPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
-    // Same sanitized, normalised title as the front cover, fitted INSIDE
-    // the 10 mm safe area: shrink toward a readable floor, then wrap to two
-    // bounded lines - a raw title is never drawn past the margins.
-    const backText = titleText || (config.children?.length ? `${config.children.join(' & ')}'s Story` : 'My Story');
-    const backSafeWidth = pageWidth - safeInset * 2;
-    const backFit = fitCoverSubtext(backText, fonts.text, backSafeWidth, 14, 10, 2);
-    // Bounds regression with the real font metrics: every drawn line must
-    // measure inside the safe width. This trips if the fit pipeline ever
-    // regresses, not just when a constant changes.
-    const backOverflow = backFit.lines.some((line) => fonts.text.widthOfTextAtSize(line, backFit.size) > backSafeWidth + 0.5);
-    qa.push({
-      where: 'back',
-      severity: backOverflow ? 'fail' : 'pass',
-      check: `back cover title sanitised and fitted inside the safe margin (${backFit.lines.length} line(s) at ${Math.round(backFit.size)}pt)`,
+    backPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: paletteBg });
+
+    // Blurb: a validated config blurb wins; anything missing or failing
+    // validation falls back to the deterministic per-story-type template,
+    // so the back cover is never blank and never ships a bad blurb.
+    const storyTextAll = pages.map((pg) => pg.text || '').join('\n');
+    const rawBlurb = typeof config.blurb === 'string' ? normaliseTypography(config.blurb.trim()) : '';
+    let blurbText: string;
+    if (rawBlurb) {
+      const verdict = validateBlurb(rawBlurb, coverChildName || undefined, storyTextAll);
+      if (verdict.ok) {
+        blurbText = rawBlurb;
+        qa.push({ where: 'back', severity: 'pass', check: 'back cover blurb from the book config (validated)' });
+      } else {
+        blurbText = normaliseTypography(fallbackBlurb(config.storyType, config.setting, coverChildName || undefined));
+        qa.push({ where: 'back', severity: 'warn', check: `config blurb failed validation (${verdict.reasons.join('; ')}); template blurb plated instead` });
+      }
+    } else {
+      blurbText = normaliseTypography(fallbackBlurb(config.storyType, config.setting, coverChildName || undefined));
+      qa.push({ where: 'back', severity: 'pass', check: 'back cover blurb: template (a written blurb lands with the generation wiring)' });
+    }
+    // Centred on a 120mm measure: the first sentence at 16pt, the rest at
+    // 12.5pt on 18pt leading, at most six lines, all inside the safe area.
+    const blurbMeasure = cv(120);
+    const blurbSplit = blurbText.match(/^(.+?[.!?])\s+([\s\S]+)$/);
+    const firstSentence = blurbSplit ? blurbSplit[1] : blurbText;
+    const restText = blurbSplit ? blurbSplit[2] : '';
+    const firstSize = Math.max(12, Math.round(16 * coverScale));
+    const firstFit = fitCoverSubtext(firstSentence, fonts.text, blurbMeasure, firstSize, Math.max(11, Math.round(12 * coverScale)), 3);
+    let blurbCursor = pageHeight - cv(36);
+    firstFit.lines.forEach((line, i) => {
+      const w = fonts.text.widthOfTextAtSize(line, firstFit.size);
+      backPage.drawText(line, { x: (pageWidth - w) / 2, y: blurbCursor - i * firstFit.size * 1.3, size: firstFit.size, font: fonts.text, color: paletteInk });
     });
-    backFit.lines.forEach((line, i) => {
-      const w = fonts.text.widthOfTextAtSize(line, backFit.size);
-      backPage.drawText(line, {
-        x: (pageWidth - w) / 2,
-        y: pageHeight / 2 + ((backFit.lines.length - 1) / 2 - i) * backFit.size * 1.3,
-        size: backFit.size,
-        font: fonts.text,
-        color: INK,
+    blurbCursor -= firstFit.lines.length * firstFit.size * 1.3 + cv(3);
+    if (restText) {
+      const restSize = Math.max(11, Math.round(12.5 * coverScale));
+      const restLeading = Math.max(16, Math.round(18 * coverScale));
+      const restLines = wrapToMeasure(restText, fonts.text, restSize, blurbMeasure);
+      const restOverflow = restLines.length > 6;
+      restLines.slice(0, 6).forEach((line, i) => {
+        const w = fonts.text.widthOfTextAtSize(line, restSize);
+        backPage.drawText(line, { x: (pageWidth - w) / 2, y: blurbCursor - i * restLeading, size: restSize, font: fonts.text, color: paletteInk });
       });
-    });
+      qa.push({
+        where: 'back',
+        severity: restOverflow ? 'warn' : 'pass',
+        check: restOverflow
+          ? `blurb wraps to ${restLines.length} lines on the 120mm measure; plated the first six`
+          : `blurb plated (${firstFit.lines.length + restLines.length} lines on the 120mm measure)`,
+      });
+    }
+
+    // Spot illustration: a quiet closing beat, plated small in a white
+    // mount centred at 126mm from the top. Optional until the generation
+    // wiring lands; the cover works with blurb alone.
+    if (backCoverImage) {
+      const backArtData = await fetchImageBytes(backCoverImage);
+      if (backArtData) {
+        try {
+          const backImg = await embedAny(pdfDoc, backArtData);
+          const spotPt = cv(70);
+          const spotX = (pageWidth - spotPt) / 2;
+          const spotY = pageHeight - cv(126) - spotPt / 2;
+          const spotFrame = cv(2);
+          backPage.drawRectangle({ x: spotX - spotFrame, y: spotY - spotFrame, width: spotPt + spotFrame * 2, height: spotPt + spotFrame * 2, color: WHITE });
+          const spotFit = containFit({ width: spotPt, height: spotPt }, { width: backImg.width, height: backImg.height });
+          const spotPlaced = printPlacement({ width: spotPt, height: spotPt }, { width: backImg.width, height: backImg.height }, DPI_MINIMUM);
+          backPage.drawImage(backImg, {
+            x: spotX + spotFit.x + (spotFit.width - spotPlaced.width) / 2,
+            y: spotY + spotFit.y + (spotFit.height - spotPlaced.height) / 2,
+            width: spotPlaced.width,
+            height: spotPlaced.height,
+          });
+          qa.push({ where: 'back', severity: 'pass', check: 'back cover spot illustration plated in a white mount, uncropped' });
+          qa.push(dpiCheck('back', effectiveDpi(backImg, { width: spotPlaced.width, height: spotPlaced.height })));
+        } catch (backArtError) {
+          console.error('Failed to embed back cover spot art', backArtError);
+          qa.push({ where: 'back', severity: 'warn', check: 'back cover spot illustration failed to embed; blurb-only back cover' });
+        }
+      } else {
+        qa.push({ where: 'back', severity: 'warn', check: 'back cover spot illustration could not be read; blurb-only back cover' });
+      }
+    } else {
+      qa.push({ where: 'back', severity: 'pass', check: 'back cover without spot art (it lands with the generation wiring)' });
+    }
+
+    // Sign-off (only when the child is named) and the wordmark. No italic
+    // face is embedded, so the sign-off sets in the text face.
+    const signOff = blurbSignOff(config.storyType, coverChildName || undefined);
+    if (signOff) {
+      const signOffSize = Math.max(9, Math.round(11 * coverScale));
+      const w = fonts.text.widthOfTextAtSize(signOff, signOffSize);
+      backPage.drawText(signOff, { x: (pageWidth - w) / 2, y: pageHeight - cv(174), size: signOffSize, font: fonts.text, color: paletteInk });
+      qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off plated' });
+    } else {
+      qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off omitted (no child name on record)' });
+    }
+    const brandSize = Math.max(7, Math.round(8 * coverScale));
+    const brand = 'Story Sprout';
+    const brandW = fonts.text.widthOfTextAtSize(brand, brandSize);
+    backPage.drawText(brand, { x: (pageWidth - brandW) / 2, y: pageHeight - cv(194), size: brandSize, font: fonts.text, color: paletteInk });
   }
 
   return { bytes: await pdfDoc.save(), qa };
@@ -773,7 +942,7 @@ serve(async (req) => {
       throw authError;
     }
 
-    const { config, pages, storyId, includeBleed = true, coverImage } = await req.json();
+    const { config, pages, storyId, includeBleed = true, coverImage, backCoverImage } = await req.json();
 
     if (!storyId || typeof storyId !== 'string' || storyId.length > 100) {
       throw new Error('Missing story id.');
@@ -811,7 +980,7 @@ serve(async (req) => {
 
     // Generate both web and print PDFs
     const web = await createPDF(config, pages, false, coverImage);
-    const print = await createPDF(config, pages, true, coverImage);
+    const print = await createPDF(config, pages, true, coverImage, backCoverImage);
     // Web and print runs raise the same cover/text findings; keep one copy
     // of each so a refusal names a problem once, not twice.
     const seenQa = new Set<string>();
