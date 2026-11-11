@@ -86,6 +86,25 @@ export function wrapTitle(
   return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
 }
 
+// Greedy word wrap to a measure, for multi-line blocks like the back-cover
+// blurb. Returns one line when the text fits; never drops a word.
+export function wrapToMeasure(text: string, font: MeasuringFont, fontSize: number, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const w of words) {
+    const candidate = line ? `${line} ${w}` : w;
+    if (line && font.widthOfTextAtSize(candidate, fontSize) > maxWidth) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 // Typographic normalisation for every rendered string: curly apostrophes and
 // quotes, proper ellipsis and em dashes.
 export function normaliseTypography(s: string): string {
@@ -444,4 +463,4 @@ export function layoutCoverTitle(
     }
   });
   return { placements, lineWidths };
-}
+      }
