@@ -8,7 +8,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { containFit, coverFullBleedOk, coverTextBlockBottom, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, SAFE_MARGIN_PT } from "./printSpec.ts";
+import { containFit, coverFullBleedOk, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, SAFE_MARGIN_PT } from "./printSpec.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
 
 const PAGE_SIZES = {
@@ -377,9 +377,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         // Print keeps the cover art inside the 10 mm side margins too.
         const coverRegion = { width: pageWidth - (includeBleed ? safeInset * 2 : 0), height: coverRegionH };
         const fit = containFit(coverRegion, { width: img.width, height: img.height });
-        // Print: never upscale - cap at the art's native 300 dpi dimensions.
+        // Print: upscale only to the 150 dpi acceptable floor (v5, larger
+        // art per the 11 Nov 2026 owner review) - never beyond 150.
         const placed = includeBleed
-          ? printPlacement(coverRegion, { width: img.width, height: img.height })
+          ? printPlacement(coverRegion, { width: img.width, height: img.height }, DPI_MINIMUM)
           : { width: fit.width, height: fit.height };
         drawW = placed.width;
         drawH = placed.height;
@@ -580,18 +581,20 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
               : { width: pageWidth, height: artHeight };
             const pixels = { width: embeddedImage.width, height: embeddedImage.height };
             const fit = containFit(region, pixels);
-            // Print: never upscale - cap the draw size at the art's native
-            // 300 dpi dimensions (Peecho file spec), centred in the region.
-            const placed = includeBleed ? printPlacement(region, pixels) : { width: fit.width, height: fit.height };
+            // Print: cap the draw size at the art's native dimensions for
+            // the 150 dpi acceptable floor (v5, larger art per the 11 Nov
+            // 2026 owner review) - up to twice the 300 dpi size, never
+            // more, centred in the region.
+            const placed = includeBleed ? printPlacement(region, pixels, DPI_MINIMUM) : { width: fit.width, height: fit.height };
             storyPage.drawImage(embeddedImage, {
               x: (includeBleed ? safeInset : 0) + fit.x + (fit.width - placed.width) / 2,
               y: bandTop + fit.y + (fit.height - placed.height) / 2,
               width: placed.width,
               height: placed.height,
             });
-            // DPI QA measures the ACTUAL placed size (capped at native
-            // 300 dpi by printPlacement), never the region fit - measuring
-            // the region fit false-warns ~175 dpi on art that prints at 300.
+            // DPI QA measures the ACTUAL placed size (capped at the 150 dpi
+            // floor's native size by printPlacement), never the region fit -
+            // measuring the region fit can false-read the real print dpi.
             if (includeBleed) qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: placed.width, height: placed.height })));
           }
           imagePlaced = true;
