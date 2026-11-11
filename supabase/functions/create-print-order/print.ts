@@ -339,4 +339,4 @@ export function positiveIntConfig(value: string | undefined, fallback: number): 
   if (!/^\d{1,7}$/.test(value)) return null;
   const n = Number(value);
   return Number.isSafeInteger(n) && n >= 1 ? n : null;
-          }
+    }
