@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { validateAddress, type ShippingAddress } from '../../supabase/functions/create-print-order/print.ts';
 import { saveBook, withDownloadName } from '../lib/savedBooks';
+import { createExportOperationLock, routeExistingExport, type ExportOperation } from '../lib/ownedExport';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { continuityReadiness } from '../../supabase/functions/_shared/bookContinuity';
@@ -49,8 +50,20 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 }) => {
   const { user } = useAuth();
   const [isExporting, setIsExporting] = useState(false);
-  const [isCheckingImages, setIsCheckingImages] = useState(false);
+  // One busy flag covering the entire click -> gate -> save -> ownership ->
+  // export action. The operation lock owns it: captured before the first
+  // await, released only by its own token.
+  const [isExportBusy, setIsExportBusy] = useState(false);
   const [imageCheckMessage, setImageCheckMessage] = useState<string | null>(null);
+  // Assigned on EVERY render, so the lock's identity getter always reads the
+  // latest user/story - a getter closing over first-render props would freeze
+  // the identity forever.
+  const latestIdentityRef = useRef({ userId: '', storyId: '' });
+  latestIdentityRef.current = { userId: user?.id || '', storyId: config.storyId || '' };
+  const exportOperationLockRef = useRef<ReturnType<typeof createExportOperationLock> | null>(null);
+  if (!exportOperationLockRef.current) {
+    exportOperationLockRef.current = createExportOperationLock(() => latestIdentityRef.current);
+  }
   const [isPrinting, setIsPrinting] = useState(false);
   const [address, setAddress] = useState<ShippingAddress>({ name: '', email: user?.email || '', line1: '', line2: '', city: '', postcode: '', country: 'GB' });
   const [addressErrors, setAddressErrors] = useState<string[]>([]);
@@ -64,81 +77,125 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const [showExportCheckout, setShowExportCheckout] = useState(false);
   const [showPrintCheckout, setShowPrintCheckout] = useState(false);
 
-  const exportPDF = async () => {
-    if (!config.pages || config.pages.length === 0) {
-      toast.error('No pages to export');
-      return;
-    }
-    if (!config.storyId) {
-      toast.error('This book is missing its id - please go back and generate again.');
-      return;
-    }
-
-    const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
-    if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
-    setIsExporting(true);
+  const exportPDF = async (operation: ExportOperation) => {
+    const lock = exportOperationLockRef.current!;
+    const current = () => lock.isCurrent(operation);
     try {
-      const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
+      if (!config.pages || config.pages.length === 0) {
+        toast.error('No pages to export');
+        return;
+      }
+      if (!config.storyId) {
+        toast.error('This book is missing its id - please go back and generate again.');
+        return;
+      }
 
+      const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
+      if (!current()) return;
+      if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
+      setIsExporting(true);
+      const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
+      if (!current()) return;
       onConfigChange({
         exports: {
           webPdfUrl: response.webPdfUrl,
           printPdfUrl: response.printPdfUrl,
         },
       });
-
       toast.success('PDFs generated successfully!');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to generate PDFs';
-      toast.error(message);
+      if (current()) {
+        const message = error instanceof Error ? error.message : 'Failed to generate PDFs';
+        toast.error(message);
+      }
       console.error('Export error:', error);
     } finally {
-      setIsExporting(false);
-      setShowExportCheckout(false);
+      if (current()) {
+        setIsExporting(false);
+        setShowExportCheckout(false);
+      }
+      lock.finish(operation);
+      setIsExportBusy(lock.isBusy());
     }
   };
 
   const handleExportClick = async () => {
-    // Illustrations the QA reviewer could not check when they were made are
-    // re-checked BEFORE checkout, so nobody pays for (or exports) unverified
-    // art. Then billing (free first export or payment) is settled with the
-    // server as before.
-    const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
-    if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
-    setImageCheckMessage(null);
-    setIsCheckingImages(true);
+    const lock = exportOperationLockRef.current!;
+    // One token for the whole action, captured synchronously before the
+    // first await so a re-click cannot interleave and a user/story switch
+    // invalidates every deferred branch below.
+    const operation = lock.begin();
+    if (!operation) return;
+    setIsExportBusy(true);
+    const current = () => lock.isCurrent(operation);
     try {
-      const { updates, blockMessage } = await recheckUnreviewedImages(api, config);
-      if (Object.keys(updates).length) onConfigChange(updates);
-      if (blockMessage) {
-        setImageCheckMessage(blockMessage);
-        toast.error(blockMessage);
+      // Illustrations the QA reviewer could not check when they were made are
+      // re-checked BEFORE checkout, so nobody pays for (or exports) unverified
+      // art. Then billing (free first export or payment) is settled with the
+      // server as before.
+      const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
+      if (!current()) return;
+      if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
+      setImageCheckMessage(null);
+      let imageUpdates: Partial<StoryConfig> = {};
+      try {
+        const { updates, blockMessage } = await recheckUnreviewedImages(api, config);
+        if (!current()) return;
+        imageUpdates = updates;
+        if (blockMessage) {
+          setImageCheckMessage(blockMessage);
+          toast.error(blockMessage);
+          return;
+        }
+      } catch (error) {
+        console.error('Image re-check failed', error);
+        if (!current()) return;
+        const message = "We couldn't check your illustrations just now. Please try again in a moment.";
+        setImageCheckMessage(message);
+        toast.error(message);
         return;
       }
-    } catch (error) {
-      const message = "We couldn't check your illustrations just now. Please try again in a moment.";
-      console.error('Image re-check failed', error);
-      setImageCheckMessage(message);
-      toast.error(message);
-      return;
-    } finally {
-      setIsCheckingImages(false);
-    }
-    // Save the book to the account before the customer pays, so a paid book
-    // survives a closed tab. A save failure is not a reason to block them.
-    if (user && config.storyId) {
-      try {
-        await saveBook(supabase, user.id, config);
-      } catch (saveError) {
-        console.error('Saving the book before checkout failed', saveError);
+      if (!current()) return;
+      if (Object.keys(imageUpdates).length) onConfigChange(imageUpdates);
+      // Save the book to the account before the customer pays, so a paid book
+      // survives a closed tab. A save failure is not a reason to block them.
+      if (user && config.storyId) {
+        try {
+          await saveBook(supabase, user.id, config);
+        } catch (saveError) {
+          console.error('Saving the book before checkout failed', saveError);
+        }
       }
+      if (!current()) return;
+      // Re-exporting an owned book never enters checkout. Do not trust a
+      // config flag or a stale PDF URL as proof that this account owns it:
+      // a fresh owner-scoped read decides which UI shows, and the export
+      // endpoint still authenticates the caller and checks the entitlement.
+      try {
+        await routeExistingExport(supabase, operation.userId, operation.storyId,
+          async () => {
+            if (!current()) return;
+            await exportPDF(operation);
+          },
+          () => { if (current()) setShowExportCheckout(true); });
+      } catch (error) {
+        if (current()) {
+          toast.error(error instanceof Error ? error.message : 'Your book download could not be checked.');
+        }
+      }
+    } finally {
+      lock.finish(operation);
+      setIsExportBusy(lock.isBusy());
     }
-    setShowExportCheckout(true);
   };
 
   const handleExportSuccess = () => {
     setShowExportCheckout(false);
-    exportPDF();
+    const lock = exportOperationLockRef.current!;
+    const operation = lock.begin();
+    if (!operation) return;
+    setIsExportBusy(true);
+    void exportPDF(operation);
   };
 
   const createPrintOrder = async () => {
@@ -212,7 +269,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             Download your storybook. Printed orders are coming soon.
           </p>
         </div>
-        <Button variant="ghost" onClick={handleCreateAnother} className="self-center sm:self-auto">
+        <Button variant="ghost" onClick={handleCreateAnother} disabled={isExportBusy} className="self-center sm:self-auto">
           <Package className="w-4 h-4 mr-2" />
           Create Another Story
         </Button>
@@ -264,13 +321,13 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         <CardContent className="space-y-6">
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <Badge variant="secondary">Includes print-ready & web PDF</Badge>
+              <Badge variant="secondary">Includes web PDF & print-layout PDF</Badge>
               <Badge variant="outline" className="text-story-nature border-story-nature">
-                First export is free
+                Owned books can be exported again
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              Generate professionally typeset PDFs of your book: one for reading on screen, and a print-ready one with 3 mm bleed.
+              Generate a PDF for reading on screen and a trim-size print-layout PDF with safe margins and uncropped artwork. Printed orders are not available yet.
             </p>
           </div>
 
@@ -291,7 +348,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
           )}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Button variant="outline" onClick={onBack} className="w-full sm:w-auto">
+            <Button variant="outline" onClick={onBack} disabled={isExportBusy} className="w-full sm:w-auto">
               Back to Editor
             </Button>
 
@@ -310,9 +367,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               </Button>
               <Button
                 onClick={handleExportClick}
-                disabled={isExporting || isCheckingImages}
+                disabled={isExportBusy}
               >
-                {isCheckingImages ? (
+                {isExportBusy && !isExporting ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                     Checking illustrations...
