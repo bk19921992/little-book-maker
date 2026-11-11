@@ -892,8 +892,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       qa.push({ where: 'back', severity: 'pass', check: 'back cover without spot art (it lands with the generation wiring)' });
     }
 
-    // Sign-off (only when the child is named) and the wordmark. No italic
-    // face is embedded, so the sign-off sets in the text face.
+    // Sign-off (only when the child is named). No italic face is embedded,
+    // so the sign-off sets in the text face. No brand wordmark on the back
+    // cover (customer decision, 11 Nov 2026).
     const signOff = blurbSignOff(config.storyType, coverChildName || undefined);
     if (signOff) {
       const signOffSize = Math.max(9, Math.round(11 * coverScale));
@@ -903,10 +904,6 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     } else {
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off omitted (no child name on record)' });
     }
-    const brandSize = Math.max(7, Math.round(8 * coverScale));
-    const brand = 'Story Sprout';
-    const brandW = fonts.text.widthOfTextAtSize(brand, brandSize);
-    backPage.drawText(brand, { x: (pageWidth - brandW) / 2, y: pageHeight - cv(194), size: brandSize, font: fonts.text, color: paletteInk });
   }
 
   return { bytes: await pdfDoc.save(), qa };
