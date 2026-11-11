@@ -1,0 +1,167 @@
+{
+  "children": [],
+  "characters": [
+    "Friendly dog"
+  ],
+  "personal": {},
+  "storyType": "Bedtime",
+  "setting": "Cozy bedroom",
+  "lengthPages": 6,
+  "readingLevel": "Early 4\u20135",
+  "narrationStyle": "Simple prose",
+  "palette": [
+    "#FFB5A7",
+    "#F8CD07",
+    "#A8E6CF",
+    "#DDA0DD",
+    "#87CEEB"
+  ],
+  "imageStyle": "Picture-book",
+  "pageSize": "210\u00d7210 mm square",
+  "outline": {
+    "pages": [
+      {
+        "page": 1,
+        "wordCount": 23,
+        "imagePrompt": "Picture-book style, calming pastels. Hero (small child, pastel pajamas with bright polka dots) hugs their favorite toy, beside friendly tan and white dog, outside a small cozy house with a soft blue exterior, cheerful yellow door, pink door knob, and flower window boxes. Evening sky in the background with soft light, using #FFB5A7, #F8CD07, #A8E6CF, #DDA0DD, #87CEEB color palette.",
+        "visualBrief": "The hero and their friendly dog arrive at their small pastel-blue house in a lovely town. The hero hugs their favorite toy, wearing pajamas with bright color dots."
+      },
+      {
+        "page": 2,
+        "wordCount": 26,
+        "imagePrompt": "Illustration in picture-book style. Cozy bedroom scene: pastel bedding, shelves with books and toys, big window showing a soft evening sky. Hero in the same pajamas, holding their favorite toy, tan and white dog walks beside them. Warm and calm, with #FFB5A7, #F8CD07, #A8E6CF, #DDA0DD, #87CEEB.",
+        "visualBrief": "The hero and dog enter the cozy pastel bedroom. Soft rug, pastel bed, a window glowing with gentle evening light, the favorite toy in the hero\u2019s hands."
+      },
+      {
+        "page": 3,
+        "wordCount": 25,
+        "imagePrompt": "Picture-book art: Hero in polka-dot pajamas, sitting cross-legged on pastel bed, smiling and hugging their favorite toy. Friendly dog mid-jump onto the bed, tail wagging. Cozy pastel bedroom surroundings lit with evening colors, using the story palette.",
+        "visualBrief": "Hero sits on their bed, hugging favorite toy. The dog jumps onto the bed, tail wagging. Pastel colors fill the room softly."
+      },
+      {
+        "page": 4,
+        "wordCount": 29,
+        "imagePrompt": "Picture-book illustration, child in same pajamas and friendly dog cuddle together atop pastel bedding. Large window reveals soft pastel clouds outside, room bathed in gentle, warm light. Emphasize coziness and palette: #FFB5A7, #F8CD07, #A8E6CF, #DDA0DD, #87CEEB, and comfort details.",
+        "visualBrief": "The child and dog snuggle together on the bed. The big window shows a gentle sky with pastel clouds. The room glows with calm, bright colors."
+      },
+      {
+        "page": 5,
+        "wordCount": 22,
+        "imagePrompt": "Dimly-lit cozy bedroom scene: Hero tucked under pastel covers, eyes closing, favorite toy nearby on pillow. Dog curled at bed\u2019s foot. Room gently shadowed with blues and purples from the color palette, calming and safe.",
+        "visualBrief": "The hero lies tucked in bed, half-asleep, favorite toy nearby, while dog rests at the bed\u2019s foot. Night has come, bedroom dim and peaceful."
+      },
+      {
+        "page": 6,
+        "wordCount": 20,
+        "imagePrompt": "Picture-book style: Peaceful, empty cozy bedroom in pastel shades. Favorite toy on bed. Soft moonlight through window, casting gentle shadows in #FFB5A7, #F8CD07, #A8E6CF, #DDA0DD, #87CEEB. Utterly calm, inviting sleep.",
+        "visualBrief": "Bedroom empty of people, moonlight casts pastel shadows. The favorite toy rests on the bed, room is very calm and quiet."
+      }
+    ],
+    "sceneLedger": {
+      "scenes": [
+        {
+          "page": 1,
+          "time": "early evening",
+          "props": {
+            "favorite-toy": "hero"
+          },
+          "outfits": {
+            "dog": "animal-natural-coat",
+            "hero": "pajamas"
+          },
+          "characters": [
+            "hero",
+            "dog"
+          ],
+          "locationId": "outside-house",
+          "transition": "The hero and dog are coming inside the house from the soft-lit evening outside."
+        },
+        {
+          "page": 2,
+          "time": "evening",
+          "props": {
+            "favorite-toy": "hero"
+          },
+          "outfits": {
+            "dog": "animal-natural-coat",
+            "hero": "pajamas"
+          },
+          "characters": [
+            "hero",
+            "dog"
+          ],
+          "locationId": "bedroom",
+          "transition": "They walk upstairs to the bedroom, ready for bedtime."
+        },
+        {
+          "page": 3,
+          "time": "evening",
+          "props": {
+            "favorite-toy": "hero"
+          },
+          "outfits": {
+            "dog": "animal-natural-coat",
+            "hero": "pajamas"
+          },
+          "characters": [
+            "hero",
+            "dog"
+          ],
+          "locationId": "bedroom",
+          "transition": "The hero climbs onto the bed, hugging their favorite toy, dog jumps up too."
+        },
+        {
+          "page": 4,
+          "time": "evening",
+          "props": {
+            "favorite-toy": "hero"
+          },
+          "outfits": {
+            "dog": "animal-natural-coat",
+            "hero": "pajamas"
+          },
+          "characters": [
+            "hero",
+            "dog"
+          ],
+          "locationId": "bedroom",
+          "transition": "Soft light shines from the window, filling the room with calm colors as both snuggle together."
+        },
+        {
+          "page": 5,
+          "time": "night",
+          "props": {
+            "favorite-toy": "bedroom"
+          },
+          "outfits": {
+            "dog": "animal-natural-coat"
+          },
+          "characters": [
+            "dog"
+          ],
+          "locationId": "bedroom",
+          "transition": "The hero is tucked under covers, nearly asleep, their favorite toy beside them. Dog rests at the foot of the bed."
+        },
+        {
+          "page": 6,
+          "time": "night",
+          "props": {
+            "favorite-toy": "bedroom"
+          },
+          "outfits": {},
+          "characters": [],
+          "locationId": "bedroom",
+          "transition": "The room is peaceful, quiet, pastel shadows falling softly as everyone sleeps."
+        }
+      ],
+      "outfits": {
+        "pajamas": "The hero wears pastel pajamas with bright color polka dots.",
+        "animal-natural-coat": "Fluffy, friendly dog with a soft tan and white coat."
+      },
+      "locations": {
+        "bedroom": "A child's cozy bedroom in a lovely town, with pastel bedding, a comfy bed, shelves, soft rug, and a big window showing gentle evening skies. The door has a round, pastel-pink knob.",
+        "outside-house": "The small, welcoming house in a lovely town, painted soft blue with a cheery yellow door and window boxes of flowers. The lawn is neat, leading to the house."
+      }
+    }
+  }
+}
