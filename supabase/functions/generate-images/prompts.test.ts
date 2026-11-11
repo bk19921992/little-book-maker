@@ -1,7 +1,7 @@
 // Run with: npm test  (node --test with type stripping; `deno test` also works)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { acceptedReferenceImage, ART_DIRECTION_SKIPPED, artDirectionEnabled, artDirectionOutcome, buildCoverArtDirectionPrompt, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, interpretArtDirectionResponse, interpretReviewResponse, MAX_REFERENCE_IMAGE_CHARS, styleProfile } from './prompts.ts'
+import { acceptedReferenceImage, ART_DIRECTION_SKIPPED, artDirectionEnabled, artDirectionOutcome, buildCoverArtDirectionPrompt, buildBackCoverPrompt, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, pickBackCoverSubject, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, interpretArtDirectionResponse, interpretReviewResponse, MAX_REFERENCE_IMAGE_CHARS, styleProfile } from './prompts.ts'
 
 const config = { children: ['Mia'], characters: ['Owl'], setting: 'woods', imageStyle: 'Watercolour' }
 
@@ -118,24 +118,27 @@ test('review prompt rejects visible text/image mismatches but allows story-led s
   assert.match(prompt, /Sleepwear is fine when the text has the child in sleepwear/)
 })
 
-test('cover prompt keeps the renderer contract: faces low, calm light title space, no text', () => {
+test('cover prompt keeps the v6 renderer contract: full-frame scene, no reserved title space, no text', () => {
   const prompt = buildCoverPrompt('STYLE BIBLE', undefined, false)
-  assert.match(prompt, /LOWER HALF/)
-  assert.match(prompt, /fully below the halfway line/)
-  assert.match(prompt, /TOP HALF is one calm, simple, light-toned area/)
-  assert.match(prompt, /No text, letters, numbers, words, captions or watermarks/)
+  assert.match(prompt, /full-frame, self-contained scene/)
+  assert.match(prompt, /Fill the whole square/)
+  assert.match(prompt, /No reserved empty area/)
+  assert.match(prompt, /runs to all four edges/)
+  assert.match(prompt, /No text, letters, numbers, logos or signature/)
   assert.match(prompt, /STYLE BIBLE \(must match the inside pages exactly\)/)
 })
 
-test('cover prompt carries the cover-design rules: focal point, thirds, depth, colour, thumbnail, trim', () => {
+test('cover prompt carries the v6 cover-design rules: one moment, scale, placement, gaze, light, thumbnail, edges', () => {
   const prompt = buildCoverPrompt('STYLE BIBLE', undefined, false)
-  assert.match(prompt, /unmistakably the focal point/)
-  assert.match(prompt, /Rule of thirds, never dead-centre/)
-  assert.match(prompt, /Eyes lead into the page/)
-  assert.match(prompt, /Depth in three layers/)
+  assert.match(prompt, /ONE moment/)
+  assert.match(prompt, /60-70% of the frame height/)
+  assert.match(prompt, /just above centre/)
+  assert.match(prompt, /one connected silhouette/)
+  assert.match(prompt, /Never towards a frame edge/)
+  assert.match(prompt, /one light source/)
   assert.match(prompt, /strongest accent colour/)
   assert.match(prompt, /THUMBNAIL TEST/)
-  assert.match(prompt, /outer 8%/)
+  assert.match(prompt, /outer 6%/)
 })
 
 test('cover prompt keeps reference-identity rules when a reference exists', () => {
@@ -145,10 +148,10 @@ test('cover prompt keeps reference-identity rules when a reference exists', () =
 })
 
 test('cover review judges the design standard, not just subject matter', () => {
-  assert.match(COVER_REVIEW_LABEL, /main child is the focal point/)
-  assert.match(COVER_REVIEW_BRIEF, /largest and obviously the focal point/)
+  assert.match(COVER_REVIEW_LABEL, /main child is large and the clear focal point/)
+  assert.match(COVER_REVIEW_BRIEF, /full-frame, self-contained scene/)
+  assert.match(COVER_REVIEW_BRIEF, /no blank band or reserved title space/)
   assert.match(COVER_REVIEW_BRIEF, /thumbnail size/)
-  assert.match(COVER_REVIEW_BRIEF, /calm light even-toned top half/)
 })
 
 test('buildCoverArtDirectionPrompt carries the story, the bounded vocabulary and the safety rules', () => {
@@ -292,3 +295,19 @@ test('buildCoverArtDirectionPrompt survives a sparse config', () => {
   assert.ok(p.includes('a gentle adventure'));
   assert.ok(p.includes('ONLY a JSON'));
 });
+
+test('back cover spot art prompt: companion alone, closing beat, centred, no child, no text', () => {
+  const prompt = buildBackCoverPrompt('STYLE BIBLE', undefined, 'Friendly dog', 'the dog asleep by the door', false)
+  assert.match(prompt, /BACK COVER SPOT ILLUSTRATION/)
+  assert.match(prompt, /Friendly dog only/)
+  assert.match(prompt, /main child does NOT appear/)
+  assert.match(prompt, /middle 60% of the frame/)
+  assert.match(prompt, /settled, sleepy or content/)
+  assert.match(prompt, /No text, letters, numbers, logos, borders or frames/)
+})
+
+test('pickBackCoverSubject prefers the first companion, then the setting', () => {
+  assert.equal(pickBackCoverSubject(['Friendly dog'], 'Cozy bedroom'), 'Friendly dog')
+  assert.equal(pickBackCoverSubject([], 'Cozy bedroom'), 'Cozy bedroom')
+  assert.equal(pickBackCoverSubject([], ''), "the story's little world")
+})
