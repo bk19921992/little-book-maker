@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BLEED_MM, containFit, DPI_MINIMUM, dpiCheck, effectiveDpi, MM_TO_PT, PRINT_PROFILE_MARKER, printBoxes, printPlacement } from './printSpec.ts';
+import { BLEED_MM, containFit, COVER_PALETTE_DEFAULT, COVER_PALETTES, DPI_MINIMUM, dpiCheck, effectiveDpi, MM_TO_PT, PRINT_PROFILE_MARKER, printBoxes, printPlacement, resolveCoverPalette } from './printSpec.ts';
 import { pagePoints } from './testFont.ts';
 
 test('print boxes: TrimBox is the finished A5 size inside a 3 mm bleed', () => {
@@ -94,7 +94,7 @@ test('print placement uses the region when the art exceeds 300 dpi natively', ()
 });
 
 test('print profile marker names the current version', () => {
-  assert.equal(PRINT_PROFILE_MARKER, 'story-sprout-print-profile:5');
+  assert.equal(PRINT_PROFILE_MARKER, 'story-sprout-print-profile:6');
 });
 
 test('print placement with the 150 dpi floor upscales to twice the 300 dpi size, never more', () => {
