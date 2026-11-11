@@ -166,7 +166,7 @@ serve(async (req) => {
     // the marker is. Missing or stale marker: the book must be regenerated.
     const keywords = (typeof pdf.getKeywords === 'function' ? pdf.getKeywords() : '') || '';
     // Keep in sync with PRINT_PROFILE_MARKER in export-pdf/printSpec.ts.
-    if (!keywords.includes('story-sprout-print-profile:5')) {
+    if (!keywords.includes('story-sprout-print-profile:6')) {
       return fail(503, "This book's print file predates the current print profile. Regenerate it before ordering - your payment is kept for this book.");
     }
     const first = pdf.getPage(0);
