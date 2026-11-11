@@ -670,16 +670,16 @@ Deno.test({
 });
 
 Deno.test({
-  name: "print dpi QA measures the placed size: 1024px art on 210mm square reports no false region-fit dpi warning",
+  name: "print dpi QA measures the placed size: 1024px art on 210mm square warns at the true enlarged size, never fails",
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
     reset();
-    // Reviewer/owner pass on the real exported book: the split-page branch
-    // measured the REGION fit (~175 dpi false warn) instead of the placed
-    // size (printPlacement caps at native 300 dpi). 1024x1024 art on the
-    // square format prints at a true 300 dpi - the response QA (which only
-    // surfaces non-pass print entries) must carry NO dpi warning/fail.
+    // v5 (11 Nov 2026 owner review asked for larger art): printPlacement
+    // upscales to the 150 dpi floor, so 1024x1024 art now prints LARGER
+    // size. The QA must report the true placed dpi - a warn inside the
+    // acceptable 150-300 band (region- and art-dependent), never a fail and
+    // never the old region-fit false reading.
     const res = await postReviewed({
       config: { ...CONFIG, pageSize: "210×210 mm square" },
       pages: [
@@ -691,9 +691,16 @@ Deno.test({
     });
     assertEquals(res.status, 200);
     const body = await res.json();
-    const dpiProblems = (body.qa as { severity: string; check: string }[]).filter(
+    const dpiEntries = (body.qa as { severity: string; check: string }[]).filter(
       (q) => q.check.toLowerCase().includes("dpi in print") || q.check.toLowerCase().includes("pixelated"),
     );
-    assertEquals(dpiProblems, [], "no false dpi warning/fail for placed-size 300 dpi art");
+    assert(dpiEntries.length >= 2, `cover and story pages report placed dpi: ${JSON.stringify(dpiEntries)}`);
+    for (const q of dpiEntries) {
+      assertEquals(q.severity, "warn", `dpi entry is an acceptable warn, not a fail: ${q.check}`);
+      const m = q.check.match(/(\d+) dpi in print/);
+      assert(m, `dpi entry names the measured dpi: ${q.check}`);
+      const dpi = Number(m[1]);
+      assert(dpi >= 150 && dpi < 300, `measured placed dpi ${dpi} inside the acceptable band: ${q.check}`);
+    }
   },
 });
