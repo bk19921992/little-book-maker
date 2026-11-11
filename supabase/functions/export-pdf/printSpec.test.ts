@@ -1,7 +1,7 @@
 // Run with: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BLEED_MM, containFit, dpiCheck, effectiveDpi, MM_TO_PT, PRINT_PROFILE_MARKER, printBoxes, printPlacement } from './printSpec.ts';
+import { BLEED_MM, containFit, DPI_MINIMUM, dpiCheck, effectiveDpi, MM_TO_PT, PRINT_PROFILE_MARKER, printBoxes, printPlacement } from './printSpec.ts';
 import { pagePoints } from './testFont.ts';
 
 test('print boxes: TrimBox is the finished A5 size inside a 3 mm bleed', () => {
@@ -94,5 +94,30 @@ test('print placement uses the region when the art exceeds 300 dpi natively', ()
 });
 
 test('print profile marker names the current version', () => {
-  assert.equal(PRINT_PROFILE_MARKER, 'story-sprout-print-profile:4');
+  assert.equal(PRINT_PROFILE_MARKER, 'story-sprout-print-profile:5');
+});
+
+test('print placement with the 150 dpi floor upscales to twice the 300 dpi size, never more', () => {
+  // 1024x1024 story art in the 210mm-square print region: native 300 dpi
+  // size is 245.76pt; the 150 dpi floor allows twice that (491.52pt), so a
+  // tall enough region draws the art at exactly the floor.
+  const placed = printPlacement({ width: 538.58, height: 500 }, { width: 1024, height: 1024 }, DPI_MINIMUM);
+  assert.ok(Math.abs(placed.width - 491.52) < 0.01);
+  assert.ok(Math.abs(placed.height - 491.52) < 0.01);
+  assert.equal(effectiveDpi({ width: 1024, height: 1024 }, placed), 150);
+});
+
+test('print placement with the 150 dpi floor still respects the region', () => {
+  // Region shorter than the 150 dpi size: contain-fit wins, dpi lands
+  // between the floor and 300 - the honest measured print quality.
+  const placed = printPlacement({ width: 538.58, height: 386.6 }, { width: 1024, height: 1024 }, DPI_MINIMUM);
+  assert.ok(Math.abs(placed.height - 386.6) < 0.01);
+  const dpi = effectiveDpi({ width: 1024, height: 1024 }, placed);
+  assert.ok(dpi >= DPI_MINIMUM && dpi < 300, `dpi ${dpi} in the acceptable band`);
+});
+
+test('print placement default stays conservative: no upscale without an explicit floor', () => {
+  const placed = printPlacement({ width: 538.58, height: 500 }, { width: 1024, height: 1024 });
+  assert.ok(Math.abs(placed.width - 245.76) < 0.01);
+  assert.equal(effectiveDpi({ width: 1024, height: 1024 }, placed), 300);
 });
