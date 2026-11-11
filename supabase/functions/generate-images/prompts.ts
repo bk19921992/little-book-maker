@@ -273,13 +273,14 @@ export function buildPagePrompt(promptData: ImagePrompt, styleBible: string, sty
   ].filter(Boolean).join('\n')
 }
 
-// The dedicated cover's prompt. The renderer prints the title itself (dark
-// ink on a light paper plate, hard against the top of the page), so the art
-// owes it a calm, light, even-toned top zone with every face in the lower
-// half. Beyond that renderer contract, the rules below apply published
-// children's-cover design guidance: one focal character, rule-of-thirds
-// staging with gazes leading into the page, three-layer depth, an accent
-// colour on the main child, thumbnail-scale readability and trim safety.
+// The dedicated cover's prompt. The print renderer (v6, 11 Nov 2026 design
+// pass) plates the art full-frame inside a white-mounted frame on a flat
+// cover colour, with the title typeset above it - never on the art. So the
+// cover art is a self-contained, full-bleed scene: no reserved title space,
+// no calm empty zone. The rules below follow published children's-cover
+// design guidance for exactly that layout: one large focal moment, a story
+// cue in the upper third, one warm light, thumbnail-scale readability and
+// trim safety.
 export function buildCoverPrompt(styleBible: string, styleAnchor: string, hasReference: boolean): string {
   return [
     hasReference
@@ -292,22 +293,23 @@ export function buildCoverPrompt(styleBible: string, styleAnchor: string, hasRef
     'STYLE BIBLE (must match the inside pages exactly):',
     styleBible,
     '',
-    'COVER COMPOSITION (design a book cover, not just a scene):',
-    '- ONE clear focal moment: the main child, largest and unmistakably the focal point, sharing one warm, story-suggesting moment with the most important supporting character(s). The emotion on their faces is the hook.',
-    '- Rule of thirds, never dead-centre: place the main child near a lower third-line intersection, balanced by the supporting character(s). All faces and action stay in the LOWER HALF, fully below the halfway line.',
-    '- Eyes lead into the page: characters look at each other or up toward the title space - never out past the frame edges.',
-    '- TITLE SPACE: the TOP HALF is one calm, simple, light-toned area (soft sky, gentle wall, quiet treetops) with an even tone edge to edge and NO faces, characters or busy detail - the printed title sits there, so it must stay light, uncluttered and low-contrast.',
-    '- Depth in three layers: a simple foreground anchor (grass, flowers, a path leading in), the characters in the middle, an uncluttered background.',
-    '- Colour discipline: keep the book palette, but give the main child its strongest accent colour so they pop from calmer, harmonious background tones.',
-    '- THUMBNAIL TEST: bold, simple shapes and one strong silhouette - the cover must still read as "one child, one idea" at postage-stamp size. No fine detail that vanishes when shrunk.',
-    '- Edge safety: faces, hands and the key action stay well inside the frame; nothing important in the outer 8% (print trim).',
-    '- No text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
+    'COVER ILLUSTRATION: a full-frame, self-contained scene. It is printed uncropped inside a frame; the title is typeset separately, outside the art.',
+    '- Fill the whole square. No reserved empty area, no blank band of sky or wall, no border, frame, vignette fade or white edges. The painted scene runs to all four edges.',
+    '- ONE moment: the main child with the supporting character(s), in the most appealing situation from the middle of the story, not its first or last page. A promise of the story, not a summary.',
+    '- Scale: characters are large. The main child fills 60-70% of the frame height. Each face is at least one sixth of the frame width.',
+    '- Placement: the child\'s face sits just above centre, slightly left or right of the midline. Supporting characters touch or overlap the child so the group forms one connected silhouette.',
+    '- Gaze: the child looks at the supporting character or straight out at the reader. Never towards a frame edge.',
+    '- Setting: the upper third carries one clear cue for the story type (night window and stars for bedtime, treetops for a forest adventure). Keep it simpler than an interior page: fewer objects, larger shapes, lower contrast.',
+    '- Light: one light source, warm light on faces. Lightest value and strongest accent colour on the main child; background in mid-tones; corners slightly darker.',
+    '- Edges: no faces, hands or important props in the outer 6%. Nothing cut in half by the edge.',
+    '- THUMBNAIL TEST: at 3cm wide the child and the mood still read.',
+    '- No text, letters, numbers, logos or signature anywhere - illustration only.',
     styleAnchor,
   ].filter(Boolean).join('\n')
 }
 
-export const COVER_REVIEW_LABEL = 'the front cover of the book (the top half is intentionally calm title space; the main child is the focal point, low in the frame)'
-export const COVER_REVIEW_BRIEF = 'front cover: one clear focal moment with the main child largest and obviously the focal point, faces and action in the lower half, gazes leading into the page, a calm light even-toned top half for the printed title, and bold simple shapes that would still read at thumbnail size'
+export const COVER_REVIEW_LABEL = 'the front cover of the book (a full-frame scene: the painted art fills the whole square with no reserved title space; the main child is large and the clear focal point)'
+export const COVER_REVIEW_BRIEF = 'front cover: a full-frame, self-contained scene with the painted art running to all four edges (no blank band or reserved title space), one large focal moment with the main child filling most of the frame height, the child\'s face just above centre, gazes into the page or out at the reader, one warm light source, and bold simple shapes that would still read at thumbnail size'
 
 // Retry hygiene: only the LATEST rejection is fed back (stacking notes
 // bloats the prompt and dilutes the scene), and the style lock is repeated
@@ -414,3 +416,42 @@ export function buildCoverArtDirectionPrompt(config: StoryConfig, title: string)
     '- Vary your choices across books: siblings\' books, and different story types, should not all get the same look.',
   ].join('\n')
 }
+
+// ---- Back-cover spot art (v6) ----
+// A small spot image plated on the back cover: the companion or comfort
+// object in a closing beat, WITHOUT the child. The front cover stays the
+// hero, and a second rendition of the child's face risks not matching the
+// front. The subject is chosen deterministically: the first character with
+// a pet/toy/companion entry, otherwise the setting alone.
+export function pickBackCoverSubject(characters: string[], setting?: string): string {
+  const companion = (characters ?? []).map((c) => (c || '').trim()).find(Boolean);
+  if (companion) return companion;
+  const s = (setting || '').trim();
+  return s || 'the story\'s little world';
+}
+
+export function buildBackCoverPrompt(styleBible: string, styleAnchor: string, subject: string, finalPageImagePrompt: string, hasReference: boolean): string {
+  return [
+    hasReference
+      ? "This is the BACK COVER spot illustration of the same children's picture book as the reference image."
+      : "Back cover spot illustration for a personalised children's picture book.",
+    hasReference
+      ? 'Keep the EXACT same characters, style, linework, lighting and colour palette as the reference image.'
+      : '',
+    '',
+    'STYLE BIBLE (must match the inside pages exactly):',
+    styleBible,
+    '',
+    'BACK COVER SPOT ILLUSTRATION: a quiet closing image, plated small on the back cover.',
+    `- Subject: ${subject} only, in a calm end-of-story state taken from the final page: ${finalPageImagePrompt || 'the story\'s gentle final scene'}. The main child does NOT appear.`,
+    '- One subject, centred, wholly inside the middle 60% of the frame, full silhouette visible with space around it.',
+    '- Background: one soft, continuous tone from the last scene (dim bedroom blue, dusk grass), filling the square to every edge. No second character, no clutter, no horizon line through the subject.',
+    '- Mood: settled, sleepy or content. Lower contrast and slightly dimmer than the front cover.',
+    '- Corners are throwaway; the subject stays central.',
+    '- No text, letters, numbers, logos, borders or frames anywhere - illustration only.',
+    styleAnchor,
+  ].filter(Boolean).join('\n')
+}
+
+export const BACK_COVER_REVIEW_LABEL = 'the back cover spot illustration (one companion or object alone in a calm closing beat, centred, on a soft single-tone background; the main child must NOT appear)'
+export const BACK_COVER_REVIEW_BRIEF = 'back cover: one companion or comfort object alone in a settled, end-of-story mood, centred with its full silhouette visible, on a soft single-tone background, matching the style bible, with no text and no sign of the main child'
