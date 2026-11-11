@@ -112,7 +112,7 @@ async function run(plan: Plan = {}) {
       load: async () => ({
         getPage: () => ({ getSize: () => plan.pageSizePt ?? { width: A5_W, height: A5_H } }),
         getPageCount: () => plan.pageCount ?? 24,
-        getKeywords: () => plan.keywords ?? 'story-sprout-print-profile:5',
+        getKeywords: () => plan.keywords ?? 'story-sprout-print-profile:6',
         addPage: () => undefined,
         save: async () => PDF_BYTES,
       }),
@@ -431,7 +431,7 @@ test('a legacy bleed-extended print PDF (15.4 x 21.6 cm) resolves no format: 503
   assert.ok(r.calls.updates.some((u) => u.row.status === 'failed'));
 });
 
-for (const stale of ['story-sprout-print-profile:2', 'story-sprout-print-profile:3', 'story-sprout-print-profile:4']) {
+for (const stale of ['story-sprout-print-profile:2', 'story-sprout-print-profile:3', 'story-sprout-print-profile:4', 'story-sprout-print-profile:5']) {
   test(`a PDF stamped with a stale print-profile marker (${stale}) is refused (must be regenerated), never ordered`, async () => {
     const r = await run({ keywords: stale });
     assert.equal(r.status, 503);
