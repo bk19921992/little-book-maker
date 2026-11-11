@@ -88,20 +88,30 @@ export function exportBlockers<T extends { severity: string; kind?: string }>(qa
 // v4 is the first compliant profile: safe-margin text bounds (cover, folio,
 // back title) were fixed in v8. v3 stamps remain on pre-fix exports, so the
 // order path must refuse them and force regeneration.
-export const PRINT_PROFILE_VERSION = 4;
+// v5 enlarges print art (cover and story pages) up to the 150 dpi floor,
+// answering the 11 Nov 2026 owner review; v4 books keep the small plates,
+// so the order path must refuse them and force regeneration.
+export const PRINT_PROFILE_VERSION = 5;
 export const PRINT_PROFILE_MARKER = `story-sprout-print-profile:${PRINT_PROFILE_VERSION}`;
 
-// Peecho requires 300 dpi. Art is placed at most at its native resolution
-// (pixels * 72 / 300 points): contain-fit inside the safe region, capped so
-// the draw dimensions never exceed the native 300 dpi size - the renderer
-// never upscales.
+// Peecho recommends 300 dpi; 150 dpi is the acceptable floor (dpiCheck
+// warns there, fails below). Art is contain-fit inside the safe region and
+// capped at its native resolution for the given floor (pixels * 72 / minDpi
+// points), so the renderer never upscales past the floor. The default floor
+// is 300 - never upscale. Print layout passes DPI_MINIMUM (150): the owner
+// review on 11 Nov 2026 asked for larger art ("Size of images too"), and
+// enlarging up to the 150-300 dpi band the QA already calls acceptable is
+// the implementation choice that answers it. The drawn size is still
+// derived from the art's real pixels, so the dpi QA keeps measuring the
+// truth.
 export const PRINT_DPI = 300;
 export function printPlacement(
   region: { width: number; height: number },
   pixels: { width: number; height: number },
+  minDpi: number = PRINT_DPI,
 ): { width: number; height: number } {
   const fit = containFit(region, pixels);
-  const native = { width: (pixels.width * 72) / PRINT_DPI, height: (pixels.height * 72) / PRINT_DPI };
+  const native = { width: (pixels.width * 72) / minDpi, height: (pixels.height * 72) / minDpi };
   const scale = Math.min(1, native.width / fit.width, native.height / fit.height);
   return { width: fit.width * scale, height: fit.height * scale };
 }
