@@ -635,17 +635,16 @@ Deno.test({
 });
 
 Deno.test({
-  name: "back cover: a long adversarial title exports through the sanitised, bounded back-cover path",
+  name: "covers: a long adversarial title still exports through the sanitised, bounded cover path",
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
     reset();
-    // Reviewer regression (print v7): the back cover drew the RAW title at
-    // 14pt with only an x clamp, ignoring the 80-char sanitisation and the
-    // 10mm safe margin. The back cover now draws the same sanitised,
-    // normalised titleText as the front cover, fitted inside the safe width
-    // with real font metrics; a bounds breach is a fail-severity QA blocker
-    // (422), so a successful 200 with the sanitisation warning proves both.
+    // Reviewer regression (print v7): the RAW title once reached the PDF
+    // unsanitised and unbounded. The v6 print cover draws the title above
+    // the art on the cover colour; the back cover draws a blurb instead of
+    // a title. A successful 200 with the sanitisation warning and no
+    // back-cover bounds failure proves the bounded path still holds.
     const longTitle =
       "A Wonderful Adventure With Fern And Badger By The Old Oak Tree At The Edge Of The Whispering Woods";
     const res = await postReviewed({
@@ -702,5 +701,40 @@ Deno.test({
       const dpi = Number(m[1]);
       assert(dpi >= 150 && dpi < 300, `measured placed dpi ${dpi} inside the acceptable band: ${q.check}`);
     }
+  },
+});
+
+Deno.test({
+  name: "print v6: title above the framed art on the cover colour; back cover plates a template blurb and sign-off",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    reset();
+    // v6 (11 Nov 2026 owner review: "doesn't look professional enough"):
+    // flat story-type cover colour with the title ABOVE the white-mounted
+    // art, and a real back cover (blurb, sign-off, wordmark) instead of a
+    // bare title. The QA trail must show all of it.
+    const res = await postReviewed({
+      config: { ...CONFIG, pageSize: "210×210 mm square", storyType: "Bedtime", children: ["Amelia"], setting: "Cozy bedroom" },
+      pages: [
+        { page: 1, text: "Fern met Badger by the oak.", imageUrl: "https://images.test/art-1024.jpg" },
+        { page: 2, text: "They shared blackberries till dusk.", imageUrl: "https://images.test/art-1024.jpg" },
+      ],
+      storyId: "story-v6-covers",
+      includeBleed: true,
+    });
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.success, true);
+    const checks = (body.qa as { where: string; severity: string; check: string }[]);
+    const coverChecks = checks.filter((q) => q.where === "cover").map((q) => q.check).join("\n");
+    const backChecks = checks.filter((q) => q.where === "back").map((q) => q.check).join("\n");
+    assert(coverChecks.includes("print cover colour: bedtime palette"), `palette QA present: ${coverChecks}`);
+    assert(coverChecks.includes("print cover title above the art"), `title-above-art QA present: ${coverChecks}`);
+    assert(coverChecks.includes("white mount"), `framed art QA present: ${coverChecks}`);
+    assert(backChecks.includes("blurb"), `blurb QA present: ${backChecks}`);
+    assert(backChecks.includes("sign-off plated"), `sign-off QA present: ${backChecks}`);
+    const fails = checks.filter((q) => q.severity === "fail");
+    assertEquals(fails.length, 0, `no export-blocking QA: ${JSON.stringify(fails)}`);
   },
 });
