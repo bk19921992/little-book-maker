@@ -94,7 +94,7 @@ test('print placement uses the region when the art exceeds 300 dpi natively', ()
 });
 
 test('print profile marker names the current version', () => {
-  assert.equal(PRINT_PROFILE_MARKER, 'story-sprout-print-profile:6');
+  assert.equal(PRINT_PROFILE_MARKER, 'story-sprout-print-profile:7');
 });
 
 test('print placement with the 150 dpi floor upscales to twice the 300 dpi size, never more', () => {
