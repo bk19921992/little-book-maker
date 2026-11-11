@@ -1,0 +1,10 @@
+/* Keep the app's existing warm system while fixing AA contrast and input states. */
+html:root {
+  --primary: 146 30% 27%;
+  --primary-foreground: 45 30% 98%;
+  --muted-foreground: 25 15% 37%;
+  --ring: 146 30% 27%;
+}
+.sprout-app-entry a:focus-visible,.sprout-app-entry button:focus-visible {outline: 3px solid hsl(var(--ring)); outline-offset: 3px;}
+.sprout-app-entry input {min-height: 44px;}
+.sprout-app-entry button {min-height: 44px;}
