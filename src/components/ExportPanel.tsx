@@ -26,6 +26,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { validateAddress, type ShippingAddress } from '../../supabase/functions/create-print-order/print.ts';
 import { saveBook, withDownloadName } from '../lib/savedBooks';
+import { displayTitle, exportErrorMessage } from '../lib/backMatter';
+import { ExportBlockerNotice } from './ExportBlockerNotice';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { continuityReadiness } from '../../supabase/functions/_shared/bookContinuity';
@@ -51,6 +53,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [isCheckingImages, setIsCheckingImages] = useState(false);
   const [imageCheckMessage, setImageCheckMessage] = useState<string | null>(null);
+  // The server's plain-language export refusal, kept on the page (a toast
+  // alone disappears in seconds and reads as a silent dead button).
+  const [exportError, setExportError] = useState<string | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
   const [address, setAddress] = useState<ShippingAddress>({ name: '', email: user?.email || '', line1: '', line2: '', city: '', postcode: '', country: 'GB' });
   const [addressErrors, setAddressErrors] = useState<string[]>([]);
@@ -77,6 +82,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
     if (!continuity.ready) { toast.error('Return to Edit, open Whole-book continuity, check the cover and every page, then save the full review. Any later wording or picture change needs a fresh review.'); return; }
     setIsExporting(true);
+    setExportError(null);
     try {
       const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
 
@@ -89,7 +95,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
 
       toast.success('PDFs generated successfully!');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to generate PDFs';
+      const message = exportErrorMessage(error);
+      setExportError(message);
       toast.error(message);
       console.error('Export error:', error);
     } finally {
@@ -106,6 +113,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     const continuity = await continuityReadiness({...config, pages:config.pages || []}, config.continuityReview);
     if (!continuity.ready) { toast.error('Return to Edit, open Whole-book continuity, check the cover and every page, then save the full review. Any later wording or picture change needs a fresh review.'); return; }
     setImageCheckMessage(null);
+    setExportError(null);
     setIsCheckingImages(true);
     try {
       const { updates, blockMessage } = await recheckUnreviewedImages(api, config);
@@ -192,9 +200,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     document.body.removeChild(link);
   };
 
-  const storyTitle = config.children.length > 0
-    ? `${config.children.join(' and ')}'s ${config.storyType} Story`
-    : `A ${config.storyType} Story`;
+  const storyTitle = displayTitle(config);
 
   const handleCreateAnother = () => {
     onReset();
@@ -280,6 +286,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               <AlertDescription>{imageCheckMessage}</AlertDescription>
             </Alert>
           )}
+
+          {exportError && <ExportBlockerNotice message={exportError} />}
 
           {config.exports?.webPdfUrl && (
             <Alert>

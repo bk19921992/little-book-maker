@@ -28,7 +28,10 @@ export interface CoverStyleChoice {
 
 export interface StoryConfig {
   children: string[];               // may be empty
+  title?: string;                   // validated fixed-form "{Child} and the {thing}" title from story-write
+  blurb?: string;                   // validated back-cover blurb, composed from the current words; cleared by any text edit
   coverImageUrl?: string;             // dedicated cover illustration, when generated
+  backCoverImagePath?: string;        // back-cover spot art (url/data url), reused at 60mm on the title page
   coverImageReview?: 'passed' | 'unreviewed';
   coverStyle?: CoverStyleChoice;      // art-directed cover lettering, when selected
   storyType: string;                // preset or custom
@@ -161,6 +164,7 @@ export interface PlanResponse {
 
 export interface WriteResponse {
   pages: StoryPage[];
+  title?: string;                 // fixed-form book title, when generation + validation produced one
 }
 
 export interface ExportResponse {
