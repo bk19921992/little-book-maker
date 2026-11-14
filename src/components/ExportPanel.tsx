@@ -26,6 +26,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { validateAddress, type ShippingAddress } from '../../supabase/functions/create-print-order/print.ts';
 import { saveBook, withDownloadName } from '../lib/savedBooks';
+import { displayTitle, exportErrorMessage } from '../lib/backMatter';
+import { ExportBlockerNotice } from './ExportBlockerNotice';
 import { createExportOperationLock, routeExistingExport, type ExportOperation } from '../lib/ownedExport';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
@@ -55,6 +57,9 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
   // await, released only by its own token.
   const [isExportBusy, setIsExportBusy] = useState(false);
   const [imageCheckMessage, setImageCheckMessage] = useState<string | null>(null);
+  // The server's plain-language export refusal, kept on the page (a toast
+  // alone disappears in seconds and reads as a silent dead button).
+  const [exportError, setExportError] = useState<string | null>(null);
   // Assigned on EVERY render, so the lock's identity getter always reads the
   // latest user/story - a getter closing over first-render props would freeze
   // the identity forever.
@@ -94,6 +99,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       if (!current()) return;
       if (!continuity.ready) { toast.error('Whole-book continuity review is missing, stale or has unresolved issues. Return to the editor.'); return; }
       setIsExporting(true);
+      setExportError(null);
       const response = await api.exportPDF(config, config.pages, config.storyId, true, config.coverImageUrl);
       if (!current()) return;
       onConfigChange({
@@ -105,7 +111,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
       toast.success('PDFs generated successfully!');
     } catch (error) {
       if (current()) {
-        const message = error instanceof Error ? error.message : 'Failed to generate PDFs';
+        const message = exportErrorMessage(error);
+        setExportError(message);
         toast.error(message);
       }
       console.error('Export error:', error);
@@ -127,6 +134,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     const operation = lock.begin();
     if (!operation) return;
     setIsExportBusy(true);
+    setExportError(null);
     const current = () => lock.isCurrent(operation);
     try {
       // Illustrations the QA reviewer could not check when they were made are
@@ -249,9 +257,7 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
     document.body.removeChild(link);
   };
 
-  const storyTitle = config.children.length > 0
-    ? `${config.children.join(' and ')}'s ${config.storyType} Story`
-    : `A ${config.storyType} Story`;
+  const storyTitle = displayTitle(config);
 
   const handleCreateAnother = () => {
     onReset();
@@ -337,6 +343,8 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
               <AlertDescription>{imageCheckMessage}</AlertDescription>
             </Alert>
           )}
+
+          {exportError && <ExportBlockerNotice message={exportError} />}
 
           {config.exports?.webPdfUrl && (
             <Alert>

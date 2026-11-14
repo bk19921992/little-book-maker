@@ -13,6 +13,7 @@ import { pagesNeedingTextFix, validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
 import { andList, coverFallbackNote, resolveAutoFormat } from '../lib/format';
 import { imageConfig } from '../lib/imageRequest';
+import { writeResultUpdates } from '../lib/backMatter';
 import { applyJobItems, finishedBookConfig, illustrationTracker, runImageJob } from '../lib/imageJob';
 import { CheckoutSheet } from './CheckoutSheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -152,10 +153,10 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         planResponse.outline,
         storyId
       );
-      
-      onConfigChange({
-        pages: writeResponse.pages,
-      });
+      // Persist the fixed-form title story-write composed (or clear a
+      // previous one), and void any blurb: new words are a new back cover.
+      const written = writeResultUpdates(writeResponse);
+      onConfigChange(written);
 
       updateProgress(70);
       setCurrentStep('images');
@@ -187,6 +188,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         styleBible: planResponse.styleBible,
         outline: planResponse.outline,
         pages: writeResponse.pages,
+        title: written.title,
+        blurb: written.blurb,
       };
       // Text that still breaks the text contract is a draft, not a basis for
       // paid illustrations: the customer must fix the wording first, and
