@@ -8,6 +8,7 @@ import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
 import { castDetailLines, speciesRule } from "./castText.ts"
 import { contractViolations, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
+import { buildTitlePrompt, validateTitle } from "../_shared/title.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -114,6 +115,9 @@ Important Instructions:
 - ${speciesRule(config)}
 - Incorporate ALL personal details where appropriate and natural
 - Keep within the target word count (self-check)
+- Write in FULL sentences with articles (a, the) - never telegraphic fragments like "Dotty PJs feel soft and light"
+- At most two sentences per page
+- Say something the picture cannot show: what the character thinks, hears, feels or wants - do not just describe what is plainly visible
 - Make the text engaging and age-appropriate
 - No page numbers, titles, or extra formatting
 - The text should flow naturally with the overall story arc
@@ -220,12 +224,47 @@ Important Instructions:
 
     // Revisions may run in parallel only after the single whole-book draft.
     const completedPages = await Promise.all(pagePromises)
-    
+
     // Sort pages by page number to ensure correct order
     pages.push(...completedPages.sort((a, b) => a.page - b.page))
 
+    // Book title (14 Nov 2026 review): composed in the fixed "{Child} and
+    // the {concrete thing}" form from the opening pages, validated, one
+    // retry with the rejection reason - the same loop as the blurb. A
+    // failure never blocks the book: export falls back to its own title.
+    let title: string | undefined
+    const openingText = pages.slice(0, 2).map((pg: { text: string }) => pg.text).join('\n')
+    if (openingText.trim()) {
+      const childName = Array.isArray(config.children) ? config.children[0] : undefined
+      const storyText = pages.map((pg: { text: string }) => pg.text).join('\n')
+      const titleBase = buildTitlePrompt({ childName, storyType: config.storyType, openingText })
+      let rejectReason = ''
+      for (let attempt = 1; attempt <= 2 && !title; attempt++) {
+        try {
+          const titleResp = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'gpt-4.1',
+              messages: [{ role: 'user', content: titleBase + (rejectReason ? `\n\nThe previous attempt was rejected: ${rejectReason}. Fix exactly that.` : '') }],
+              max_completion_tokens: 60,
+            }),
+            signal: AbortSignal.timeout(30000),
+          })
+          const titleBody = await titleResp.json().catch(() => null) as { choices?: { message?: { content?: string } }[] } | null
+          const candidate = (titleBody?.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '')
+          const verdict = validateTitle(candidate, childName, storyText)
+          if (titleResp.ok && verdict.ok) title = candidate
+          else rejectReason = titleResp.ok ? verdict.reasons.join('; ') : `API status ${titleResp.status}`
+        } catch (titleError) {
+          rejectReason = titleError instanceof Error ? titleError.message : String(titleError)
+        }
+      }
+      if (!title) console.warn('Title generation/validation failed; export falls back to its own title')
+    }
+
     return new Response(
-      JSON.stringify({ pages }),
+      JSON.stringify({ pages, ...(title ? { title } : {}) }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }

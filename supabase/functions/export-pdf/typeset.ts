@@ -1,6 +1,8 @@
 // Pure verse typesetting for export-pdf. Kept free of remote imports so it
 // can be unit tested (typeset.test.ts) with real font metrics.
 
+import { splitTitleAndThe } from '../_shared/title.ts';
+
 // Only the font method the typesetter needs (pdf-lib's PDFFont satisfies it).
 export interface MeasuringFont {
   widthOfTextAtSize(text: string, size: number): number;
@@ -293,6 +295,16 @@ export function fitTitle(
   startSize: number,
   floorSize: number,
 ): { size: number; lines: string[]; belowReadable: boolean } {
+  // The "{Child} and the {thing}" form always breaks before "and the" -
+  // never one line, never mid-phrase (14 Nov 2026 book-quality review).
+  const forced = splitTitleAndThe(title);
+  if (forced) {
+    const HARD_MIN_FORCED = 8;
+    let size = Math.round(startSize);
+    const widest = () => Math.max(...forced.map((l) => font.widthOfTextAtSize(l, size)));
+    while (size > HARD_MIN_FORCED && widest() > maxWidth) size--;
+    return { size, lines: [...forced], belowReadable: size < TITLE_READABLE_MIN };
+  }
   let size = Math.round(startSize);
   const floor = Math.round(floorSize);
   while (size > floor && font.widthOfTextAtSize(title, size) > maxWidth) size--;
@@ -354,6 +366,15 @@ export function fitCoverTitle(
   startSize: number,
   floorSize: number,
 ): { size: number; lines: string[]; belowReadable: boolean } {
+  // Same fixed-form rule as fitTitle, with the cover's per-letter measure.
+  const forced = splitTitleAndThe(title);
+  if (forced) {
+    const HARD_MIN_FORCED = 8;
+    let size = Math.round(startSize);
+    const widest = () => Math.max(...forced.map((l) => coverLineMeasure(l, font, size)));
+    while (size > HARD_MIN_FORCED && widest() > maxWidth) size--;
+    return { size, lines: [...forced], belowReadable: size < TITLE_READABLE_MIN };
+  }
   let size = Math.round(startSize);
   const floor = Math.round(floorSize);
   while (size > floor && coverLineMeasure(title, font, size) > maxWidth) size--;

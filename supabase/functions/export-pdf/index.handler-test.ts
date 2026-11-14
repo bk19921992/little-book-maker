@@ -385,7 +385,9 @@ Deno.test({
     // dedication wrapped) and the fit is acknowledged in QA - never
     // silently drawn past the measure, never truncated.
     const checks = (body.qa as { severity: string; check: string }[]).map((q) => `${q.severity}: ${q.check}`);
-    const flagged = checks.filter((c) => c.includes("story type") || c.includes("subtitle") || c.includes("dedication"));
+    // Only the fitted sub-text entries: the print palette QA interpolates
+    // the story type name itself, which is not a sub-text fit finding.
+    const flagged = checks.filter((c) => c.includes("fitted") && (c.includes("story type") || c.includes("subtitle") || c.includes("dedication")));
     assert(flagged.length > 0, `long sub-text acknowledged in QA: ${JSON.stringify(checks)}`);
     assert(flagged.every((c) => c.startsWith("pass")), `fitted sub-text is acknowledged, not warned: ${JSON.stringify(flagged)}`);
     assert(flagged.every((c) => c.includes("every word preserved")), `no truncation: ${JSON.stringify(flagged)}`);

@@ -319,3 +319,21 @@ test('fitCoverSubtext keeps a fitting line untouched at full size', () => {
   const fit = fitCoverSubtext('A trip to the seaside story', font, 400, 14, 12);
   assert.deepEqual(fit, { lines: ['A trip to the seaside story'], size: 14, fits: true });
 });
+
+test('fixed-form title: always breaks before "and the", even when it fits on one line', () => {
+  const fit = fitCoverTitle('Amelia and the Blue Bear', font, 400, 30, 14);
+  assert.deepEqual(fit.lines, ['Amelia', 'and the Blue Bear']);
+});
+
+test('fixed-form title: shrinks until both forced lines fit, never wrapping mid-phrase', () => {
+  const fit = fitCoverTitle('Amelia and the Extraordinarily Long Bear', font, 200, 30, 14);
+  assert.deepEqual(fit.lines, ['Amelia', 'and the Extraordinarily Long Bear']);
+  for (const line of fit.lines) {
+    assert.ok(coverLineMeasure(line, font, fit.size) <= 200, `${line} fits at ${fit.size}pt`);
+  }
+});
+
+test('fixed-form title: other shapes stay on the normal fit-and-wrap path', () => {
+  const fit = fitCoverTitle("Amelia's Story", font, 400, 30, 14);
+  assert.deepEqual(fit.lines, ["Amelia's Story"]);
+});

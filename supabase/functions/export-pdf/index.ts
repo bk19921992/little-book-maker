@@ -1,15 +1,16 @@
 import { continuityReadiness } from '../_shared/bookContinuity.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { degrees, PDFDocument, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
-import type { PDFFont } from "https://esm.sh/pdf-lib@1.17.1";
+import { appendBezierCurve, clip, closePath, degrees, endPath, lineTo, moveTo, PDFDocument, popGraphicsState, pushGraphicsState, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
+import type { PDFFont, PDFImage, PDFPage } from "https://esm.sh/pdf-lib@1.17.1";
 import * as fontkit from "https://esm.sh/@pdf-lib/fontkit@1.1.1";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
-import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN, wrapToMeasure } from "./typeset.ts";
+import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN, typesetVerse, wrapToMeasure } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
 import { containFit, coverFullBleedOk, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
 import { blurbSignOff, fallbackBlurb, validateBlurb } from "../_shared/blurb.ts";
+import { validateTitle } from "../_shared/title.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
 
 const PAGE_SIZES = {
@@ -204,6 +205,36 @@ async function embedAny(pdfDoc: PDFDocument, imageData: { bytes: Uint8Array; mim
   return await pdfDoc.embedJpg(imageData.bytes);
 }
 
+// Inside-page art gets 4mm rounded corners (14 Nov 2026 review): square
+// edges read as a screenshot on paper. pdf-lib has no high-level clip, so
+// the rounded rectangle is emitted as path operators around the draw.
+function drawRoundedImage(page: PDFPage, img: PDFImage, x: number, y: number, w: number, h: number, r: number) {
+  const k = 0.5522847498; // bezier approximation of a circular arc
+  const rr = Math.min(r, w / 2, h / 2);
+  page.pushOperators(
+    pushGraphicsState(),
+    moveTo(x + rr, y),
+    lineTo(x + w - rr, y),
+    appendBezierCurve(x + w - rr + k * rr, y, x + w, y + rr - k * rr, x + w, y + rr),
+    lineTo(x + w, y + h - rr),
+    appendBezierCurve(x + w, y + h - rr + k * rr, x + w - rr + k * rr, y + h, x + w - rr, y + h),
+    lineTo(x + rr, y + h),
+    appendBezierCurve(x + rr - k * rr, y + h, x, y + h - rr + k * rr, x, y + h - rr),
+    lineTo(x, y + rr),
+    appendBezierCurve(x, y + rr - k * rr, x + rr - k * rr, y, x + rr, y),
+    closePath(),
+    clip(),
+    endPath(),
+  );
+  page.drawImage(img, { x, y, width: w, height: h });
+  page.pushOperators(popGraphicsState());
+}
+
+// Endpaper motifs, centred on the origin so drawSvgPath's x/y places them.
+const STAR_PATH = 'M0,-10 L2.9,-3.1 L9.5,-3.1 L4.5,1.2 L5.9,8.1 L0,4 L-5.9,8.1 L-4.5,1.2 L-9.5,-3.1 L-2.9,-3.1 Z';
+const LEAF_PATH = 'M0,-9 C6,-7 9,-1 6,4 C3,9 -3,9 -6,4 C-9,-1 -6,-7 0,-9 Z';
+const LEAF_VEIN_PATH = 'M0,-7 L0,7';
+
 async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
   const pdfDoc = await PDFDocument.create();
   // Print PDFs carry the profile marker the order path requires; web PDFs
@@ -307,6 +338,21 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   const titleText = normaliseTypography(coverTitle(config));
   const subtitleText = normaliseTypography(coverSubtitle(config.storyType));
   const dedicationText = config.personal?.dedication ? normaliseTypography(config.personal.dedication) : '';
+  // The byline rides the print cover (under the art), the title page and
+  // (via the sign-off) the back cover. 12pt minimum since the 14 Nov 2026
+  // review: 11pt cream-on-navy was too fine and could fill in on press.
+  const storyTypeLower = (config.storyType || '').trim().toLowerCase();
+  const bylineText = coverChildName && storyTypeLower
+    ? `A ${storyTypeLower} story for ${coverChildName}`
+    : (coverChildName ? `A story for ${coverChildName}` : subtitleText);
+  // A configured title that would fail the generation-time title checks
+  // still prints (the family's words are theirs), but the QA trail says so.
+  if (sanitised.text) {
+    const titleVerdict = validateTitle(sanitised.text, coverChildName || undefined, pages.map((p) => p.text || '').join('\n'));
+    if (!titleVerdict.ok) {
+      qa.push({ where: 'cover', severity: 'warn', check: `configured title fails the title-quality checks (${titleVerdict.reasons.join('; ')}); it prints as configured - regenerate the title to fix` });
+    }
+  }
 
   // Display-sized title fitted to the measure: shrink toward the floor, then
   // wrap to two balanced lines, then keep shrinking until every line fits -
@@ -455,35 +501,36 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // 'straight' keeps whole-line kerning when no accent is used; bounce/arc
   // (or an accent colour) draw per letter from the shared layout, with the
   // ampersand and final word in the accent ink.
-  const drawCoverTitle = (firstBaseline: number) => {
+  const drawLetteredTitle = (target: PDFPage, lines: string[], size: number, firstBaseline: number, ink: ReturnType<typeof rgb>, accent: ReturnType<typeof rgb>) => {
     const perLetter = coverStyle.treatment !== 'straight' || coverStyle.accentColor !== coverStyle.titleColor;
+    const layout = layoutCoverTitle(lines, coverFonts.display, size, coverStyle.treatment, pageWidth / 2, firstBaseline, size * 1.15);
     if (!perLetter) {
       let baseline = firstBaseline;
-      titleLines.forEach((line, i) => {
-        coverPage.drawText(line, {
-          x: (pageWidth - titleLineWidths[i]) / 2,
+      lines.forEach((line, i) => {
+        target.drawText(line, {
+          x: (pageWidth - layout.lineWidths[i]) / 2,
           y: baseline,
-          size: titleSize,
+          size,
           font: coverFonts.display,
-          color: titleInk,
+          color: ink,
         });
-        baseline -= titleSize * 1.15;
+        baseline -= size * 1.15;
       });
       return;
     }
-    const layout = layoutCoverTitle(titleLines, coverFonts.display, titleSize, coverStyle.treatment, pageWidth / 2, firstBaseline, titleSize * 1.15);
     for (const p of layout.placements) {
       if (p.ch === ' ') continue;
-      coverPage.drawText(p.ch, {
+      target.drawText(p.ch, {
         x: p.x,
         y: p.y,
-        size: titleSize,
+        size,
         font: coverFonts.display,
-        color: isAccentChar(titleLines, p.line, p.col) ? accentInk : titleInk,
+        color: isAccentChar(lines, p.line, p.col) ? accent : ink,
         rotate: degrees(p.rotateDeg),
       });
     }
   };
+  const drawCoverTitle = (firstBaseline: number) => drawLetteredTitle(coverPage, titleLines, titleSize, firstBaseline, titleInk, accentInk);
 
   if (fullBleedCover) {
     // The title always sits on a right-sized paper plate. Ink directly on
@@ -552,12 +599,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       check: `print cover title above the art (${titleLines.length} line(s) at ${titleSize}pt) on the cover colour`,
     });
     // Byline under the art: the story type, personalised when the child's
-    // name is known ("A bedtime story for Amelia"), 11pt at 194mm.
-    const storyTypeLower = (config.storyType || '').trim().toLowerCase();
-    const bylineText = coverChildName && storyTypeLower
-      ? `A ${storyTypeLower} story for ${coverChildName}`
-      : (coverChildName ? `A story for ${coverChildName}` : subtitleText);
-    const bylineFit = fitSubtext(bylineText, Math.max(9, Math.round(11 * coverScale)), 9, 2, 'byline', 'shorten the story type');
+    // name is known ("A bedtime story for Amelia"), 12pt at 194mm.
+    const bylineFit = fitSubtext(bylineText, Math.max(10, Math.round(12 * coverScale)), 10, 2, 'byline', 'shorten the story type');
     const bylineBaseline = pageHeight - cv(dedicationText ? 186 : 194);
     bylineFit.lines.forEach((line, i) => {
       const w = coverFonts.text.widthOfTextAtSize(line, bylineFit.size);
@@ -621,11 +664,207 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     }
   }
 
+  // ---- Front matter (14 Nov 2026 book-quality review) ----
+  // A book that opens straight into the story reads home-made: a title
+  // page and a "belongs to" page, both typeset in code - no image
+  // generation. Web and print alike; print additionally pads with
+  // endpapers before the back cover. The back-cover spot art is fetched
+  // once here and reused on the title page and the back cover.
+  const spotArtData = backCoverImage ? await fetchImageBytes(backCoverImage) : null;
+  let spotImg: PDFImage | null = null;
+  if (spotArtData) {
+    try {
+      spotImg = await embedAny(pdfDoc, spotArtData);
+    } catch (spotError) {
+      console.error('Failed to embed spot art', spotError);
+    }
+  }
+
+  // Title page: the title at 30pt, the spot art reused at 60mm, the
+  // byline beneath.
+  {
+    const tp = pdfDoc.addPage([pageWidth, pageHeight]);
+    markPrintBoxes(tp);
+    tp.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    const tpFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(30 * coverScale)), Math.round(pageWidth * 0.05));
+    if (tpFit.belowReadable) {
+      qa.push({ where: 'title page', severity: 'fail', check: `title page title fitted at ${tpFit.size}pt, below the readable threshold; shorten the title` });
+    }
+    drawLetteredTitle(tp, tpFit.lines, tpFit.size, pageHeight - cv(56), rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
+    if (spotImg) {
+      const side = cv(60);
+      const spotFit = containFit({ width: side, height: side }, { width: spotImg.width, height: spotImg.height });
+      const spotPlaced = includeBleed ? printPlacement({ width: side, height: side }, { width: spotImg.width, height: spotImg.height }, DPI_MINIMUM) : { width: spotFit.width, height: spotFit.height };
+      tp.drawImage(spotImg, {
+        x: (pageWidth - side) / 2 + spotFit.x + (spotFit.width - spotPlaced.width) / 2,
+        y: pageHeight - cv(96) - side + spotFit.y + (spotFit.height - spotPlaced.height) / 2,
+        width: spotPlaced.width,
+        height: spotPlaced.height,
+      });
+      if (includeBleed) qa.push(dpiCheck('title page', effectiveDpi(spotImg, { width: spotPlaced.width, height: spotPlaced.height })));
+      qa.push({ where: 'title page', severity: 'pass', check: 'title page: title at 30pt, back-cover spot art reused at 60mm, byline beneath' });
+    } else {
+      qa.push({ where: 'title page', severity: 'pass', check: 'title page: title and byline (no spot art available)' });
+    }
+    if (bylineText) {
+      const tpBySize = Math.max(10, Math.round(12 * coverScale));
+      const tpByFit = fitCoverSubtext(bylineText, coverFonts.text, pageWidth * TEXT_MEASURE, tpBySize, Math.max(9, Math.round(10 * coverScale)), 2);
+      if (!tpByFit.fits) {
+        qa.push({ where: 'title page', severity: 'fail', check: 'title page byline cannot fit at a readable size; shorten the story type' });
+      }
+      const byBaseline = pageHeight - cv(spotImg ? 172 : 120);
+      tpByFit.lines.forEach((line, i) => {
+        const w = coverFonts.text.widthOfTextAtSize(line, tpByFit.size);
+        tp.drawText(line, { x: (pageWidth - w) / 2, y: byBaseline - i * tpByFit.size * 1.3, size: tpByFit.size, font: coverFonts.text, color: INK });
+      });
+    }
+  }
+
+  // Dedication page: "This book belongs to" with the child's name at
+  // 24pt (or a write-in line when no name is on record), the family's own
+  // message when one was collected, and the imprint at 7pt at the foot.
+  {
+    const dp = pdfDoc.addPage([pageWidth, pageHeight]);
+    markPrintBoxes(dp);
+    dp.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    const belongsSize = Math.max(12, Math.round(15 * coverScale));
+    const belongs = 'This book belongs to';
+    let w = fonts.text.widthOfTextAtSize(belongs, belongsSize);
+    dp.drawText(belongs, { x: (pageWidth - w) / 2, y: pageHeight - cv(88), size: belongsSize, font: fonts.text, color: INK });
+    if (coverChildName) {
+      const nameSize = Math.max(16, Math.round(24 * coverScale));
+      const nameFit = fitCoverSubtext(coverChildName, coverFonts.display, pageWidth * TEXT_MEASURE, nameSize, Math.max(12, Math.round(14 * coverScale)), 1);
+      if (!nameFit.fits) {
+        qa.push({ where: 'dedication', severity: 'fail', check: "the child's name cannot fit the dedication page at a readable size" });
+      }
+      w = coverFonts.display.widthOfTextAtSize(coverChildName, nameFit.size);
+      dp.drawText(coverChildName, { x: (pageWidth - w) / 2, y: pageHeight - cv(102), size: nameFit.size, font: coverFonts.display, color: INK });
+    } else {
+      // A ruled line the family writes the name on, as in a bookshop book.
+      dp.drawLine({ start: { x: cv(60), y: pageHeight - cv(100) }, end: { x: pageWidth - cv(60), y: pageHeight - cv(100) }, thickness: 0.6, color: INK, opacity: 0.5 });
+    }
+    if (dedicationText) {
+      // The family's message is preserved whole: it wraps up to 6 lines,
+      // shrinking to a 9pt floor before it can ever be called unprintable.
+      const msgFit = fitCoverSubtext(dedicationText, fonts.text, pageWidth * TEXT_MEASURE, Math.max(10, Math.round(12 * coverScale)), Math.max(9, Math.round(9 * coverScale)), 6);
+      if (!msgFit.fits) {
+        qa.push({ where: 'dedication', severity: 'fail', check: 'the dedication cannot fit the dedication page at a readable size; shorten the dedication' });
+      } else {
+        qa.push({ where: 'dedication', severity: 'pass', check: `dedication message fitted at ${msgFit.size}pt${msgFit.lines.length > 1 ? `, wrapped to ${msgFit.lines.length} lines` : ''} - every word preserved` });
+      }
+      msgFit.lines.forEach((line, i) => {
+        const lw = fonts.text.widthOfTextAtSize(line, msgFit.size);
+        dp.drawText(line, { x: (pageWidth - lw) / 2, y: pageHeight - cv(122) - i * msgFit.size * 1.4, size: msgFit.size, font: fonts.text, color: INK });
+      });
+    }
+    const imprintSize = Math.max(6, Math.round(7 * coverScale));
+    const imprint = `Printed on demand \u00B7 ${new Date().getUTCFullYear()}`;
+    w = fonts.text.widthOfTextAtSize(imprint, imprintSize);
+    dp.drawText(imprint, { x: (pageWidth - w) / 2, y: pageHeight - cv(200), size: imprintSize, font: fonts.text, color: INK, opacity: 0.7 });
+    qa.push({ where: 'dedication', severity: 'pass', check: `"This book belongs to" page typeset${coverChildName ? ` for ${coverChildName}` : ' with a write-in line'}` });
+  }
+
   // ---- Story pages ----
   for (const page of pages) {
     const storyPage = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(storyPage);
     storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+
+    if (includeBleed) {
+      // ---- Print story page (v8, 14 Nov 2026 book-quality review) ----
+      // Fixed composition replacing the paper band: the art in a 140x140mm
+      // window (x 35-175, y 14-154) with 4mm rounded corners, the text
+      // centred under it at 15pt on 21pt leading (four lines at most,
+      // first baseline 166mm), the folio centred at 8pt, baseline 203mm.
+      const rawText = page.text || '';
+      let imagePlaced = false;
+      if (!page.imageLocked && page.imageUrl) {
+        const imageData = await fetchImageBytes(page.imageUrl);
+        if (imageData) {
+          try {
+            const embeddedImage = await embedAny(pdfDoc, imageData);
+            const box = { width: cv(140), height: cv(140) };
+            const pixels = { width: embeddedImage.width, height: embeddedImage.height };
+            // The whole illustration shows inside the window (contain-fit,
+            // nothing cropped), upscaled only to the 150 dpi floor.
+            const fit = containFit(box, pixels);
+            const placed = printPlacement(box, pixels, DPI_MINIMUM);
+            drawRoundedImage(
+              storyPage,
+              embeddedImage,
+              cv(35) + fit.x + (fit.width - placed.width) / 2,
+              pageHeight - cv(154) + fit.y + (fit.height - placed.height) / 2,
+              placed.width,
+              placed.height,
+              cv(4),
+            );
+            imagePlaced = true;
+            qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: placed.width, height: placed.height })));
+          } catch (imageError) {
+            console.error('Failed to embed image in PDF:', imageError);
+          }
+        }
+      }
+      qa.push({
+        where: `page ${page.page}`,
+        severity: imagePlaced ? 'pass' : page.imageLocked ? 'pass' : 'fail',
+        check: imagePlaced
+          ? 'illustration placed (140mm window, 4mm rounded corners)'
+          : page.imageLocked
+            ? 'illustration intentionally omitted'
+            : 'illustration MISSING',
+      });
+      if (!imagePlaced && !page.imageLocked) {
+        const phX = cv(35);
+        const phW = cv(140);
+        const phY = pageHeight - cv(154) + cv(28);
+        const phH = cv(84);
+        storyPage.drawRectangle({ x: phX, y: phY, width: phW, height: phH, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 1 });
+        const placeholderText = 'Illustration pending';
+        const phTextWidth = fonts.text.widthOfTextAtSize(placeholderText, 12);
+        storyPage.drawText(placeholderText, {
+          x: phX + (phW - phTextWidth) / 2,
+          y: phY + phH / 2 - 6,
+          size: 12,
+          font: fonts.text,
+          color: rgb(0.6, 0.6, 0.6),
+        });
+      }
+
+      const printFontSize = Math.max(11, Math.round(15 * coverScale));
+      const printLeading = Math.max(15, Math.round(21 * coverScale));
+      const printMeasure = pageWidth - safeInset * 2;
+      const printLines = rawText.trim() ? typesetVerse(rawText, fonts.text, printFontSize, printMeasure) : [];
+      if (printLines.length > 4) {
+        qa.push({ where: `page ${page.page}`, severity: 'fail', check: `page typesets to ${printLines.length} lines at ${printFontSize}pt (cap 4); shorten the copy upstream` });
+      }
+      printLines.slice(0, 4).forEach((line, i) => {
+        const w = fonts.text.widthOfTextAtSize(line.text, printFontSize);
+        storyPage.drawText(line.text, {
+          x: (pageWidth - w) / 2,
+          y: pageHeight - cv(166) - i * printLeading,
+          size: printFontSize,
+          font: fonts.text,
+          color: INK,
+        });
+      });
+      if (printLines.length) {
+        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `text centred under the art: ${Math.min(printLines.length, 4)} line(s) at ${printFontSize}pt on ${printLeading}pt leading` });
+      }
+
+      const folio = `${page.page}`;
+      const folioSize = Math.max(7, Math.round(8 * coverScale));
+      const folioWidth = fonts.text.widthOfTextAtSize(folio, folioSize);
+      storyPage.drawText(folio, {
+        x: (pageWidth - folioWidth) / 2,
+        y: pageHeight - cv(203),
+        size: folioSize,
+        font: fonts.text,
+        color: INK,
+        opacity: 0.6,
+      });
+      continue;
+    }
 
     const overlay = config.pageLayout === 'overlay';
     const rawText = page.text || '';
@@ -792,6 +1031,63 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     });
   }
 
+  // ---- Closing page (14 Nov 2026 review): "The End" at 24pt, nothing else ----
+  {
+    const ep = pdfDoc.addPage([pageWidth, pageHeight]);
+    markPrintBoxes(ep);
+    ep.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    const endSize = Math.max(16, Math.round(24 * coverScale));
+    const endText = 'The End';
+    const w = coverFonts.display.widthOfTextAtSize(endText, endSize);
+    ep.drawText(endText, { x: (pageWidth - w) / 2, y: pageHeight - cv(108), size: endSize, font: coverFonts.display, color: INK });
+    qa.push({ where: 'back matter', severity: 'pass', check: 'closing page: "The End" at 24pt, nothing else' });
+  }
+
+  // Pad to a multiple of four pages with endpapers, not blanks (print
+  // only): a vector motif per story type repeated in the cover colour at
+  // a 10% tint. It costs no image generation and is the detail people
+  // associate with a bookshop picture book.
+  if (includeBleed) {
+    const paperRgb = { r: 1, g: 0.976, b: 0.941 };
+    const tint = rgb(
+      0.1 * paletteBg.red + 0.9 * paperRgb.r,
+      0.1 * paletteBg.green + 0.9 * paperRgb.g,
+      0.1 * paletteBg.blue + 0.9 * paperRgb.b,
+    );
+    const t = (config.storyType || '').trim().toLowerCase();
+    const motif = t.includes('bedtime') ? 'stars' : (t.includes('forest') || t.includes('woodland') || t.includes('adventure')) ? 'leaves' : 'dots';
+    const totalWithBack = pdfDoc.getPageCount() + 1;
+    const padCount = (4 - (totalWithBack % 4)) % 4;
+    for (let i = 0; i < padCount; i++) {
+      const ep = pdfDoc.addPage([pageWidth, pageHeight]);
+      markPrintBoxes(ep);
+      ep.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+      const spacing = cv(24);
+      const size = cv(6);
+      let row = 0;
+      for (let y = pageHeight - spacing; y > 0; y -= spacing, row++) {
+        const xoff = (row % 2) * (spacing / 2);
+        for (let x = spacing / 2 + xoff; x < pageWidth; x += spacing) {
+          if (motif === 'stars') {
+            ep.drawSvgPath(STAR_PATH, { x, y, scale: size / 10, color: tint });
+          } else if (motif === 'leaves') {
+            ep.drawSvgPath(LEAF_PATH, { x, y, scale: size / 10, color: tint });
+            ep.drawSvgPath(LEAF_VEIN_PATH, { x, y, scale: size / 10, borderColor: tint, borderWidth: 0.5 });
+          } else {
+            ep.drawEllipse({ x, y, xScale: size * 0.32, yScale: size * 0.32, color: tint });
+          }
+        }
+      }
+    }
+    qa.push({
+      where: 'back matter',
+      severity: 'pass',
+      check: padCount
+        ? `padded to a multiple of four with ${padCount} endpaper page(s) (${motif} at 10% cover tint)`
+        : 'page count already a multiple of four; no endpaper padding needed',
+    });
+  }
+
   // ---- Back cover (print only) ----
   // Peecho softcover spec (support.peecho.com 19731377793564, 10 Nov 2026):
   // one PDF containing front cover, content and back cover as single pages
@@ -862,10 +1158,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     // mount centred at 126mm from the top. Optional until the generation
     // wiring lands; the cover works with blurb alone.
     if (backCoverImage) {
-      const backArtData = await fetchImageBytes(backCoverImage);
-      if (backArtData) {
+      if (spotImg) {
         try {
-          const backImg = await embedAny(pdfDoc, backArtData);
+          const backImg = spotImg;
           const spotPt = cv(70);
           const spotX = (pageWidth - spotPt) / 2;
           const spotY = pageHeight - cv(126) - spotPt / 2;
@@ -882,8 +1177,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
           qa.push({ where: 'back', severity: 'pass', check: 'back cover spot illustration plated in a white mount, uncropped' });
           qa.push(dpiCheck('back', effectiveDpi(backImg, { width: spotPlaced.width, height: spotPlaced.height })));
         } catch (backArtError) {
-          console.error('Failed to embed back cover spot art', backArtError);
-          qa.push({ where: 'back', severity: 'warn', check: 'back cover spot illustration failed to embed; blurb-only back cover' });
+          console.error('Failed to plate back cover spot art', backArtError);
+          qa.push({ where: 'back', severity: 'warn', check: 'back cover spot illustration failed to plate; blurb-only back cover' });
         }
       } else {
         qa.push({ where: 'back', severity: 'warn', check: 'back cover spot illustration could not be read; blurb-only back cover' });
@@ -897,7 +1192,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     // cover (customer decision, 11 Nov 2026).
     const signOff = blurbSignOff(config.storyType, coverChildName || undefined);
     if (signOff) {
-      const signOffSize = Math.max(9, Math.round(11 * coverScale));
+      const signOffSize = Math.max(10, Math.round(12 * coverScale));
       const w = fonts.text.widthOfTextAtSize(signOff, signOffSize);
       backPage.drawText(signOff, { x: (pageWidth - w) / 2, y: pageHeight - cv(174), size: signOffSize, font: fonts.text, color: paletteInk });
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off plated' });
@@ -906,7 +1201,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     }
   }
 
-  return { bytes: await pdfDoc.save(), qa };
+  return { bytes: await pdfDoc.save(), qa, pageCount: pdfDoc.getPageCount() };
 }
 
 // Customer-plain summary of why the export gate refused a book. The detailed
@@ -976,12 +1271,13 @@ serve(async (req) => {
     }
 
     // Generate both web and print PDFs
-    const web = await createPDF(config, pages, false, coverImage);
+    const web = await createPDF(config, pages, false, coverImage, backCoverImage);
     const print = await createPDF(config, pages, true, coverImage, backCoverImage);
-    // Web and print runs raise the same cover/text findings; keep one copy
-    // of each so a refusal names a problem once, not twice.
+    // Web and print runs raise many of the same findings; drop exact
+    // duplicates but keep distinct print passes (print cover, front matter,
+    // back cover) so the QA trail shows how the press pages were typeset.
     const seenQa = new Set<string>();
-    const qa = [...web.qa, ...print.qa.filter((p) => p.severity !== 'pass')].filter((e) => {
+    const qa = [...web.qa, ...print.qa].filter((e) => {
       const key = `${e.where}|${e.severity}|${e.check}`;
       if (seenQa.has(key)) return false;
       seenQa.add(key);
@@ -1041,7 +1337,8 @@ serve(async (req) => {
         saved,
         webFilename: `${config.children?.join('-') || 'story'}-web.pdf`,
         printFilename: `${config.children?.join('-') || 'story'}-print.pdf`,
-        pageCount: pages.length + 1, // +1 for cover
+        pageCount: web.pageCount,
+        printPageCount: print.pageCount,
         dimensions: (PAGE_SIZES as Record<string, unknown>)[config.pageSize] || PAGE_SIZES['A5 portrait'],
         qa,
       }),
