@@ -64,6 +64,26 @@ export const SetupForm: React.FC<SetupFormProps> = ({
     onConfigChange({ characters: newCharacters });
   };
 
+  // A typed-but-unadded name or character must not be silently dropped when
+  // the parent presses Create My Story: flush pending text first.
+  const handleCreate = () => {
+    const pendingChild = newChild.trim();
+    const pendingCharacter = newCharacter.trim();
+    if (pendingChild || pendingCharacter) {
+      onConfigChange({
+        ...(pendingChild && !config.children.includes(pendingChild)
+          ? { children: [...config.children, pendingChild] }
+          : {}),
+        ...(pendingCharacter && !config.characters.includes(pendingCharacter)
+          ? { characters: [...config.characters, pendingCharacter] }
+          : {}),
+      });
+      setNewChild('');
+      setNewCharacter('');
+    }
+    onNext();
+  };
+
   const selectPreset = (type: 'theme' | 'storyType' | 'character' | 'setting', value: string) => {
     if (type === 'theme') {
       const theme = themePresets.find(t => t.name === value);
@@ -552,7 +572,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
       {/* Next Button */}
       <div className="flex justify-center">
         <Button
-          onClick={onNext}
+          onClick={handleCreate}
           disabled={!canProceed}
           aria-describedby="setup-readiness"
           size="lg"
