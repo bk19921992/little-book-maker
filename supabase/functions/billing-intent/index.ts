@@ -3,6 +3,7 @@ import Stripe from "https://esm.sh/stripe@14.21.0";
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts";
 import { getCorsHeaders } from "../_shared/cors.ts";
 import { CURRENCY, isPricedItem, priceFor } from "../_shared/pricing.ts";
+import { paidCreationAllowedForUser } from "../_shared/billingAdmission.ts";
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req);
@@ -63,8 +64,22 @@ serve(async (req) => {
     // Default-off server gate for NEW paid intents only. Free/owned exports
     // above remain available. Confirmation/webhooks must still honour money
     // already paid, even while creation of new charges is disabled.
-    if (Deno.env.get('PAID_CHECKOUT_ENABLED') !== 'true') {
+    // While a controlled test journey is being verified, the global flag is
+    // not enough: this legacy route (print/subscription creation) may only
+    // create charges for BILLING_ALLOWED_USER_IDS, same as billing-checkout.
+    if (!paidCreationAllowedForUser(Deno.env, user.id)) {
       return new Response(JSON.stringify({ error: 'Paid checkout is not available yet.' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Cutover guard: once paid checkout is enabled, export charges are created
+    // only by the durable billing-checkout ledger flow (frozen params, bound
+    // attempts, idempotent create). This legacy path must never create a
+    // parallel, ledger-unaware charge for the same book. Free/owned export
+    // answers above are unaffected; print and subscription intents still pass.
+    if (item === 'export') {
+      return new Response(JSON.stringify({ error: 'Export checkout has moved. Please start again from the download page.' }), {
         status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

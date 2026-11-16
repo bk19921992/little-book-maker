@@ -16,6 +16,9 @@ verify_jwt = false
 [functions.export-pdf]
 verify_jwt = false
 
+[functions.billing-checkout]
+verify_jwt = false
+
 [functions.billing-intent]
 verify_jwt = false
 

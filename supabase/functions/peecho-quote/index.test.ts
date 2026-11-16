@@ -33,7 +33,8 @@ async function run(opts: RunOpts = {}) {
   const calls: string[] = [];
   const ctx = {
     Request, Response,
-    console: { error() {} },
+    console: { error() {}, warn() {} },
+    URL, JSON, Object, Array, Number, Math, encodeURIComponent, AbortSignal,
     Deno: {
       env: {
         get: (k: string) => ({
@@ -52,8 +53,8 @@ async function run(opts: RunOpts = {}) {
           auth === 'invalid' ? { error: true } : { data: { user: { id: auth } } },
       },
     }),
-    fetch: async (url: string) => {
-      calls.push(url);
+    fetch: async (url: string, init?: { body?: string }) => {
+      calls.push(init?.body ? `${url} :: ${init.body}` : url);
       return new Response(upstreamText, { status: upstreamStatus });
     },
   };
@@ -86,28 +87,120 @@ test('auth boundaries: 401 without bearer, 401 invalid user, 403 non-owner; no u
   }
 });
 
-test('list and quote fail closed generic; upstream is never called and never echoed', async () => {
+test('list returns only whitelisted offering fields and never leaks the key', async () => {
   const shaped = {
-    GB: { SC: [{ id: 1, name: `x ${SECRET} y`, merchantApiKey: SECRET, nested: { blob: 'echo-me' } }] },
+    BO: {
+      SC: [
+        { id: 271408, name: `Softcover A4 ${SECRET}`, paperType: 'Matte', catalogueItemCode: 'AB-sft-M-p',
+          minimumQuantity: 1, minNumberOfPages: 20, maxNumberOfPages: 300, dimensionWidth: 210, dimensionHeight: 297,
+          dynamicSize: false, minDimensionWidth: 100, minDimensionHeight: 100, secretField: SECRET,
+          pricingDto: { currency: 'GBP', price: 411, pricePerPage: 18, secretPriceNote: SECRET } },
+      ],
+      OTHER: 'not-an-array',
+    },
+    leak: SECRET,
   };
-  for (const upstreamText of [
-    JSON.stringify(shaped),
-    `{"key":"dummy-merchant-\\u0073ecret"}`,
-    JSON.stringify([null, 17, 'invalid']),
-    `merchant not found: ${SECRET}`,
-  ]) {
-    for (const body of [{ action: 'list' }, { action: 'quote', offeringId: 1, numberOfPages: 28 }]) {
-      const r = await run({ body, upstreamText, upstreamStatus: 200 });
-      assert.equal(r.status, 503);
-      assert.deepEqual(JSON.parse(r.text), { ok: false, error: 'Printer quote unavailable.' });
-      assert.equal(r.calls.length, 0);
-      assert.ok(!r.text.includes(SECRET));
-    }
+  const r = await run({ body: { action: 'list' }, upstreamText: JSON.stringify(shaped) });
+  assert.equal(r.status, 200);
+  assert.ok(!r.text.includes(SECRET), 'response must not contain the merchant key');
+  assert.ok(!r.text.includes('[redacted]'.slice(1, 9)) || r.text.includes('[redacted]'));
+  const parsed = JSON.parse(r.text);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.environment, 'test');
+  assert.equal(parsed.offerings.length, 1);
+  assert.deepEqual(Object.keys(parsed.offerings[0]).sort(), [
+    'catalogueItemCode', 'currency', 'dimensionHeight', 'dimensionWidth', 'id',
+    'maxNumberOfPages', 'minNumberOfPages', 'name', 'paperType', 'price', 'pricePerPage',
+  ].sort());
+  assert.equal(parsed.offerings[0].id, 271408);
+  assert.equal(parsed.offerings[0].pricePerPage, 18);
+  assert.ok(r.calls[0].includes('/rest/v3/offering/list?merchantApiKey='));
+  assert.ok(r.calls[0].includes('countryIsoCode2=GB') && r.calls[0].includes('currency=GBP'));
+});
+
+test('quote posts the documented body and returns only whitelisted price fields', async () => {
+  const shaped = {
+    quoteDetails: { countryCode: 'GB', currency: 'GBP', exchangeRate: '1', secretNote: SECRET },
+    quotedItems: [{
+      offeringId: 271408, numberOfPages: 24, quantity: 1, basePrice: 3.5, pricePerPage: 0.15,
+      productPrice: 710, shippingWholesale: 530, totalQuantityDiscount: 0, vatPercentage: 0, vat: 0,
+      totalItemPrice: 1240, merchant_api_key: SECRET,
+    }],
+    quoteSummary: { numberOfItems: 1, totalWholesalePrice: 1240, totalPrice: 1240, secretTotal: SECRET },
+  };
+  const r = await run({ body: { action: 'quote', offeringId: 271408, numberOfPages: 24 }, upstreamText: JSON.stringify(shaped) });
+  assert.equal(r.status, 200);
+  assert.ok(!r.text.includes(SECRET), 'response must not contain the merchant key');
+  const parsed = JSON.parse(r.text);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.currency, 'GBP');
+  assert.deepEqual(parsed.items, [{
+    offeringId: 271408, numberOfPages: 24, quantity: 1,
+    productPrice: 710, shippingWholesale: 530, totalQuantityDiscount: 0, vat: 0, vatPercentage: 0, totalItemPrice: 1240,
+  }]);
+  // The summary is validated for presence/consistency only: it aggregates
+  // every returned tier, so it is never used as a price.
+  assert.deepEqual(parsed.summary, { numberOfItems: 1, totalWholesalePrice: 1240 });
+  assert.ok(r.calls[0].startsWith('https://test.www.peecho.com/rest/v3/quote :: '));
+  const sentBody = JSON.parse(r.calls[0].split(' :: ')[1]);
+  assert.deepEqual(sentBody, { apiKey: SECRET, countryCode: 'GB', currency: 'GBP', items: [{ offeringId: 271408, numberOfPages: 24, quantity: 1 }] });
+});
+
+test('upstream failures reduce to a status code; error bodies (which can echo the key) are never surfaced', async () => {
+  for (const [body, err] of [
+    [{ action: 'list' }, 'Printer catalogue unavailable.'],
+    [{ action: 'quote', offeringId: 1, numberOfPages: 28 }, 'Printer quote unavailable.'],
+  ] as const) {
+    const r = await run({ body, upstreamStatus: 500, upstreamText: `Merchant by merchantApiKey ${SECRET} not found` });
+    assert.equal(r.status, 503);
+    assert.deepEqual(JSON.parse(r.text), { ok: false, error: err });
+    assert.ok(!r.text.includes(SECRET));
   }
+});
+
+test('quote input validation: bad offeringId/pages rejected without an upstream call', async () => {
+  for (const body of [
+    { action: 'quote', offeringId: 'x', numberOfPages: 24 },
+    { action: 'quote', offeringId: 1, numberOfPages: 0 },
+    { action: 'quote', offeringId: 1, numberOfPages: 5000 },
+  ]) {
+    const r = await run({ body });
+    assert.equal(r.status, 400);
+    assert.equal(r.calls.length, 0);
+  }
+});
+
+test('missing PEECHO_API_KEY fails closed with no upstream call', async () => {
+  const r = await run({ env: { PEECHO_API_KEY: '' } });
+  assert.equal(r.status, 503);
+  assert.deepEqual(JSON.parse(r.text), { ok: false, error: 'Printer is not configured yet.' });
+  assert.equal(r.calls.length, 0);
 });
 
 test('unknown action rejected 400 after auth, still no upstream call', async () => {
   const r = await run({ body: {} });
   assert.equal(r.status, 400);
   assert.equal(r.calls.length, 0);
+});
+
+test('quote fails closed on malformed totals or a reply bound to a different request', async () => {
+  const good = {
+    quoteDetails: { countryCode: 'GB', currency: 'GBP' },
+    quotedItems: [{ offeringId: 271408, numberOfPages: 24, quantity: 1, productPrice: 710, shippingWholesale: 530, totalQuantityDiscount: 0, vatPercentage: 0, vat: 0, totalItemPrice: 1240 }],
+    quoteSummary: { numberOfItems: 1, totalWholesalePrice: 1240, totalPrice: 1240 },
+  };
+  const variants: Array<[string, unknown]> = [
+    ['null totals', { ...good, quotedItems: [{ ...good.quotedItems[0], totalItemPrice: null }] }],
+    ['missing summary', { ...good, quoteSummary: {} }],
+    ['wrong currency', { ...good, quoteDetails: { countryCode: 'GB', currency: 'EUR' } }],
+    ['wrong offering', { ...good, quotedItems: [{ ...good.quotedItems[0], offeringId: 1 }] }],
+    ['wrong pages', { ...good, quotedItems: [{ ...good.quotedItems[0], numberOfPages: 28 }] }],
+    ['extra items', { ...good, quotedItems: [good.quotedItems[0], good.quotedItems[0]] }],
+    ['empty body', {}],
+  ];
+  for (const [label, upstream] of variants) {
+    const r = await run({ body: { action: 'quote', offeringId: 271408, numberOfPages: 24 }, upstreamText: JSON.stringify(upstream) });
+    assert.equal(r.status, 503, label);
+    assert.deepEqual(JSON.parse(r.text), { ok: false, error: 'Printer quote unavailable.' });
+  }
 });

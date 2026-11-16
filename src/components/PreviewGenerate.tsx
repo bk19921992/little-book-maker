@@ -13,6 +13,7 @@ import { pagesNeedingTextFix, validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
 import { andList, coverFallbackNote, resolveAutoFormat } from '../lib/format';
 import { imageConfig } from '../lib/imageRequest';
+import { writeResultUpdates } from '../lib/backMatter';
 import { applyJobItems, finishedBookConfig, illustrationTracker, runImageJob } from '../lib/imageJob';
 import { CheckoutSheet } from './CheckoutSheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -59,8 +60,24 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
 
   const updateProgress = (newProgress: number) => {
     setProgress(newProgress);
-    // Progress follows completed stages, not an unmeasured time promise.
-    setEstimatedTimeRemaining('');
+    // Simple estimation based on typical generation times
+    if (newProgress > 0 && newProgress < 100) {
+      const estimates = {
+        5: '2-3 minutes', // planning
+        25: '1-2 minutes', // writing  
+        70: '30-60 seconds', // images
+        100: 'Complete!'
+      };
+      const currentEstimate = Object.entries(estimates)
+        .reverse()
+        .find(([threshold]) => newProgress >= parseInt(threshold));
+      
+      if (currentEstimate) {
+        setEstimatedTimeRemaining(currentEstimate[1]);
+      }
+    } else {
+      setEstimatedTimeRemaining('');
+    }
   };
 
   const generateStory = async (useSavedPlan = false) => {
@@ -136,10 +153,10 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         planResponse.outline,
         storyId
       );
-      
-      onConfigChange({
-        pages: writeResponse.pages,
-      });
+      // Persist the fixed-form title story-write composed (or clear a
+      // previous one), and void any blurb: new words are a new back cover.
+      const written = writeResultUpdates(writeResponse);
+      onConfigChange(written);
 
       updateProgress(70);
       setCurrentStep('images');
@@ -171,6 +188,8 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
         styleBible: planResponse.styleBible,
         outline: planResponse.outline,
         pages: writeResponse.pages,
+        title: written.title,
+        blurb: written.blurb,
       };
       // Text that still breaks the text contract is a draft, not a basis for
       // paid illustrations: the customer must fix the wording first, and
@@ -197,7 +216,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       }
       toast.info('Creating AI illustrations...');
       const { jobId } = await api.startImageJob(effectivePageSize, effectivePageLayout, imagePrompts, true, imageConfig(book), storyId, undefined, planResponse.outline.sceneLedger);
-      if (user) saveCheckpoint(jobId, book, user.id);
+      saveCheckpoint(jobId, book);
       await illustrate(jobId, book);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate story';
@@ -247,7 +266,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       // must never describe new art. Page-only runs keep the existing style.
       const finishedBook: StoryConfig = finishedBookConfig(book, result);
       onConfigChange(finishedBook);
-      if (user) clearCheckpoint(user.id);
+      clearCheckpoint();
       // Keep the finished book on the customer's account (My books).
       if (user) {
         saveBook(supabase, user.id, finishedBook).catch((saveError) => {
@@ -284,7 +303,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
     } catch (err) {
       // The job and its finished pictures are safe on the server; keep the
       // checkpoint so the customer can resume instead of starting again.
-      const message = "We lost contact while drawing your pictures. Press Resume illustrations to check the existing job and carry on. Keep this tab open if possible; reload recovery depends on this browser retaining its saved checkpoint.";
+      const message = "We lost contact while drawing your pictures. Your progress is saved - press Resume illustrations to carry on.";
       console.error('Illustration job interrupted', err);
       setError(message);
       toast.error(message);
@@ -458,7 +477,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                 ))}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">Colour palette:</span>
+                <span className="text-sm font-medium">Color Palette:</span>
                 {config.palette.map((color, index) => (
                   <div key={index} className="flex items-center gap-1">
                     <div 
@@ -490,13 +509,13 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
                 <div className="text-right min-w-0 break-words">
                   <span>{progress}%</span>
                   {estimatedTimeRemaining && (
-                    <div role="status" aria-live="polite" className="text-xs text-muted-foreground mt-1">
+                    <div className="text-xs text-muted-foreground mt-1">
                       {estimatedTimeRemaining}
                     </div>
                   )}
                 </div>
               </div>
-              <Progress value={progress} className="h-3" aria-label="Story creation progress" />
+              <Progress value={progress} className="h-3" />
             </div>
 
             <div className="grid gap-4">
@@ -654,7 +673,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
               disabled={isGenerating}
             >
               <Sparkles className="w-5 h-5 mr-2" />
-              Create story
+              Generate Story
             </Button>
           )}
           

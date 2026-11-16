@@ -1,3 +1,4 @@
+import { canonicalCastContext, generateBookDraft } from './bookDraft.ts';
 import { sceneGateVerdict, sceneLedgerIssues, sceneContext } from '../_shared/sceneLedger.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, unauthorisedResponse } from "../_shared/auth.ts"
@@ -5,8 +6,9 @@ import { getCorsHeaders } from "../_shared/cors.ts"
 import { serviceClient } from "../_shared/auth.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
-import { castDetailLines, fallbackPageText, speciesRule, storySubject } from "./castText.ts"
+import { castDetailLines, speciesRule } from "./castText.ts"
 import { contractViolations, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
+import { buildTitlePrompt, validateTitle } from "../_shared/title.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -56,12 +58,13 @@ serve(async (req) => {
     const maxLines = lineBudget(config.readingLevel, config.pageSize)
     const lineRule = `at most ${maxLines} lines, each at most ${MAX_LINE_WORDS} words and ${MAX_LINE_CHARS} characters`
 
-    // Generate story text for all pages in parallel for speed
-    console.log(`Generating ${outline.pages.length} pages in parallel...`)
+    // One complete draft shares every cast choice across the whole book.
+    const castLock = canonicalCastContext(config, outline?.sceneLedger)
+    console.log(`Drafting ${outline.pages.length} pages together...`)
     
     const sequenceContext = outline?.sceneLedger ? JSON.stringify(outline.sceneLedger) : '';
     const pageSceneContext = (page:number) => outline?.sceneLedger ? sceneContext(outline.sceneLedger,page) : '';
-    const pagePromises = outline.pages.map(async (pageOutline: { page: number; wordCount?: number; wordsTarget?: number; imagePrompt?: string; visualBrief?: string; summary?: string }) => {
+    const pagePrompts = outline.pages.map((pageOutline: { page: number; wordCount?: number; wordsTarget?: number; imagePrompt?: string; visualBrief?: string; summary?: string }) => {
       const writingPrompt = `Write page ${pageOutline.page} of a children's story:
 
 Story Details:
@@ -108,10 +111,13 @@ Important Instructions:
 - Write ONLY the story text for this page, nothing else
 - STRICTLY follow the reading level requirements above
 - Use the specified narration style: ${config.narrationStyle}
-- Include the child's name(s) naturally in the story
+- ${config.children.length ? 'Include the supplied child names naturally, unchanged.' : 'The child is unnamed. Use the child or consistent pronouns, never invent a name.'}
 - ${speciesRule(config)}
 - Incorporate ALL personal details where appropriate and natural
 - Keep within the target word count (self-check)
+- Write in FULL sentences with articles (a, the) - never telegraphic fragments like "Dotty PJs feel soft and light"
+- At most two sentences per page
+- Say something the picture cannot show: what the character thinks, hears, feels or wants - do not just describe what is plainly visible
 - Make the text engaging and age-appropriate
 - No page numbers, titles, or extra formatting
 - The text should flow naturally with the overall story arc
@@ -119,85 +125,17 @@ Important Instructions:
 - FORMAT (critical for typesetting): write the page as short newline-separated lines, one thought per line: ${lineRule}. Never put a long sentence or a whole paragraph on one line - long lines wrap badly when typeset.
 - Fewer, shorter lines always beats more, longer ones.`
 
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openaiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gpt-4.1',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a professional children's book author specializing in ${config.readingLevel} level stories. Write in the style of high-quality published children's books like "Zippy the Bee's Big Job" - engaging, warm, and beautifully crafted. Create stories in UK English with perfect grammar and natural flow. STRICTLY follow reading level requirements.`
-            },
-            {
-              role: 'user',
-              content: writingPrompt
-            }
-          ],
-          max_completion_tokens: config.readingLevel === 'Toddler 2–3' ? 300 : config.readingLevel === 'Early 4–5' ? 400 : 500
-        }),
-      })
-
-      console.log(`OpenAI response status for page ${pageOutline.page}:`, response.status)
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error(`OpenAI API error for page ${pageOutline.page}:`, errorText)
-        throw new Error(`OpenAI API error for page ${pageOutline.page}: ${response.status} ${errorText}`)
-      }
-
-      const aiResponse = await response.json()
-      let pageText = (aiResponse.choices?.[0]?.message?.content || '').trim()
-
-      // If model returned no text, regenerate directly with stricter instructions
-      if (!pageText) {
-        const regen = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'gpt-4.1',
-            messages: [
-              { role: 'system', content: `You write professional children's book pages in UK English with the quality of published books. Return ONLY the story text and ensure word-count target is met exactly.` },
-              { role: 'user', content: `${writingPrompt}\n\nWrite between ${range.min} and ${range.max} words. Format as newline-separated lines: ${lineRule}.` }
-            ],
-            max_completion_tokens: 600
-          })
-        })
-        if (regen.ok) {
-          const rj = await regen.json()
-          pageText = rj.choices[0].message.content.trim()
-        }
-      }
-
-      // If still empty, do a simplified direct generation
-      if (!pageText || pageText.length < 10) {
-        console.log(`Empty text for page ${pageOutline.page}, trying simplified approach`)
-        const simple = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'gpt-4.1',
-            messages: [
-              { role: 'system', content: "Write professional UK English children's story pages with published book quality. Return ONLY story text, no quotes or extra text." },
-              { role: 'user', content: `Write page ${pageOutline.page} of a ${config.lengthPages}-page children's story about ${storySubject(config)}. Setting: ${config.setting}. Reading level: ${config.readingLevel}. Style: ${config.narrationStyle}. Write between ${range.min} and ${range.max} words. Format as newline-separated lines: ${lineRule}. Include these personal details naturally: town ${config.personal?.town || ''}, favorite toy ${config.personal?.favouriteToy || ''}, favorite color ${config.personal?.favouriteColour || ''}. Return ONLY the story text.` }
-            ],
-            max_completion_tokens: 600
-          })
-        })
-        if (simple.ok) {
-          const sj = await simple.json()
-          pageText = (sj.choices?.[0]?.message?.content || '').trim()
-        }
-      }
-
-      // Final fallback with hard-coded text if all else fails
-      if (!pageText || pageText.length < 10) {
-        console.log(`All generation failed for page ${pageOutline.page}, using fallback`)
-        pageText = fallbackPageText(config)
-      }
+      return { pageOutline, writingPrompt: `${writingPrompt}\n\n${castLock}` }
+    })
+    const expectedPages = Array.from({ length: config.lengthPages }, (_, i) => i + 1)
+    if (pagePrompts.length !== expectedPages.length || pagePrompts.some((p: { pageOutline: { page: number } }, i: number) => p.pageOutline.page !== expectedPages[i])) {
+      throw new Error('The story plan must cover every page in order. No pages written.')
+    }
+    const draft = await generateBookDraft({ fetcher: fetch, key: openaiKey, prompts: pagePrompts.map((p: { writingPrompt: string }) => p.writingPrompt), pageNumbers: expectedPages, castLock })
+    const wholeBookDraft = JSON.stringify([...draft].map(([page, text]) => ({ page, text })))
+    const revisionContext = `${castLock}\nWHOLE-BOOK DRAFT (do not change identities or contradict adjacent pages):\n${wholeBookDraft}`
+    const pagePromises = pagePrompts.map(async ({ pageOutline }: { pageOutline: { page: number; wordCount?: number; wordsTarget?: number } }) => {
+      let pageText = draft.get(pageOutline.page)!
 
       const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
       const { min, max } = range
@@ -212,7 +150,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
-              { role: 'user', content: `Adjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and all proper nouns. Keep the format: newline-separated lines, ${lineRule}. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `${revisionContext}\n\nAdjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and the canonical cast identities. Do not preserve a conflicting invented name. Keep the format: newline-separated lines, ${lineRule}. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -236,7 +174,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: 'You reformat children\'s story pages for typesetting. You never drop meaning.' },
-              { role: 'user', content: `Rewrite this children's book page as newline-separated lines: ${lineRule}. Total words on the page: between ${min} and ${max}. All limits are hard. You may reword and compress freely to fit them, but keep the story beats, all proper nouns, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `${revisionContext}\n\nRewrite this children's book page as newline-separated lines: ${lineRule}. Total words on the page: between ${min} and ${max}. All limits are hard. You may reword and compress freely to fit them, but keep the story beats, canonical cast identities, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -284,14 +222,49 @@ Important Instructions:
       }
     })
 
-    // Wait for all pages to complete
+    // Revisions may run in parallel only after the single whole-book draft.
     const completedPages = await Promise.all(pagePromises)
-    
+
     // Sort pages by page number to ensure correct order
     pages.push(...completedPages.sort((a, b) => a.page - b.page))
 
+    // Book title (14 Nov 2026 review): composed in the fixed "{Child} and
+    // the {concrete thing}" form from the opening pages, validated, one
+    // retry with the rejection reason - the same loop as the blurb. A
+    // failure never blocks the book: export falls back to its own title.
+    let title: string | undefined
+    const openingText = pages.slice(0, 2).map((pg: { text: string }) => pg.text).join('\n')
+    if (openingText.trim()) {
+      const childName = Array.isArray(config.children) ? config.children[0] : undefined
+      const storyText = pages.map((pg: { text: string }) => pg.text).join('\n')
+      const titleBase = buildTitlePrompt({ childName, storyType: config.storyType, openingText })
+      let rejectReason = ''
+      for (let attempt = 1; attempt <= 2 && !title; attempt++) {
+        try {
+          const titleResp = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'gpt-4.1',
+              messages: [{ role: 'user', content: titleBase + (rejectReason ? `\n\nThe previous attempt was rejected: ${rejectReason}. Fix exactly that.` : '') }],
+              max_completion_tokens: 60,
+            }),
+            signal: AbortSignal.timeout(30000),
+          })
+          const titleBody = await titleResp.json().catch(() => null) as { choices?: { message?: { content?: string } }[] } | null
+          const candidate = (titleBody?.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '')
+          const verdict = validateTitle(candidate, childName, storyText)
+          if (titleResp.ok && verdict.ok) title = candidate
+          else rejectReason = titleResp.ok ? verdict.reasons.join('; ') : `API status ${titleResp.status}`
+        } catch (titleError) {
+          rejectReason = titleError instanceof Error ? titleError.message : String(titleError)
+        }
+      }
+      if (!title) console.warn('Title generation/validation failed; export falls back to its own title')
+    }
+
     return new Response(
-      JSON.stringify({ pages }),
+      JSON.stringify({ pages, ...(title ? { title } : {}) }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }

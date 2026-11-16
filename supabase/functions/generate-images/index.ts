@@ -6,8 +6,9 @@ import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 import { buildItems, MAX_ATTEMPTS, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
-import { acceptedReferenceImage, buildCoverArtDirectionPrompt, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, type ImagePrompt, ART_DIRECTION_SKIPPED, artDirectionEnabled, artDirectionOutcome, interpretArtDirectionResponse, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
+import { acceptedReferenceImage, BACK_COVER_REVIEW_BRIEF, BACK_COVER_REVIEW_LABEL, buildBackCoverPrompt, buildCoverArtDirectionPrompt, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, pickBackCoverSubject, type ImagePrompt, ART_DIRECTION_SKIPPED, artDirectionEnabled, artDirectionOutcome, interpretArtDirectionResponse, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
 import { ART_DIRECTION_TEST_MODEL, isServiceRoleRequest, runArtDirectionSelfTest } from "./artDirectionTest.ts"
+import { buildBlurbPrompt, validateBlurb } from "../_shared/blurb.ts"
 import { editImageWithReference, generateOneImage, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
 
 interface ImageReview {
@@ -239,6 +240,121 @@ serve(async (req) => {
 
     const json = (payload: unknown, status = 200) =>
       new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+
+    // Cover suite (v6): regenerate ONLY the cover-facing surface of an
+    // existing book - front cover art, back-cover spot art and the
+    // back-cover blurb - without touching inside pages. Two image calls
+    // plus one small text call, usage-accounted like any generation.
+    // Never claims the book and never regenerates inside pages.
+    if (body.action === 'cover-suite') {
+      const suiteConfig = (body.config || {}) as StoryConfig & { themePreset?: string }
+      // Cover and back-cover spot art are plated square.
+      const suiteSize = '1024x1024'
+      const suiteModel = resolveImageModel((key: string) => Deno.env.get(key))
+      const suiteQuality = resolveImageQuality((key: string) => Deno.env.get(key))
+      const suiteBible = buildStyleBible(suiteConfig, suiteSize, body.pageLayout || 'split')
+      const suiteAnchor = styleProfile(suiteConfig?.imageStyle)?.anchor || ''
+      const suiteReviewModel = Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1'
+      const suiteReference = acceptedReferenceImage(body.referenceImage)
+
+      const suiteLimit = await checkAndRecordUsage(serviceClient(), user.id, 'image', 2)
+      if (suiteLimit) return tooManyRequestsResponse(corsHeaders, suiteLimit)
+
+      const suiteErrors: string[] = []
+      // One image with the same generate->vision-review->retry gate the
+      // page pipeline uses. A surface that never passes ships nothing.
+      const generateGated = async (basePrompt: string, label: string, brief: string, useReference: boolean): Promise<{ url: string; review: ImageReview }> => {
+        let url = ''
+        let review: ImageReview = { pass: false, issues: ['not yet reviewed'] }
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          const attemptPrompt = attempt > 1 ? withReviewFeedback(basePrompt, review.issues, suiteAnchor) : basePrompt
+          if (useReference && suiteReference) {
+            // Fail closed on reference edit errors: never drop the character
+            // reference silently (same rule as the page pipeline).
+            url = await editImageWithReference(openaiKey, suiteModel, suiteSize, suiteQuality, attemptPrompt, suiteReference)
+          } else {
+            url = await generateOneImage(openaiKey, suiteModel, suiteSize, suiteQuality, attemptPrompt)
+          }
+          review = await reviewImage(openaiKey, suiteReviewModel, url, {
+            label,
+            brief,
+            config: suiteConfig,
+            referenceDataUrl: useReference ? suiteReference || undefined : undefined,
+          })
+          if (review.pass) break
+        }
+        return { url: review.pass ? url : '', review }
+      }
+
+      let cover: { url: string; review: ImageReview } | undefined
+      try {
+        const r = await generateGated(buildCoverPrompt(suiteBible, suiteAnchor, !!suiteReference), COVER_REVIEW_LABEL, COVER_REVIEW_BRIEF, true)
+        if (r.url) cover = r
+        else suiteErrors.push(`cover failed review: ${r.review.issues.join('; ')}`)
+      } catch (coverError) {
+        suiteErrors.push(`cover generation failed: ${coverError instanceof Error ? coverError.message : String(coverError)}`)
+      }
+
+      // Back-cover spot art: companion/setting subject only, no reference
+      // edit - the main child must NOT appear, so chaining the child's
+      // reference image would work against the brief. The style bible
+      // carries the book's look.
+      let backCover: { url: string; review: ImageReview } | undefined
+      try {
+        const subject = pickBackCoverSubject(suiteConfig.characters ?? [], suiteConfig.setting)
+        const r = await generateGated(buildBackCoverPrompt(suiteBible, suiteAnchor, subject, String(body.finalPageImagePrompt || ''), false), BACK_COVER_REVIEW_LABEL, BACK_COVER_REVIEW_BRIEF, false)
+        if (r.url) backCover = r
+        else suiteErrors.push(`back cover failed review: ${r.review.issues.join('; ')}`)
+      } catch (backError) {
+        suiteErrors.push(`back cover generation failed: ${backError instanceof Error ? backError.message : String(backError)}`)
+      }
+
+      // Blurb: one small text call composed from the opening pages only
+      // (no ending to spoil), validated before it can ship; on any failure
+      // the book keeps export's template fallback, so the back cover is
+      // never blank.
+      let blurb: string | undefined
+      const openingText = String(body.openingText || '').trim()
+      if (openingText) {
+        const childName = suiteConfig.children?.[0]
+        const blurbBase = buildBlurbPrompt({
+          childName,
+          companions: suiteConfig.characters ?? [],
+          setting: suiteConfig.setting,
+          storyType: suiteConfig.storyType,
+          theme: suiteConfig.themePreset,
+          openingText,
+        })
+        let rejectReason = ''
+        for (let attempt = 1; attempt <= 2 && !blurb; attempt++) {
+          try {
+            const blurbResp = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: Deno.env.get('OPENAI_REVIEW_MODEL') || 'gpt-4.1',
+                messages: [{ role: 'user', content: blurbBase + (rejectReason ? `\n\nThe previous attempt was rejected: ${rejectReason}. Fix exactly that.` : '') }],
+                max_completion_tokens: 220,
+              }),
+              signal: AbortSignal.timeout(30000),
+            })
+            const blurbBody = await blurbResp.json().catch(() => null) as { choices?: { message?: { content?: string } }[] } | null
+            const candidate = blurbBody?.choices?.[0]?.message?.content?.trim() || ''
+            const verdict = validateBlurb(candidate, childName, openingText)
+            if (blurbResp.ok && verdict.ok) blurb = candidate
+            else rejectReason = blurbResp.ok ? verdict.reasons.join('; ') : `API status ${blurbResp.status}`
+          } catch (blurbError) {
+            rejectReason = blurbError instanceof Error ? blurbError.message : String(blurbError)
+          }
+        }
+        if (!blurb) suiteErrors.push('blurb generation/validation failed; export falls back to the template')
+      }
+
+      return json(
+        { cover, backCover, blurb, errors: suiteErrors.length ? suiteErrors : undefined },
+        cover || backCover || blurb ? 200 : 502,
+      )
+    }
 
     // Durable job API (see jobs.ts). start: charge usage once and queue the
     // book; step: one generate->review attempt on the next item; status: all

@@ -2,7 +2,14 @@
 // are unit tested (printSpec.test.ts).
 
 export const MM_TO_PT = 2.834645669;
-export const BLEED_MM = 3; // print PDFs are the trim size plus 3 mm on every side
+export const BLEED_MM = 3; // legacy only: the printer now adds bleed itself
+
+// Peecho file spec (verified 10 Nov 2026, support.peecho.com softcover and
+// hardcover guidelines): the PDF page IS the trim size (the printer's
+// system generates bleed and cut marks), and all art and text keep a
+// minimum 10 mm margin on every side.
+export const SAFE_MARGIN_MM = 10;
+export const SAFE_MARGIN_PT = SAFE_MARGIN_MM * MM_TO_PT;
 
 // Trim and bleed boxes for a print page: printers read TrimBox for the
 // finished size and BleedBox for how far artwork extends past it. (No crop
@@ -72,4 +79,89 @@ export function containFit(
 // exists for.
 export function exportBlockers<T extends { severity: string; kind?: string }>(qa: T[]): T[] {
   return qa.filter((q) => q.severity === 'fail' && q.kind !== 'dpi');
+}
+
+// Print profile version stamped into every print PDF's keywords. The order
+// path refuses PDFs without this exact marker, so books exported before
+// the trim-sized/300dpi profile must be regenerated before they can be
+// ordered. Bump on any print-profile change.
+// v4 is the first compliant profile: safe-margin text bounds (cover, folio,
+// back title) were fixed in v8. v3 stamps remain on pre-fix exports, so the
+// order path must refuse them and force regeneration.
+// v5 enlarges print art (cover and story pages) up to the 150 dpi floor,
+// answering the 11 Nov 2026 owner review; v4 books keep the small plates,
+// so the order path must refuse them and force regeneration.
+// v6 redesigns the covers (11 Nov 2026 owner review: "doesn't look
+// professional enough"): flat story-type cover colour, title above the
+// framed art, and a real back cover (blurb, spot art, sign-off). v5 books
+// keep the band cover and blank back, so the order path must refuse them.
+// v8 composes the inside pages and front/back matter (14 Nov 2026 review):
+// fixed 140mm art window with rounded corners, centred text, title page,
+// dedication page, "The End" and endpaper padding. v7 books keep the band
+// pages and no front matter, so the order path must refuse them.
+export const PRINT_PROFILE_VERSION = 8;
+export const PRINT_PROFILE_MARKER = `story-sprout-print-profile:${PRINT_PROFILE_VERSION}`;
+
+// Peecho recommends 300 dpi; 150 dpi is the acceptable floor (dpiCheck
+// warns there, fails below). Art is contain-fit inside the safe region and
+// capped at its native resolution for the given floor (pixels * 72 / minDpi
+// points), so the renderer never upscales past the floor. The default floor
+// is 300 - never upscale. Print layout passes DPI_MINIMUM (150): the owner
+// review on 11 Nov 2026 asked for larger art ("Size of images too"), and
+// enlarging up to the 150-300 dpi band the QA already calls acceptable is
+// the implementation choice that answers it. The drawn size is still
+// derived from the art's real pixels, so the dpi QA keeps measuring the
+// truth.
+export const PRINT_DPI = 300;
+export function printPlacement(
+  region: { width: number; height: number },
+  pixels: { width: number; height: number },
+  minDpi: number = PRINT_DPI,
+): { width: number; height: number } {
+  const fit = containFit(region, pixels);
+  const native = { width: (pixels.width * 72) / minDpi, height: (pixels.height * 72) / minDpi };
+  const scale = Math.min(1, native.width / fit.width, native.height / fit.height);
+  return { width: fit.width * scale, height: fit.height * scale };
+}
+
+// Print text never dips below the safe margin: baselines are placed so the
+// font's descent still ends at or above safeInset. The text face's measured
+// bounding-box descent is ~0.35 em; 0.45 leaves real headroom under the
+// 10 mm rule instead of rounding onto the boundary.
+export const TEXT_DESCENT_RATIO = 0.45;
+export function printFolioBaseline(safeInsetPt: number, folioSize: number): number {
+  return safeInsetPt + folioSize * TEXT_DESCENT_RATIO;
+}
+export function coverTextBlockBottom(
+  bandBottom: number,
+  forPrint: boolean,
+  safeInsetPt: number,
+  lowestTextSize: number,
+): number {
+  if (!forPrint) return bandBottom;
+  return Math.max(bandBottom, safeInsetPt + lowestTextSize * TEXT_DESCENT_RATIO);
+}
+
+// ---- Cover palette (v6) ----
+// The print covers sit on a flat colour that wraps front and back, with a
+// pre-paired ink whose contrast is known in advance (all pairs >= 4.5:1, the
+// same gate as ink on paper). This replaces the white page behind the cover
+// art and keeps the rule that title ink never sits on unverified art.
+// Keyed by lowercase story type; anything unknown takes the default.
+export interface CoverPalette {
+  background: string; // hex
+  ink: string;        // hex
+}
+export const COVER_PALETTES: Record<string, CoverPalette> = {
+  bedtime: { background: '#1F2A44', ink: '#FFF6E9' },
+  adventure: { background: '#1E4634', ink: '#FFF6E9' },
+  learning: { background: '#155E63', ink: '#FFF6E9' },
+  friendship: { background: '#B23A48', ink: '#FFF6E9' },
+  fantasy: { background: '#4B2A5A', ink: '#FFF6E9' },
+  'problem solving': { background: '#2E4A6B', ink: '#FFF6E9' },
+};
+export const COVER_PALETTE_DEFAULT: CoverPalette = { background: '#F2B544', ink: '#2B2118' };
+export function resolveCoverPalette(storyType?: string): CoverPalette {
+  const key = (storyType || '').trim().toLowerCase();
+  return COVER_PALETTES[key] ?? COVER_PALETTE_DEFAULT;
 }

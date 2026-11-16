@@ -1,3 +1,4 @@
+import { canonicalCastContext } from '../story-write/bookDraft.ts';
 import { sceneGateVerdict, sceneLedgerIssues, SCENE_PLAN_INSTRUCTIONS } from '../_shared/sceneLedger.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
@@ -133,6 +134,8 @@ Create exactly ${config.lengthPages} pages. Each page should have:
 - Detailed image prompt for ${styleBible.renderingStyle} illustration that includes the specific characters, setting, and color palette
 
 ${SCENE_PLAN_INSTRUCTIONS}
+
+${canonicalCastContext(config, null)}
 
 Make sure to incorporate the personal details naturally throughout the story and use the specified narration style.
 

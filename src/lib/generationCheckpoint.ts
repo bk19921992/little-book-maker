@@ -7,12 +7,10 @@ import type { StoryConfig } from '../types';
 // illustrations finish or the customer discards it.
 
 const KEY = 'story-sprout.pending-illustrations';
-const ownerKey = (userId: string): string => `${KEY}.v2.${encodeURIComponent(userId)}`;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 export interface GenerationCheckpoint {
-  v: 2;
-  ownerId: string;
+  v: 1;
   jobId: string;
   savedAt: number;
   config: StoryConfig;
@@ -23,8 +21,7 @@ const defaultStorage = (): Storage | null => {
   try { return globalThis.localStorage ?? null; } catch { return null; }
 };
 
-export function saveCheckpoint(jobId: string, config: StoryConfig, userId: string, storage = defaultStorage(), now = Date.now()): void {
-  if (!userId) return;
+export function saveCheckpoint(jobId: string, config: StoryConfig, storage = defaultStorage(), now = Date.now()): void {
   const textOnly: StoryConfig = {
     ...config,
     pages: config.pages?.map(({ imageUrl: _i, imageReview: _r, ...page }) => page),
@@ -33,22 +30,19 @@ export function saveCheckpoint(jobId: string, config: StoryConfig, userId: strin
     exports: undefined,
   };
   try {
-    storage?.setItem(ownerKey(userId), JSON.stringify({ v: 2, ownerId: userId, jobId, savedAt: now, config: textOnly } satisfies GenerationCheckpoint));
+    storage?.setItem(KEY, JSON.stringify({ v: 1, jobId, savedAt: now, config: textOnly } satisfies GenerationCheckpoint));
   } catch {
     // Storage full or blocked: resuming after a reload is a convenience.
   }
 }
 
-export function loadCheckpoint(userId: string, storage = defaultStorage(), now = Date.now()): GenerationCheckpoint | null {
+export function loadCheckpoint(storage = defaultStorage(), now = Date.now()): GenerationCheckpoint | null {
   try {
-    if (!userId) return null;
-    // Ignore legacy unowned checkpoints. The server job remains unchanged;
-    // never guess which account owns locally cached story text.
-    const raw = storage?.getItem(ownerKey(userId));
+    const raw = storage?.getItem(KEY);
     if (!raw) return null;
     const cp = JSON.parse(raw) as GenerationCheckpoint;
-    if (cp?.v !== 2 || cp.ownerId !== userId || typeof cp.jobId !== 'string' || !cp.jobId || !cp.config?.pages?.length || !Number.isFinite(cp.savedAt) || cp.savedAt > now || now - cp.savedAt > MAX_AGE_MS) {
-      storage?.removeItem(ownerKey(userId));
+    if (cp?.v !== 1 || typeof cp.jobId !== 'string' || !cp.config?.pages?.length || now - cp.savedAt > MAX_AGE_MS) {
+      storage?.removeItem(KEY);
       return null;
     }
     return cp;
@@ -57,6 +51,6 @@ export function loadCheckpoint(userId: string, storage = defaultStorage(), now =
   }
 }
 
-export function clearCheckpoint(userId: string, storage = defaultStorage()): void {
-  try { if (userId) storage?.removeItem(ownerKey(userId)); } catch { /* ignore */ }
+export function clearCheckpoint(storage = defaultStorage()): void {
+  try { storage?.removeItem(KEY); } catch { /* ignore */ }
 }

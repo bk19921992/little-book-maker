@@ -16,6 +16,7 @@ function HomeRoute() {
   return destination ? <Navigate to={destination} replace /> : <Landing />;
 }
 const TestimonialPreview = import.meta.env.DEV && import.meta.env.VITE_SHOW_TESTIMONIAL_PREVIEW === "true" ? lazy(() => import("./pages/TestimonialPreview")) : null;
+const ExportProofPreview = import.meta.env.DEV && import.meta.env.VITE_SHOW_EXPORT_PROOF === "true" ? lazy(() => import("./pages/ExportProofPreview")) : null;
 const BookApp = lazy(() => import("./pages/BookApp"));
 const queryClient = new QueryClient();
 
@@ -29,6 +30,7 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             {TestimonialPreview && <Route path="/design-preview" element={<Suspense fallback={<p role="status">Opening preview...</p>}><TestimonialPreview /></Suspense>} /> }
+            {ExportProofPreview && <Route path="/export-proof" element={<Suspense fallback={<p role="status">Opening preview...</p>}><ExportProofPreview /></Suspense>} /> }
             <Route path="/" element={<HomeRoute />} />
             <Route
               path="/app"

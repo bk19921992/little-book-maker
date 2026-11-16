@@ -8,6 +8,7 @@ export interface PaymentIntentLike {
   status: string
   amount: number
   currency: string
+  livemode?: boolean
   metadata?: Record<string, string | undefined> | null
 }
 
@@ -23,6 +24,10 @@ export function paymentProblem(pi: PaymentIntentLike, expected: Expected = {}): 
   const meta = pi.metadata || {}
   const item = meta.item
   if (pi.status !== 'succeeded') return `Payment status: ${pi.status}`
+  // Only this application's own payments are grantable. Every PaymentIntent
+  // this system creates (billing-intent, billing-checkout) stamps the tag, so
+  // intents from anywhere else on the shared Stripe account are never granted.
+  if (meta.application !== 'story-sprout') return 'Payment is not from this application'
   if (!isPricedItem(item)) return 'Payment is not for a known item'
   if (!meta.user_id) return 'Payment has no account attached'
   if (item !== 'subscription' && !meta.story_id) return 'Payment has no book attached'

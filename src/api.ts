@@ -6,6 +6,7 @@ import type { ShippingAddress } from '../supabase/functions/create-print-order/p
 import type { ImageJobItem, ImageJobStep } from './lib/imageJob';
 import { formatSupabaseConnectionError, supabase, supabaseConfigError } from '@/integrations/supabase/client';
 import { extractFunctionError } from './lib/functionError';
+import { exportRequestBody } from './lib/backMatter';
 
 
 // API client for communicating with Supabase edge functions
@@ -92,13 +93,7 @@ class APIClient {
     includeBleed: boolean = true,
     coverImage?: string
   ): Promise<ExportResponse> {
-    return this.invokeFunction<ExportResponse>('export-pdf', {
-      config,
-      pages,
-      storyId,
-      includeBleed,
-      coverImage,
-    });
+    return this.invokeFunction<ExportResponse>('export-pdf', exportRequestBody(config, pages, storyId, includeBleed, coverImage));
   }
 
   // Order the printed book for a paid, exported book. The server uses the

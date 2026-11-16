@@ -1,7 +1,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import Stripe from "https://esm.sh/stripe@14.21.0";
 import { serviceClient } from "../_shared/auth.ts";
-import { grantEntitlement, paymentProblem, type PaymentIntentLike } from "../_shared/entitlements.ts";
+import { grantEntitlement, type PaymentIntentLike } from "../_shared/entitlements.ts";
+import { handleWebhook } from "../_shared/webhookHandler.ts";
 
 // Stripe -> us. Grants the entitlement for a succeeded PaymentIntent even if
 // the customer's browser never reaches billing-confirm (tab closed, network
@@ -9,9 +10,14 @@ import { grantEntitlement, paymentProblem, type PaymentIntentLike } from "../_sh
 // happy path; whichever arrives second is a no-op.
 //
 // Called by Stripe, not a signed-in user: the Stripe signature is the auth
-// (deploy with verify_jwt = false, see supabase/config.toml). Needs the
-// STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET secrets, and an endpoint in the
-// Stripe dashboard sending payment_intent.succeeded to this function.
+// (deploy with verify_jwt = false, see supabase/config.toml). Needs
+// STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and BILLING_PROVIDER_ACCOUNT, and
+// an endpoint in the Stripe dashboard sending payment_intent.succeeded.
+//
+// All grant preconditions (signature, configured-account verification,
+// event/mode binding, re-retrieve, payload distrust, paymentProblem) live in
+// _shared/webhookHandler.ts, which has an actual handler harness; this file
+// is only wiring to the real Stripe client and entitlement store.
 
 const cryptoProvider = Stripe.createSubtleCryptoProvider();
 
@@ -19,44 +25,46 @@ const json = (status: number, body: Record<string, unknown>) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
 serve(async (req) => {
-  if (req.method !== 'POST') return json(405, { received: false });
-
-  const signature = req.headers.get('stripe-signature');
-  const webhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET');
   const stripeKey = Deno.env.get('STRIPE_SECRET_KEY');
-  if (!webhookSecret || !stripeKey) {
-    console.error('stripe-webhook: STRIPE_WEBHOOK_SECRET / STRIPE_SECRET_KEY not configured');
+  // The Stripe client needs the key to exist at all; the handler core owns
+  // every other configuration check (and fails closed the same way).
+  if (!stripeKey) {
+    console.error('stripe-webhook: STRIPE_SECRET_KEY not configured');
     return json(500, { received: false });
   }
-  if (!signature) return json(400, { received: false });
-
   const stripe = new Stripe(stripeKey, { apiVersion: '2023-10-16' });
-  let event: Stripe.Event;
-  try {
-    event = await stripe.webhooks.constructEventAsync(await req.text(), signature, webhookSecret, undefined, cryptoProvider);
-  } catch {
-    // Not from Stripe (or a wrong secret): never act on it.
-    return json(400, { received: false });
-  }
 
-  if (event.type !== 'payment_intent.succeeded') return json(200, { received: true, ignored: event.type });
-
-  const pi = event.data.object as unknown as PaymentIntentLike;
-  const problem = paymentProblem(pi);
-  if (problem) {
-    // Not ours or not valid (e.g. created elsewhere on the account): record
-    // the reason and acknowledge, so Stripe does not retry forever.
-    console.warn('stripe-webhook: not granting', pi.id, '-', problem);
-    return json(200, { received: true, granted: false });
-  }
-
-  try {
-    const result = await grantEntitlement(serviceClient(), pi);
-    console.log('stripe-webhook:', result, pi.id, 'item', pi.metadata?.item, 'user', pi.metadata?.user_id);
-    return json(200, { received: true, granted: true, result });
-  } catch (error) {
-    // A database error: 500 makes Stripe retry the event later.
-    console.error('stripe-webhook: grant failed for', pi.id, error);
-    return json(500, { received: false });
-  }
+  const result = await handleWebhook(
+    {
+      method: req.method,
+      signature: req.headers.get('stripe-signature'),
+      rawBody: await req.text(),
+    },
+    {
+      env: {
+        stripeSecretKey: stripeKey,
+        webhookSecret: Deno.env.get('STRIPE_WEBHOOK_SECRET'),
+        expectedAccount: Deno.env.get('BILLING_PROVIDER_ACCOUNT'),
+      },
+      constructEvent: async (rawBody, signature, secret) => {
+        const event = await stripe.webhooks.constructEventAsync(rawBody, signature, secret, undefined, cryptoProvider);
+        return {
+          type: event.type,
+          livemode: event.livemode,
+          account: (event as { account?: string }).account,
+          piId: (event.data?.object as { id?: unknown } | undefined)?.id,
+        };
+      },
+      retrieveAccountId: async () => (await stripe.account.retrieve({}, { timeout: 10000 }))?.id,
+      retrieveIntent: (id) =>
+        stripe.paymentIntents.retrieve(id, {}, { timeout: 10000 }) as unknown as Promise<PaymentIntentLike>,
+      grant: async (pi) => {
+        const result = await grantEntitlement(serviceClient(), pi);
+        console.log('stripe-webhook:', result, pi.id, 'item', pi.metadata?.item, 'user', pi.metadata?.user_id);
+        return result;
+      },
+      log: (level, ...args) => (level === 'warn' ? console.warn(...args) : console.error(...args)),
+    },
+  );
+  return json(result.status, result.body);
 });

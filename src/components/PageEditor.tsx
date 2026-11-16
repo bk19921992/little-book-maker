@@ -1,5 +1,6 @@
 import { ScenePlanRepair } from './ScenePlanRepair';
 import { sceneLedgerIssues } from '../../supabase/functions/_shared/sceneLedger';
+import { pageTextChangeUpdates } from '../lib/backMatter';
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,11 +54,10 @@ export const PageEditor: React.FC<PageEditorProps> = ({
   const updatePageText = (pageNumber: number, text: string) => {
     // Editing the wording settles the generation-time contract flag: the
     // editor's own gate recomputes the shared contract from the current
-    // text, so the stale flag must not linger on the page object.
-    const updatedPages = pages.map(page =>
-      page.page === pageNumber ? { ...page, text, textNeedsFix: undefined, textContractIssues: undefined } : page
-    );
-    onConfigChange({ pages: updatedPages });
+    // text, so the stale flag must not linger on the page object. A text
+    // change also voids the back-cover blurb written from the old words,
+    // and clears the title when the thing it names is edited out.
+    onConfigChange(pageTextChangeUpdates(config, pageNumber, text));
   };
 
   const toggleImageLock = (pageNumber: number) => {

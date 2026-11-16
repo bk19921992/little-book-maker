@@ -1,6 +1,8 @@
 // Pure verse typesetting for export-pdf. Kept free of remote imports so it
 // can be unit tested (typeset.test.ts) with real font metrics.
 
+import { splitTitleAndThe } from '../_shared/title.ts';
+
 // Only the font method the typesetter needs (pdf-lib's PDFFont satisfies it).
 export interface MeasuringFont {
   widthOfTextAtSize(text: string, size: number): number;
@@ -84,6 +86,25 @@ export function wrapTitle(
   if (best) return best.lines;
   const mid = Math.ceil(words.length / 2);
   return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
+}
+
+// Greedy word wrap to a measure, for multi-line blocks like the back-cover
+// blurb. Returns one line when the text fits; never drops a word.
+export function wrapToMeasure(text: string, font: MeasuringFont, fontSize: number, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const w of words) {
+    const candidate = line ? `${line} ${w}` : w;
+    if (line && font.widthOfTextAtSize(candidate, fontSize) > maxWidth) {
+      lines.push(line);
+      line = w;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
 }
 
 // Typographic normalisation for every rendered string: curly apostrophes and
@@ -274,6 +295,16 @@ export function fitTitle(
   startSize: number,
   floorSize: number,
 ): { size: number; lines: string[]; belowReadable: boolean } {
+  // The "{Child} and the {thing}" form always breaks before "and the" -
+  // never one line, never mid-phrase (14 Nov 2026 book-quality review).
+  const forced = splitTitleAndThe(title);
+  if (forced) {
+    const HARD_MIN_FORCED = 8;
+    let size = Math.round(startSize);
+    const widest = () => Math.max(...forced.map((l) => font.widthOfTextAtSize(l, size)));
+    while (size > HARD_MIN_FORCED && widest() > maxWidth) size--;
+    return { size, lines: [...forced], belowReadable: size < TITLE_READABLE_MIN };
+  }
   let size = Math.round(startSize);
   const floor = Math.round(floorSize);
   while (size > floor && font.widthOfTextAtSize(title, size) > maxWidth) size--;
@@ -335,6 +366,15 @@ export function fitCoverTitle(
   startSize: number,
   floorSize: number,
 ): { size: number; lines: string[]; belowReadable: boolean } {
+  // Same fixed-form rule as fitTitle, with the cover's per-letter measure.
+  const forced = splitTitleAndThe(title);
+  if (forced) {
+    const HARD_MIN_FORCED = 8;
+    let size = Math.round(startSize);
+    const widest = () => Math.max(...forced.map((l) => coverLineMeasure(l, font, size)));
+    while (size > HARD_MIN_FORCED && widest() > maxWidth) size--;
+    return { size, lines: [...forced], belowReadable: size < TITLE_READABLE_MIN };
+  }
   let size = Math.round(startSize);
   const floor = Math.round(floorSize);
   while (size > floor && coverLineMeasure(title, font, size) > maxWidth) size--;
@@ -444,4 +484,4 @@ export function layoutCoverTitle(
     }
   });
   return { placements, lineWidths };
-}
+      }

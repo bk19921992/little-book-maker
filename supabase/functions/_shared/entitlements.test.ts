@@ -5,7 +5,12 @@ import { paymentProblem, type PaymentIntentLike } from './entitlements.ts'
 
 const pi = (over: Partial<PaymentIntentLike> = {}, meta: Record<string, string> = {}): PaymentIntentLike => ({
   id: 'pi_1', status: 'succeeded', amount: 299, currency: 'gbp',
-  metadata: { user_id: 'u1', story_id: 's1', item: 'export', ...meta }, ...over,
+  metadata: { user_id: 'u1', story_id: 's1', item: 'export', application: 'story-sprout', ...meta }, ...over,
+})
+
+test('payments without the application tag are never grantable', () => {
+  assert.match(paymentProblem(pi({ metadata: { user_id: 'u1', story_id: 's1', item: 'export' } }))!, /not from this application/)
+  assert.match(paymentProblem(pi({}, { application: 'other-app' }))!, /not from this application/)
 })
 
 test('a succeeded, correctly priced payment for this user and book is accepted', () => {
@@ -24,8 +29,8 @@ test('status, amount, currency and item are enforced', () => {
 test('a payment is bound to its account and its book', () => {
   assert.match(paymentProblem(pi(), { userId: 'u2' })!, /account/)
   assert.match(paymentProblem(pi(), { storyId: 'other-book' })!, /different book/)
-  assert.match(paymentProblem(pi({ metadata: { item: 'export', story_id: 's1' } }))!, /no account/)
-  assert.match(paymentProblem(pi({ metadata: { item: 'export', user_id: 'u1' } }))!, /no book/)
+  assert.match(paymentProblem(pi({ metadata: { item: 'export', story_id: 's1', application: 'story-sprout' } }))!, /no account/)
+  assert.match(paymentProblem(pi({ metadata: { item: 'export', user_id: 'u1', application: 'story-sprout' } }))!, /no book/)
 })
 
 test('server-recorded amount survives a later price change; forged amount fails', () => {
