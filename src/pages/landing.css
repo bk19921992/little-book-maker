@@ -94,3 +94,14 @@
 .sprout-price {font-family:Georgia,serif;font-size:2.75rem;line-height:1.2;margin-block:var(--sprout-space-6);font-variant-numeric:tabular-nums;}
 .sprout-price-grid .sprout-button {margin-top:var(--sprout-space-6);gap:var(--sprout-space-3);}
 @media(max-width:760px){.sprout-audience,.sprout-print,.sprout-price-grid{grid-template-columns:1fr;gap:var(--sprout-space-8);}.sprout-landing h1{font-size:clamp(2.35rem,9vw,3.5rem);}.sprout-pricing,.sprout-audience,.sprout-print{padding-block:var(--sprout-space-12);}}
+.sprout-actions{display:flex;flex-wrap:wrap;gap:var(--sprout-space-4);align-items:center;margin-top:var(--sprout-space-6)}
+.sprout-secondary{display:inline-flex;align-items:center;gap:8px;min-height:46px;padding:0 18px;border:1px solid rgba(96,66,34,.25);border-radius:999px;color:var(--sprout-ink);font-weight:700;text-decoration:none;background:rgba(255,255,255,.5)}
+.sprout-secondary:hover{background:#fff;border-color:rgba(96,66,34,.45)}
+.sprout-sample-hero{display:grid;grid-template-columns:1.05fr .95fr;gap:var(--sprout-space-16);align-items:center;padding-block:var(--sprout-space-16)}
+.sprout-sample-pages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sprout-space-4);padding-block:var(--sprout-space-12);border-top:1px solid var(--sprout-line)}
+.sprout-sample-page{min-height:210px;padding:var(--sprout-space-8);border:1px solid rgba(96,66,34,.16);border-radius:24px;background:rgba(255,255,255,.64);box-shadow:0 18px 40px rgba(71,49,25,.08)}
+.sprout-page-number{display:inline-flex;margin-bottom:var(--sprout-space-5);font-size:.78rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--sprout-muted)}
+.sprout-sample-page p{margin:0;font-family:Georgia,'Times New Roman',serif;font-size:clamp(1.25rem,2vw,1.55rem);line-height:1.55;color:var(--sprout-ink)}
+.sprout-sample-edit{display:grid;grid-template-columns:.9fr 1.1fr;gap:var(--sprout-space-12);align-items:end;padding-block:var(--sprout-space-12);border-top:1px solid var(--sprout-line)}
+.sprout-sample-edit>p{color:var(--sprout-muted);font-size:1.05rem;max-width:58ch}
+@media(max-width:760px){.sprout-sample-hero,.sprout-sample-pages,.sprout-sample-edit{grid-template-columns:1fr}.sprout-sample-page{min-height:0}}
