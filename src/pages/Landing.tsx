@@ -18,7 +18,7 @@ export default function Landing() {
       <a className="sprout-skip" href="#main">Skip to content</a>
       <header className="sprout-header sprout-wrap">
         <Link className="sprout-brand" to="/" aria-label="Story Sprout home"><Sprout aria-hidden="true" /><span translate="no">Story Sprout</span></Link>
-        <nav aria-label="Main navigation"><a className="sprout-nav-link" href="#how-it-works">How it works</a><Link className="sprout-nav-link" to="/app">Sign in <ArrowRight aria-hidden="true" /></Link></nav>
+        <nav aria-label="Main navigation"><a className="sprout-nav-link" href="#how-it-works">How it works</a><Link className="sprout-nav-link" to="/sample">See a sample</Link><Link className="sprout-nav-link" to="/app">Sign in <ArrowRight aria-hidden="true" /></Link></nav>
       </header>
       <main id="main">
         <section className="sprout-hero sprout-wrap" aria-labelledby="hero-title">
@@ -26,7 +26,7 @@ export default function Landing() {
             <p className="sprout-eyebrow"><BookOpen aria-hidden="true" /> A little story. A world of their own.</p>
             <h1 id="hero-title">Their imagination.<br />Your next<br /><em>bedtime story.</em></h1>
             <p className="sprout-intro">Create an AI-written, illustrated book from their favourite characters and big ideas. Edit the pages, then read it together.</p>
-            <Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link>
+            <div className="sprout-actions"><Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link><Link className="sprout-secondary" to="/sample">See a sample story</Link></div>
             <p className="sprout-note">Create an account. Your first generation and PDF are free; paid downloads and printed orders are not available yet.</p>
           </div>
           <figure className="sprout-book-scene">
