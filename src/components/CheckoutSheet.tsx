@@ -64,7 +64,10 @@ const itemPrice = (item: CheckoutSheetProps['item']): number | null =>
   item === 'export' ? PRICES.exportSingle : item === 'print' ? null : PRICES.subscriptionMonthly;
 
 const itemDescription = (item: CheckoutSheetProps['item']) =>
-  item === 'export' ? 'Another book and PDF' : item === 'print' ? 'Printed book, delivered' : 'Monthly subscription';
+  item === 'export' ? 'Your book as a PDF, ready to read or print at home' : item === 'print' ? 'Your book, professionally printed and delivered' : 'Monthly subscription';
+
+const itemTitle = (item: CheckoutSheetProps['item']) =>
+  item === 'export' ? 'Get your book' : item === 'print' ? 'Your printed book' : 'Monthly subscription';
 
 // Confirm a payment (or the free first export) with the server, which checks
 // it with Stripe and records the entitlement. stripe-webhook records it too,
@@ -131,6 +134,9 @@ const PayForm = ({ amount, onPaid, onPending, onUncertain, onCancel }: {
 
   return (
     <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Secure payment by Stripe - your card details never touch our servers. Your book unlocks as soon as the payment is confirmed.
+      </p>
       <PaymentElement options={{ layout: 'tabs' }} />
       {error && <div className="text-sm text-destructive bg-destructive/10 p-2 rounded">{error}</div>}
       <div className="flex gap-2">
@@ -348,7 +354,7 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
   return (
     <Card className="w-full max-w-md">
       <CardHeader>
-        <CardTitle>Your book download</CardTitle>
+        <CardTitle>{itemTitle(item)}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
