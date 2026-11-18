@@ -18,6 +18,7 @@ function HomeRoute() {
 const TestimonialPreview = import.meta.env.DEV && import.meta.env.VITE_SHOW_TESTIMONIAL_PREVIEW === "true" ? lazy(() => import("./pages/TestimonialPreview")) : null;
 const ExportProofPreview = import.meta.env.DEV && import.meta.env.VITE_SHOW_EXPORT_PROOF === "true" ? lazy(() => import("./pages/ExportProofPreview")) : null;
 const BookApp = lazy(() => import("./pages/BookApp"));
+const Sample = lazy(() => import("./pages/Sample"));
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -32,6 +33,7 @@ const App = () => (
             {TestimonialPreview && <Route path="/design-preview" element={<Suspense fallback={<p role="status">Opening preview...</p>}><TestimonialPreview /></Suspense>} /> }
             {ExportProofPreview && <Route path="/export-proof" element={<Suspense fallback={<p role="status">Opening preview...</p>}><ExportProofPreview /></Suspense>} /> }
             <Route path="/" element={<HomeRoute />} />
+            <Route path="/sample" element={<Suspense fallback={<p role="status" className="p-8 text-center">Opening sample story...</p>}><Sample /></Suspense>} />
             <Route
               path="/app"
               element={(
