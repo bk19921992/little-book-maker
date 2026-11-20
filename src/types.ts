@@ -60,6 +60,10 @@ export interface StoryConfig {
   formatReason?: string | null;  // why the AI picked this format (auto mode)
   imageSeed?: number | null;
 
+  // Private account photos used as illustration references, keyed by the
+  // character name they belong to. Privacy rules in docs/CAPABILITIES.md.
+  characterPhotos?: Record<string, { id: string; storagePath: string }>;
+
   continuityReview?: SequenceReview;
   scenePlanDraft?: {outline:StoryOutline;styleBible:StyleBible;format?:PlanFormatSuggestion|null;issues:string[]};
 

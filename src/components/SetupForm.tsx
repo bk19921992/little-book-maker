@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, X, BookOpen, Palette, Users, MapPin } from 'lucide-react';
 import { StoryConfig, ReadingLevel } from '../types';
 import { FormatPicker } from './FormatPicker';
+import { CharacterPhotoPicker } from './CharacterPhotoPicker';
 import { validateStoryConfig } from '../lib/validation';
 import { themePresets, storyTypePresets, characterPresets, settingPresets } from '../lib/presets';
 
@@ -18,6 +19,7 @@ interface SetupFormProps {
   onConfigChange: (updates: Partial<StoryConfig>) => void;
   onNext: () => void;
   canProceed: boolean;
+  userId?: string | null;
 }
 
 export const SetupForm: React.FC<SetupFormProps> = ({
@@ -25,6 +27,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
   onConfigChange,
   onNext,
   canProceed,
+  userId,
 }) => {
   const missingChoices = validateStoryConfig(config);
   const choiceTargets: Record<string, { id: string; label: string }> = {
@@ -347,6 +350,14 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               </Badge>
             ))}
           </div>
+          {userId && config.characters.length > 0 && (
+            <CharacterPhotoPicker
+              characters={config.characters}
+              photos={config.characterPhotos ?? {}}
+              onChange={(characterPhotos) => onConfigChange({ characterPhotos })}
+              userId={userId}
+            />
+          )}
         </CardContent>
       </Card>
 

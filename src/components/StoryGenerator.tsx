@@ -209,6 +209,7 @@ export const StoryGenerator: React.FC = () => {
             onConfigChange={updateConfig}
             onNext={handleNext}
             canProceed={canProceedToNext()}
+            userId={user?.id ?? null}
           />
         )}
         
