@@ -17,6 +17,10 @@ export const ADDITIONAL_BOOK_POLICY = 'When paid checkout opens, each additional
 export const PRINT_ORDERS_ENABLED = false;
 
 // Capability gates (docs/CAPABILITIES.md). Ship each slice behind its flag.
-export const PHOTO_UPLOAD_ENABLED = false;
-export const CHAPTER_BOOKS_ENABLED = false;
+export const PHOTO_UPLOAD_ENABLED = true;
+export const CHAPTER_BOOKS_ENABLED = true;
+// Chaptered books are free-first-book only until Ben sets their price
+// (AI cost runs roughly 2-3x a picture book). Paid checkout refuses them.
+export const CHAPTER_BOOKS_PAID_ENABLED = false;
+export const CHAPTER_BOOK_PAID_NOTICE = 'Chapter books are brand new. Paid chapter books are coming soon - your first book is still free.';
 export const CHAPTER_BOOK_MAX_TOTAL_PAGES = 24;

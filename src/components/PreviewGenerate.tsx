@@ -16,6 +16,7 @@ import { imageConfig } from '../lib/imageRequest';
 import { writeResultUpdates } from '../lib/backMatter';
 import { applyJobItems, finishedBookConfig, illustrationTracker, runImageJob } from '../lib/imageJob';
 import { CheckoutSheet } from './CheckoutSheet';
+import { CHAPTER_BOOKS_PAID_ENABLED, CHAPTER_BOOK_PAID_NOTICE } from '../lib/pricing';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { clearCheckpoint, saveCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
 import { saveBook } from '../lib/savedBooks';
@@ -221,7 +222,11 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate story';
       setError(errorMessage);
-      if (errorMessage.includes('Payment required to create another book.')) setShowBookCheckout(true);
+      if (errorMessage.includes('Payment required to create another book.')) {
+        // Chaptered books stay free-first-book only until their price is set.
+        if (book.bookType === 'chaptered' && !CHAPTER_BOOKS_PAID_ENABLED) setError(CHAPTER_BOOK_PAID_NOTICE);
+        else setShowBookCheckout(true);
+      }
       else toast.error(errorMessage);
       setCurrentStep('idle');
       setProgress(0);

@@ -19,7 +19,7 @@ import {
 import { StoryConfig } from '../types';
 import { api } from '../api';
 import { toast } from 'sonner';
-import { PRINT_ORDERS_ENABLED } from '@/lib/pricing';
+import { PRINT_ORDERS_ENABLED, CHAPTER_BOOKS_PAID_ENABLED, CHAPTER_BOOK_PAID_NOTICE } from '@/lib/pricing';
 import { CheckoutSheet } from '@/components/CheckoutSheet';
 import { recheckUnreviewedImages } from '../lib/reviewGate';
 import { Input } from '@/components/ui/input';
@@ -185,7 +185,15 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
             if (!current()) return;
             await exportPDF(operation);
           },
-          () => { if (current()) setShowExportCheckout(true); });
+          () => {
+            if (!current()) return;
+            // Chaptered books stay free-first-book only until their price is set.
+            if (config.bookType === 'chaptered' && !CHAPTER_BOOKS_PAID_ENABLED) {
+              setExportError(CHAPTER_BOOK_PAID_NOTICE);
+              return;
+            }
+            setShowExportCheckout(true);
+          });
       } catch (error) {
         if (current()) {
           toast.error(error instanceof Error ? error.message : 'Your book download could not be checked.');
