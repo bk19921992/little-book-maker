@@ -24,6 +24,7 @@ import { StoryConfig, StoryPage } from '../types';
 import { imageConfig, pickReferenceImage } from '../lib/imageRequest';
 import { applyJobItems, runImageJob } from '../lib/imageJob';
 import { editorExportIssues, fitPageLines, countWords, getPageTextStatus, getWordCountStatus, pageFitAdvice, wordCountTargets } from '../lib/validation';
+import { chapterStartingAt } from '../lib/chapters';
 import { toast } from 'sonner';
 import { api } from '../api';
 import { ContinuityReview } from './ContinuityReview';
@@ -196,7 +197,14 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                     `}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium">Page {page.page}</span>
+                      <span className="font-medium">
+                        Page {page.page}
+                        {chapterStartingAt(config.outline, page.page) && (
+                          <span className="block text-xs font-normal opacity-80">
+                            Chapter {chapterStartingAt(config.outline, page.page)!.number}: {chapterStartingAt(config.outline, page.page)!.title}
+                          </span>
+                        )}
+                      </span>
                       <div className="flex gap-1">
                         {status.text === 'complete' ? (
                           <CheckCircle className="w-4 h-4 text-story-nature" />
@@ -231,6 +239,11 @@ export const PageEditor: React.FC<PageEditorProps> = ({
                     <div className="flex items-center gap-2">
                       <Edit3 className="w-5 h-5 text-primary" />
                       Page {currentPage.page} Text
+                      {chapterStartingAt(config.outline, currentPage.page) && (
+                        <Badge variant="outline" className="ml-2 text-story-nature border-story-nature">
+                          Chapter {chapterStartingAt(config.outline, currentPage.page)!.number}: {chapterStartingAt(config.outline, currentPage.page)!.title}
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <Badge variant="outline">

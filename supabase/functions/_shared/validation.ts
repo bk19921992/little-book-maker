@@ -39,9 +39,60 @@ export function validateStoryConfig(config: Record<string, unknown>): string | n
   if (text(personal.dedication).length > 200) return 'Dedication must be 200 characters or fewer.';
 
   const pages = Number(config.lengthPages);
-  if (!Number.isInteger(pages) || pages < 6 || pages > 20) {
-    return 'Story length must be between 6 and 20 pages.';
+  const chaptered = config.bookType === 'chaptered';
+  const maxPages = chaptered ? 24 : 20;
+  if (!Number.isInteger(pages) || pages < 6 || pages > maxPages) {
+    return chaptered
+      ? 'Chapter book length must be between 6 and 24 pages.'
+      : 'Story length must be between 6 and 20 pages.';
+  }
+  if (chaptered) {
+    const chapters = Number(config.chapterCount);
+    if (!Number.isInteger(chapters) || chapters < 2 || chapters > 6) {
+      return 'A chapter book needs between 2 and 6 chapters.';
+    }
+    if (pages % chapters !== 0) {
+      return 'Chapters must all be the same number of pages.';
+    }
   }
 
   return null;
+}
+
+export interface ChapterPlan {
+  number: number;
+  title: string;
+  startPage: number;
+  endPage: number;
+}
+
+/**
+ * Normalize the planner's chapter outline for a chaptered book.
+ * Chapters must cover pages 1..lengthPages contiguously, in order, with
+ * equal page counts and a non-empty title each. Returns null when the
+ * model's shape cannot be trusted, so the caller can retry or fail safe.
+ */
+export function coerceChapterPlan(
+  raw: unknown,
+  lengthPages: number,
+  chapterCount: number,
+): ChapterPlan[] | null {
+  if (!Array.isArray(raw) || raw.length !== chapterCount) return null;
+  if (chapterCount < 1 || lengthPages % chapterCount !== 0) return null;
+  const perChapter = lengthPages / chapterCount;
+  const chapters: ChapterPlan[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i] as Record<string, unknown> | null;
+    if (!c || typeof c !== 'object') return null;
+    const title = typeof c.title === 'string' ? c.title.trim() : '';
+    if (!title || title.length > 80) return null;
+    const startPage = Number(c.startPage);
+    const endPage = Number(c.endPage);
+    const expectedStart = i * perChapter + 1;
+    if (startPage !== expectedStart || endPage !== expectedStart + perChapter - 1) {
+      return null;
+    }
+    chapters.push({ number: i + 1, title, startPage, endPage });
+  }
+  return chapters;
 }

@@ -873,11 +873,18 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const bandHeight = band.bandHeight;
     const bandTop = bandHeight;
 
+    // Chapter books: a chapter opening gets its heading in a strip between
+    // the art and the text band. Split layout only - on overlay pages the
+    // strip would sit on the artwork, so the heading is left to the reader.
+    const chapterList = Array.isArray(config?.outline?.chapters) ? config.outline.chapters : [];
+    const chapterHere = chapterList.find((c: {startPage?:number;title?:string}) => c && c.startPage === page.page && typeof c.title === 'string' && c.title.trim()) || null;
+    const headingStrip = chapterHere && !overlay ? cv(10) : 0;
+
     // Text block geometry: common left axis, centred as a block.
     const blockWidth = lineWidths.length ? Math.max(...lineWidths) : 0;
 
-    // Artwork region: everything above the band.
-    const artHeight = pageHeight - bandTop;
+    // Artwork region: everything above the band (and the chapter strip).
+    const artHeight = pageHeight - bandTop - headingStrip;
 
     let imagePlaced = false;
     if (!page.imageLocked && page.imageUrl) {
@@ -916,7 +923,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
             const placed = includeBleed ? printPlacement(region, pixels, DPI_MINIMUM) : { width: fit.width, height: fit.height };
             storyPage.drawImage(embeddedImage, {
               x: (includeBleed ? safeInset : 0) + fit.x + (fit.width - placed.width) / 2,
-              y: bandTop + fit.y + (fit.height - placed.height) / 2,
+              y: bandTop + headingStrip + fit.y + (fit.height - placed.height) / 2,
               width: placed.width,
               height: placed.height,
             });
@@ -957,6 +964,20 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         font: fonts.text,
         color: rgb(0.6, 0.6, 0.6),
       });
+    }
+
+    if (headingStrip) {
+      const heading = normaliseTypography(`Chapter ${chapterHere.number}: ${chapterHere.title.trim()}`);
+      const headingSize = 13;
+      const headingWidth = fonts.display.widthOfTextAtSize(heading, headingSize);
+      storyPage.drawText(heading, {
+        x: (pageWidth - headingWidth) / 2,
+        y: bandTop + cv(3),
+        size: headingSize,
+        font: fonts.display,
+        color: INK,
+      });
+      qa.push({ where: `page ${page.page}`, severity: 'pass', check: `chapter opening heading typeset: ${heading}` });
     }
 
     // Paper band (opaque) over the bottom of the page for overlay pages; for

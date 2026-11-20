@@ -52,6 +52,8 @@ export interface StoryConfig {
     dedication?: string;
   };
   contentSafety: boolean;           // must be true to generate
+  bookType?: 'picture' | 'chaptered';  // default 'picture'; chaptered = long multi-chapter book
+  chapterCount?: number;               // 2-6 when chaptered; lengthPages = chapterCount x pagesPerChapter
   storyId?: string;                 // per-book id, set when planning starts (billing + future saving)
   imageStyle: 'Picture-book' | 'Watercolour' | 'Crayon' | 'Paper cut-out' | 'Cartoon line art' | { other: string };
   formatMode: FormatMode;         // 'auto' = AI picks shape+layout per story after planning
@@ -86,9 +88,18 @@ export interface StyleBible {
   compositionNotes: string; // keep safe trim, allow for gutter
 }
 
+// One chapter of a chaptered book, normalised server-side (coerceChapterPlan).
+export interface ChapterHeading {
+  number: number;
+  title: string;
+  startPage: number;
+  endPage: number;
+}
+
 export interface StoryOutline {
   sceneLedger?: SceneLedger;
   pages: OutlineItem[];
+  chapters?: ChapterHeading[];   // chaptered books only
 }
 
 export interface OutlineItem {

@@ -29,8 +29,9 @@ export const validateStoryConfig = (config: StoryConfig): ValidationError[] => {
   }
 
   // Page length validation
-  if (config.lengthPages < 6 || config.lengthPages > 20) {
-    errors.push({ field: 'lengthPages', message: 'Story length must be between 6 and 20 pages' });
+  const maxPages = config.bookType === 'chaptered' ? 24 : 20;
+  if (config.lengthPages < 6 || config.lengthPages > maxPages) {
+    errors.push({ field: 'lengthPages', message: `Story length must be between 6 and ${maxPages} pages` });
   }
 
   // Theme validation - must have either preset or custom

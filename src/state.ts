@@ -20,6 +20,8 @@ const createInitialConfig = (): StoryConfig => ({
   // 76d4210 there is no waiver checkbox, so this can no longer start false or
   // "Create My Story" stays disabled for everyone.
   contentSafety: true,
+  bookType: 'picture',
+  chapterCount: 3,
   imageStyle: 'Picture-book',
   formatMode: 'auto',
   pageSize: 'A5 portrait',

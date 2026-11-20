@@ -13,6 +13,9 @@ import { FormatPicker } from './FormatPicker';
 import { CharacterPhotoPicker } from './CharacterPhotoPicker';
 import { validateStoryConfig } from '../lib/validation';
 import { themePresets, storyTypePresets, characterPresets, settingPresets } from '../lib/presets';
+import { CHAPTER_BOOKS_ENABLED } from '../lib/pricing';
+
+const PAGES_PER_CHAPTER = 4;
 
 interface SetupFormProps {
   config: StoryConfig;
@@ -385,7 +388,36 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
+            {CHAPTER_BOOKS_ENABLED && (
+              <div className="space-y-2">
+                <Label>Book kind</Label>
+                <div className="flex gap-2" role="group" aria-label="Book kind">
+                  <Button type="button" size="sm" variant={(config.bookType ?? 'picture') === 'picture' ? 'default' : 'outline'}
+                    aria-pressed={(config.bookType ?? 'picture') === 'picture'}
+                    onClick={() => onConfigChange({ bookType: 'picture', lengthPages: Math.min(config.lengthPages, 20) })}>
+                    Picture book
+                  </Button>
+                  <Button type="button" size="sm" variant={config.bookType === 'chaptered' ? 'default' : 'outline'}
+                    aria-pressed={config.bookType === 'chaptered'}
+                    onClick={() => onConfigChange({ bookType: 'chaptered', chapterCount: config.chapterCount ?? 3, lengthPages: (config.chapterCount ?? 3) * PAGES_PER_CHAPTER })}>
+                    Chapter book
+                  </Button>
+                </div>
+                {config.bookType === 'chaptered' && (
+                  <>
+                    <Label>Chapters: {config.chapterCount ?? 3}</Label>
+                    <Slider aria-label="Number of chapters"
+                      value={[config.chapterCount ?? 3]}
+                      onValueChange={([value]) => onConfigChange({ chapterCount: value, lengthPages: value * PAGES_PER_CHAPTER })}
+                      min={2} max={6} step={1} className="w-full" />
+                    <p className="text-xs text-muted-foreground">
+                      A longer story in {config.chapterCount ?? 3} chapters, {PAGES_PER_CHAPTER} pages each ({config.lengthPages} pages).
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+            <div className="space-y-2" hidden={CHAPTER_BOOKS_ENABLED && config.bookType === 'chaptered'}>
               <Label>Story Length: {config.lengthPages} pages</Label>
               <Slider aria-label="Story length in pages"
                 value={[config.lengthPages]}
