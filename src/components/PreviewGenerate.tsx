@@ -224,7 +224,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       setError(errorMessage);
       if (errorMessage.includes('Payment required to create another book.')) {
         // Chaptered books stay free-first-book only until their price is set.
-        if (book.bookType === 'chaptered' && !CHAPTER_BOOKS_PAID_ENABLED) setError(CHAPTER_BOOK_PAID_NOTICE);
+        if (config.bookType === 'chaptered' && !CHAPTER_BOOKS_PAID_ENABLED) setError(CHAPTER_BOOK_PAID_NOTICE);
         else setShowBookCheckout(true);
       }
       else toast.error(errorMessage);
