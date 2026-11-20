@@ -66,7 +66,9 @@ test('component routes ownership only after existing continuity/image gates; ser
   assert.ok(flow.indexOf('recheckUnreviewedImages') < flow.indexOf('routeExistingExport'));
   assert.match(flow, /routeExistingExport\(supabase, operation\.userId, operation\.storyId,/);
   assert.match(flow, /if \(!current\(\)\) return;\s*await exportPDF\(operation\);/);
-  assert.match(flow, /\(\) => \{ if \(current\(\)\) setShowExportCheckout\(true\); \}/);
+  // The checkout callback still opens only while the operation is current;
+  // chaptered books are gated out of paid checkout until priced.
+  assert.match(flow, /if \(!current\(\)\) return;\s*\/\/ Chaptered books stay free-first-book only until their price is set\.\s*if \(config\.bookType === 'chaptered' && !CHAPTER_BOOKS_PAID_ENABLED\) \{\s*setExportError\(CHAPTER_BOOK_PAID_NOTICE\);\s*return;\s*\}\s*setShowExportCheckout\(true\);/);
   const server = fs.readFileSync(new URL('../../supabase/functions/export-pdf/index.ts', import.meta.url), 'utf8');
   assert.match(server, /requireUser\(req\)/);
   assert.match(server, /from\('entitlements'\)/);
