@@ -27,7 +27,7 @@ export default function Landing() {
             <h1 id="hero-title">Their imagination.<br />Your next<br /><em>bedtime story.</em></h1>
             <p className="sprout-intro">Create an AI-written, illustrated book from their favourite characters and big ideas. Edit the pages, then read it together.</p>
             <div className="sprout-actions"><Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link><Link className="sprout-secondary" to="/sample">See a sample story</Link></div>
-            <p className="sprout-note">Create an account. Your first generation and PDF are free; paid downloads and printed orders are not available yet.</p>
+            <p className="sprout-note">Create an account. Your first generation and PDF are free; each additional book and PDF is £2.99. Printed orders are not available yet.</p>
           </div>
           <figure className="sprout-book-scene">
             <div className="sprout-art"><img src={hero} width="1429" height="804" fetchPriority="high" alt="Two friendly illustrated dragons sitting on the pages of an open storybook" /></div>

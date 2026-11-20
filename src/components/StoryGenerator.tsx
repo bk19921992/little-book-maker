@@ -182,7 +182,7 @@ export const StoryGenerator: React.FC = () => {
               <img src={heroImage} width="1429" height="804" alt="" className="hidden sm:block w-28 rounded-xl shrink-0" />
               <div className="min-w-0">
                 <p className="font-display text-lg font-semibold">A story to make your own</p>
-                <p className="mt-1 text-sm text-muted-foreground">Choose the characters and setting, review the story, then download a PDF. Your first book is free. Paid downloads and printed orders are not available yet.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Choose the characters and setting, review the story, then download a PDF. Your first book is free. Each additional book and PDF costs £2.99. Printed orders are not available yet.</p>
               </div>
             </div>
           </section>
