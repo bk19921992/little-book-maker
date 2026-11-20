@@ -9,7 +9,7 @@ const questions = [
   ['How do I get my book?', 'Download your finished book as a PDF to read together or print at home. Your books are saved to your account.'],
   ['Is there a free book?', 'Your first PDF download is free. Re-download that same book without paying again. Additional books will be £2.99 each when paid checkout opens.'],
   ['Can I order a printed book?', 'Not yet. Printed book ordering is still in preparation. For now, you can download a PDF.'],
-  ['How are the stories made?', 'Story Sprout uses AI to write and illustrate your story from your choices. Always review the words and pictures before sharing them with a child.'],
+  ['How are the stories made?', 'Make, from The Children\'s Library, uses AI to write and illustrate your story from your choices. Always review the words and pictures before sharing them with a child.'],
 ];
 
 export default function Landing() {
@@ -17,7 +17,7 @@ export default function Landing() {
     <div className="sprout-landing">
       <a className="sprout-skip" href="#main">Skip to content</a>
       <header className="sprout-header sprout-wrap">
-        <Link className="sprout-brand" to="/" aria-label="Story Sprout home"><Sprout aria-hidden="true" /><span translate="no">Story Sprout</span></Link>
+        <Link className="sprout-brand" to="/" aria-label="Make, by The Children's Library - home"><img src="/favicon.svg" alt="" width="28" height="28" /><span translate="no">Make</span><span className="sprout-brand-parent">The Children's Library</span></Link>
         <nav aria-label="Main navigation"><a className="sprout-nav-link" href="#how-it-works">How it works</a><Link className="sprout-nav-link" to="/sample">See a sample</Link><Link className="sprout-nav-link" to="/app">Sign in <ArrowRight aria-hidden="true" /></Link></nav>
       </header>
       <main id="main">
@@ -49,7 +49,7 @@ export default function Landing() {
         <section className="sprout-story-note" aria-labelledby="story-note-title"><div className="sprout-wrap"><BookOpen aria-hidden="true" /><p className="sprout-eyebrow">For the stories only you would think of</p><h2 id="story-note-title">A brave little fox.<br />A very shy dragon.<br />Whatever comes next.</h2><p>You choose the world. Leave room for a little wonder.</p><Link className="sprout-button" to="/app?mode=sign-up">Make a story of your own <ArrowRight aria-hidden="true" /></Link></div></section>
         <section className="sprout-faq sprout-wrap" aria-labelledby="faq-title"><div><p className="sprout-eyebrow">Before you begin</p><h2 id="faq-title">A few things<br />worth knowing.</h2><p>Start with your free PDF. Paid downloads and printed orders are still in preparation.</p></div><div className="sprout-questions">{questions.map(([question, answer]) => <details key={question}><summary>{question}<ChevronDown aria-hidden="true" /></summary><p>{answer}</p></details>)}</div></section>
       </main>
-      <footer className="sprout-footer sprout-wrap"><Link className="sprout-brand" to="/"><Sprout aria-hidden="true" /><span translate="no">Story Sprout</span></Link><p>Little books. Made for reading together.</p><a href="https://thechildrenslibrary.uk" target="_blank" rel="noopener">Free book picks by age at The Children's Library</a><Link to="/app">Open your books <ArrowRight aria-hidden="true" /></Link></footer>
+      <footer className="sprout-footer sprout-wrap"><Link className="sprout-brand" to="/"><img src="/favicon.svg" alt="" width="28" height="28" /><span translate="no">Make</span><span className="sprout-brand-parent">The Children's Library</span></Link><p>Little books. Made for reading together.</p><a href="https://thechildrenslibrary.uk" target="_blank" rel="noopener">Book picks by age at The Children's Library</a><Link to="/app">Open your books <ArrowRight aria-hidden="true" /></Link></footer>
     </div>
   );
 }

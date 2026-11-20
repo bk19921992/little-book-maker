@@ -1,7 +1,7 @@
-/* Story Sprout brand tokens. Editorial storybook palette, 4px spacing scale. */
+/* The Children's Library brand tokens. Editorial storybook palette, 4px spacing scale. Shared with thechildrenslibrary.uk. */
 .sprout-landing {
-  --sprout-paper: #faf7ef; --sprout-ink: #293d32; --sprout-muted: #5b665a;
-  --sprout-green: #2f5944; --sprout-hover: #244532; --sprout-tint: #e8eedf;
+  --sprout-paper: #f2efe9; --sprout-ink: #293d32; --sprout-muted: #5b665a;
+  --sprout-green: #52704f; --sprout-hover: #44603f; --sprout-tint: #e8eedf;
   --sprout-line: #d7dccd; --sprout-gold: #e5b969;
   --sprout-space-1: .25rem; --sprout-space-2: .5rem; --sprout-space-3: .75rem;
   --sprout-space-4: 1rem; --sprout-space-6: 1.5rem; --sprout-space-8: 2rem;
@@ -15,7 +15,8 @@
 .sprout-wrap {width: min(100% - var(--sprout-space-12), 1180px); margin-inline: auto;}
 .sprout-header {display: flex; align-items: center; justify-content: space-between; gap: var(--sprout-space-6); padding-block: var(--sprout-space-6); border-bottom: 1px solid var(--sprout-line);}
 .sprout-brand {display: inline-flex; gap: var(--sprout-space-2); align-items: center; font-weight: 800; font-size: 1.25rem; letter-spacing: -.04em; min-height: var(--sprout-control); text-decoration: none;}
-.sprout-brand svg {width: 1.75rem; height: 1.75rem;}
+.sprout-brand svg,.sprout-brand img {width: 1.75rem; height: 1.75rem;}
+.sprout-brand-parent {font-size: .8rem; font-weight: 700; letter-spacing: 0; color: var(--sprout-muted);}
 .sprout-header nav {display: flex; gap: var(--sprout-space-8); align-items: center;}
 .sprout-nav-link {display: inline-flex; align-items: center; gap: var(--sprout-space-2); font-size: .9rem; min-height: var(--sprout-control); font-weight: 700; text-decoration: none;}
 .sprout-nav-link svg,.sprout-button svg,.sprout-footer>a svg {width: 1.125rem; height: 1.125rem;}

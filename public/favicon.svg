@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">The Children's Library</title>
+  <rect width="64" height="64" rx="8" fill="#f2efe9"/>
+  <path d="M8 15c8-3 16-2 24 4v34c-8-6-16-7-24-4z" fill="#ffffff" stroke="#52704f" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M56 15c-8-3-16-2-24 4v34c8-6 16-7 24-4z" fill="#ffffff" stroke="#52704f" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M32 19v34" fill="none" stroke="#52704f" stroke-width="3" stroke-linecap="round"/>
+  <path d="M43 14v13l4-3 4 3V14" fill="#c8614f" stroke="#8e3f32" stroke-width="2" stroke-linejoin="round"/>
+</svg>

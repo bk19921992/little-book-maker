@@ -61,7 +61,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     <main className="min-h-screen flex items-center justify-center bg-gradient-soft px-4">
       <Card className="w-full max-w-md shadow-xl">
         <CardHeader className="text-center space-y-2">
-          <Link to="/" className="text-sm underline underline-offset-4">Story Sprout home</Link>
+          <Link to="/" className="text-sm underline underline-offset-4">Make home</Link>
           <h1 className="text-2xl font-display font-semibold leading-none tracking-tight">
             {mode === 'sign-in' ? 'Sign in to continue' : 'Create your account'}
           </h1>

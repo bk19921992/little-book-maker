@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, BookOpen, PencilLine, Sprout } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, PencilLine } from 'lucide-react';
 import hero from '@/assets/storybook-hero.jpg';
 import './landing.css';
 
@@ -17,7 +17,7 @@ export default function Sample() {
     <div className="sprout-landing">
       <a className="sprout-skip" href="#main">Skip to content</a>
       <header className="sprout-header sprout-wrap">
-        <Link className="sprout-brand" to="/" aria-label="Story Sprout home"><Sprout aria-hidden="true" /><span translate="no">Story Sprout</span></Link>
+        <Link className="sprout-brand" to="/" aria-label="Make, by The Children's Library - home"><img src="/favicon.svg" alt="" width="28" height="28" /><span translate="no">Make</span><span className="sprout-brand-parent">The Children's Library</span></Link>
         <nav aria-label="Main navigation"><Link className="sprout-nav-link" to="/">Home</Link><Link className="sprout-nav-link" to="/app">Sign in <ArrowRight aria-hidden="true" /></Link></nav>
       </header>
       <main id="main">
@@ -49,7 +49,7 @@ export default function Sample() {
           <p>Generated stories are a starting point. You can edit the words, review the illustrations and download the finished PDF when it feels right.</p>
         </section>
       </main>
-      <footer className="sprout-footer sprout-wrap"><Link className="sprout-brand" to="/"><Sprout aria-hidden="true" /><span translate="no">Story Sprout</span></Link><p>Little books. Made for reading together.</p><Link to="/app">Open your books <ArrowRight aria-hidden="true" /></Link></footer>
+      <footer className="sprout-footer sprout-wrap"><Link className="sprout-brand" to="/"><img src="/favicon.svg" alt="" width="28" height="28" /><span translate="no">Make</span><span className="sprout-brand-parent">The Children's Library</span></Link><p>Little books. Made for reading together.</p><Link to="/app">Open your books <ArrowRight aria-hidden="true" /></Link></footer>
     </div>
   );
 }

@@ -111,10 +111,11 @@ export const StoryGenerator: React.FC = () => {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
           <div className="flex flex-wrap items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-center gap-2 sm:gap-3">
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-warm flex items-center justify-center">
-                <span className="text-white font-bold text-base sm:text-lg">S</span>
+              <img src="/favicon.svg" alt="" className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg" />
+              <div>
+                <p className="text-lg sm:text-xl font-display font-bold leading-tight">Make</p>
+                <p className="text-[10px] sm:text-xs text-muted-foreground leading-tight">The Children's Library</p>
               </div>
-              <p className="text-lg sm:text-xl font-display font-bold">Story Sprout</p>
             </div>
 
             {user && (
