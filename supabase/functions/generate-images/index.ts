@@ -494,11 +494,29 @@ serve(async (req) => {
     const ordered = [...(prompts as ImagePrompt[])].sort((a, b) => a.page - b.page)
     let referenceUrl: string | null = acceptedReferenceImage(body.referenceImage)
 
+    // Photo-backed anchor character, same rule as the job worker: pages whose
+    // scene features them generate from the owner's private photo. A resolve
+    // failure never fails the page - it keeps the page-continuity chain.
+    const singlePhoto = await (async () => {
+      const anchor = primaryPhotoCharacter(prompts[0]?.config)
+      if (!anchor) return null
+      const dataUrl = await photoReferenceDataUrl(async (path) => {
+        const { data } = await serviceClient().storage.from(CHARACTER_PHOTOS_BUCKET).download(path)
+        return data
+      }, user.id, anchor.ref).catch((e) => { console.error('Photo reference resolve failed:', e); return null })
+      return dataUrl ? { character: anchor.character, dataUrl } : null
+    })()
+
     for (const promptData of ordered) {
       try {
         const scene = pageScene(promptData)
 
-        const fullPrompt = buildPagePrompt(promptData, styleBible, styleAnchor, !!referenceUrl)
+        const sceneText = `${promptData.prompt || ''} ${promptData.visualBrief || ''} ${promptData.text || ''}`
+        const usePhoto = !!singlePhoto && sceneMentionsCharacter(sceneText, singlePhoto.character)
+        const fullPrompt = usePhoto
+          ? `${buildPagePrompt(promptData, styleBible, styleAnchor, false)}\n${photoReferenceClause(singlePhoto!.character)}`
+          : buildPagePrompt(promptData, styleBible, styleAnchor, !!referenceUrl)
+        const activeReference = usePhoto ? singlePhoto!.dataUrl : referenceUrl
 
         console.log(`Generating image for page ${promptData.page} with model ${model} (${size}, ${quality}${referenceUrl ? ', with reference' : ''})`)
 
@@ -518,11 +536,11 @@ serve(async (req) => {
           if (attempt > 1) {
             console.log(`Regenerating page ${promptData.page} after review rejection (attempt ${attempt}): ${review.issues.join('; ')}`)
           }
-          if (referenceUrl) {
+          if (activeReference) {
             // Fail closed: a failed reference edit fails this attempt with the
             // real error. Never fall back to plain generation - that would
             // silently drop the character reference for this page.
-            url = await editImageWithReference(openaiKey, model, size, quality, attemptPrompt, referenceUrl)
+            url = await editImageWithReference(openaiKey, model, size, quality, attemptPrompt, activeReference)
           } else {
             url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
           }
@@ -530,7 +548,7 @@ serve(async (req) => {
             label: `page ${promptData.page}`,
             brief: scene,
             config: promptData.config,
-            referenceDataUrl: referenceUrl || undefined,
+            referenceDataUrl: activeReference || undefined,
           })
           if (review.pass) break
         }
