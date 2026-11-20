@@ -8,6 +8,22 @@ export const CHARACTER_PHOTOS_BUCKET = 'character-photos'
 
 export type CharacterPhotoRef = { id: string; storagePath: string }
 
+// The first configured character that has a photo: the likeness anchor for
+// this book. One anchor keeps the edits call single-reference, same as the
+// page-continuity chain.
+export function primaryPhotoCharacter(config: {
+  characters?: string[]
+  characterPhotos?: Record<string, CharacterPhotoRef>
+} | undefined): { character: string; ref: CharacterPhotoRef } | null {
+  const photos = config?.characterPhotos
+  if (!photos) return null
+  for (const character of config?.characters ?? []) {
+    const ref = photos[character]
+    if (ref?.storagePath) return { character, ref }
+  }
+  return null
+}
+
 // Fail closed: any path outside the owner's folder, any traversal, or an
 // unexpected extension means no reference, never a guess.
 export function ownedPhotoPath(userId: string, ref: CharacterPhotoRef | undefined): string | null {
@@ -39,5 +55,14 @@ export async function photoReferenceDataUrl(
 
 // The clause the prompt builder adds when a photo reference is in play: the
 // likeness leads, the chosen illustration style still renders it.
-export const PHOTO_REFERENCE_CLAUSE =
-  'Use the supplied photo as the likeness reference for the named character: keep their face, hair and colouring recognisable, rendered in the chosen illustration style. Do not include any text from the photo.'
+export function photoReferenceClause(character: string): string {
+  return `The supplied reference is a PHOTO of the real "${character}". Use it as the likeness reference for this character: keep their face, hair and colouring recognisable, rendered in the chosen illustration style. Do not copy the photo's background, and include no text anywhere in the image.`
+}
+
+// Does this page's scene actually feature the character? Word-boundary,
+// case-insensitive match over the combined scene text.
+export function sceneMentionsCharacter(sceneText: string, character: string): boolean {
+  const escaped = character.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (!escaped) return false
+  return new RegExp(`(^|[^A-Za-z])${escaped}([^A-Za-z]|$)`, 'i').test(sceneText)
+}

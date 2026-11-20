@@ -10,6 +10,7 @@ import { acceptedReferenceImage, BACK_COVER_REVIEW_BRIEF, BACK_COVER_REVIEW_LABE
 import { ART_DIRECTION_TEST_MODEL, isServiceRoleRequest, runArtDirectionSelfTest } from "./artDirectionTest.ts"
 import { buildBlurbPrompt, validateBlurb } from "../_shared/blurb.ts"
 import { editImageWithReference, generateOneImage, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
+import { CHARACTER_PHOTOS_BUCKET, photoReferenceClause, photoReferenceDataUrl, primaryPhotoCharacter, sceneMentionsCharacter } from "../_shared/characterPhotoReference.ts"
 
 interface ImageReview {
   pass: boolean
@@ -120,6 +121,9 @@ type JobRequest = {
   size: string
   config?: StoryConfig
   title?: string
+  // The job owner's id, recorded at start so a later step can prove photo
+  // ownership before reading the private bucket.
+  userId?: string
 }
 
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -127,6 +131,24 @@ const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // One generate -> review attempt for one job item: the same prompts, edit
 // fallback and review as the single-request path below.
 function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
+  // Resolved lazily once per invocation: the owner's photo reference for
+  // this job's anchor character, or null. A resolve failure never fails the attempt.
+  let photoPromise: Promise<{ character: string; dataUrl: string } | null> | null = null
+  const resolvePhoto = (request: JobRequest) => {
+    if (!photoPromise) {
+      photoPromise = (async () => {
+        if (!request.userId) return null
+        const anchor = primaryPhotoCharacter(request.config)
+        if (!anchor) return null
+        const dataUrl = await photoReferenceDataUrl(async (path) => {
+          const { data } = await serviceClient().storage.from(CHARACTER_PHOTOS_BUCKET).download(path)
+          return data
+        }, request.userId, anchor.ref).catch((e) => { console.error('Photo reference resolve failed:', e); return null })
+        return dataUrl ? { character: anchor.character, dataUrl } : null
+      })()
+    }
+    return photoPromise
+  }
   return async ({ request, item, reference, feedback }) => {
     const env = (key: string) => Deno.env.get(key)
     const model = resolveImageModel(env)
@@ -135,20 +157,28 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
     const styleBible = buildStyleBible(request.config, request.size, request.pageLayout || 'split')
     const styleAnchor = styleProfile(request.config?.imageStyle)?.anchor || ''
     const isCover = item.page === null || !item.prompt
+    // A photo-backed character anchors likeness on the pages whose scene
+    // actually features them; other pages chain off earlier art as before.
+    const photo = isCover ? null : await resolvePhoto(request)
+    const sceneText = item.prompt ? `${item.prompt.prompt || ''} ${item.prompt.visualBrief || ''} ${item.prompt.text || ''}` : ''
+    const usePhoto = !!photo && sceneMentionsCharacter(sceneText, photo.character)
     const base = isCover
       ? buildCoverPrompt(styleBible, styleAnchor, !!reference)
-      : buildPagePrompt(item.prompt!, styleBible, styleAnchor, !!reference)
+      : usePhoto
+        ? `${buildPagePrompt(item.prompt!, styleBible, styleAnchor, false)}\n${photoReferenceClause(photo!.character)}`
+        : buildPagePrompt(item.prompt!, styleBible, styleAnchor, !!reference)
     const prompt = feedback?.length ? withReviewFeedback(base, feedback, styleAnchor) : base
+    const activeReference = usePhoto ? photo!.dataUrl : reference
     const label = isCover ? 'cover' : `page ${item.page}`
-    console.log(`Job attempt ${item.attempts + 1} for ${label} with model ${model} (${request.size}, ${quality}${reference ? ', with reference' : ''})`)
+    console.log(`Job attempt ${item.attempts + 1} for ${label} with model ${model} (${request.size}, ${quality}${activeReference ? (usePhoto ? ', with photo reference' : ', with reference') : ''})`)
 
     let url: string
-    if (reference) {
+    if (activeReference) {
       // Fail closed: a failed reference edit fails this attempt with the real
       // error. Never fall back to plain generation - that would silently drop
       // the character reference and could retry a moderation or
       // invalid-request rejection as a second paid call.
-      url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, reference)
+      url = await editImageWithReference(openaiKey, model, request.size, quality, prompt, activeReference)
     } else {
       url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
     }
@@ -159,7 +189,7 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
       // actually checked - the image prompt alone never contained them.
       brief: isCover ? COVER_REVIEW_BRIEF : pageScene(item.prompt!) + (item.prompt!.text ? `\nPage text: ${item.prompt!.text}` : ''),
       config: request.config,
-      referenceDataUrl: reference || undefined,
+      referenceDataUrl: activeReference || undefined,
     })
     return { url, review }
   }
@@ -420,6 +450,7 @@ serve(async (req) => {
     if (body.action === 'start') {
       const store = new SupabaseJobStore<JobRequest, ImagePrompt>(serviceClient())
       const request: JobRequest = {
+        userId: user.id,
         pageSize,
         pageLayout: pageLayout || 'split',
         size: resolveImageSize((key: string) => Deno.env.get(key), OPENAI_SIZES[pageSize] || '1024x1536'),

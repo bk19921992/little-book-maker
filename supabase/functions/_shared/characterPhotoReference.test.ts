@@ -30,3 +30,19 @@ test('photoReferenceDataUrl returns a data URL for an owned photo', async () => 
   const url = await photoReferenceDataUrl(async () => new Blob([bytes]), USER, good)
   assert.ok(url?.startsWith('data:image/jpeg;base64,'))
 })
+
+test('sceneMentionsCharacter matches whole names only, case-insensitive', async () => {
+  const { sceneMentionsCharacter } = await import('./characterPhotoReference.ts')
+  assert.equal(sceneMentionsCharacter('Pip and Fern walk home', 'Pip'), true)
+  assert.equal(sceneMentionsCharacter('the dog pip sits', 'pip'), true)
+  assert.equal(sceneMentionsCharacter('Pippa waves', 'Pip'), false)
+  assert.equal(sceneMentionsCharacter('a red kite', 'Pip'), false)
+})
+
+test('primaryPhotoCharacter picks the first character with a photo', async () => {
+  const { primaryPhotoCharacter } = await import('./characterPhotoReference.ts')
+  const ref = { id: PHOTO_ID, storagePath: `${USER}/${PHOTO_ID}.jpg` }
+  assert.equal(primaryPhotoCharacter(undefined), null)
+  assert.equal(primaryPhotoCharacter({ characters: ['Fern'] }), null)
+  assert.deepEqual(primaryPhotoCharacter({ characters: ['Fern', 'Pip'], characterPhotos: { Pip: ref } }), { character: 'Pip', ref })
+})
