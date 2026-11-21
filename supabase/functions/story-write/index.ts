@@ -232,6 +232,32 @@ ${CRAFT_RULES}
             console.warn(`Trimmed page ${pageOutline.page} to the last complete sentence to meet the text contract`)
           }
         }
+        if (!endsComplete(pageText)) {
+          // One focused paid pass when the mechanics could not finish the
+          // final sentence (every prefix either broke the word minimum or
+          // stayed incomplete): completing the thought beats shipping a
+          // fragment. Bounded to this failure path, two attempts.
+          for (let attempt = 0; attempt < 2 && !endsComplete(pageText); attempt++) {
+            console.log(`Finishing the final sentence on page ${pageOutline.page} (attempt ${attempt + 1})`)
+            const finish = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                model: 'gpt-4.1',
+                messages: [
+                  { role: 'system', content: 'You finish children\'s story pages so they end on a complete sentence.' },
+                  { role: 'user', content: `${revisionContext}\n\nThis page ends mid-sentence, which cannot ship. Rewrite it so it ENDS WITH A COMPLETE SENTENCE (closing punctuation), ${min}-${max} words, format: newline-separated lines, ${lineRule}. Complete or drop the unfinished final thought; keep the story beat, canonical cast identities and UK English. Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
+                ],
+                max_completion_tokens: 600
+              })
+            })
+            if (!finish.ok) break
+            const fj = await finish.json()
+            const candidate = (fj.choices?.[0]?.message?.content || '').trim()
+            const cw = countWords(candidate)
+            if (candidate.length >= 10 && cw >= min && cw <= max) pageText = candidate
+          }
+        }
         const remaining = contractViolations(pageText, config.readingLevel, config.pageSize)
         if (remaining.length) {
           // Should not happen for copy at or above the word minimum: the

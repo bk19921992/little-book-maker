@@ -56,3 +56,28 @@ test('actual handler: line-shape repair also receives canonical cast and whole-b
  const r=await run({longLine:true});assert.equal(r.response.status,200);assert.equal(r.calls.length,8)
  for(const call of r.calls.slice(1,7)){const content=call.messages.map(m=>m.content).join('\n');assert.match(content,/WHOLE-BOOK CAST LOCK/);assert.match(content,/WHOLE-BOOK DRAFT/);assert.match(content,/Rewrite this children/);assert.doesNotMatch(content,/all proper nouns/)}
 })
+
+test('actual handler: a page stuck mid-sentence gets a focused finish pass and ships complete',async()=>{
+ // One unterminated sentence: repacking cannot add closing punctuation, and
+ // dropping lines would fall under the word minimum, so only the focused
+ // finish pass can converge it.
+ const incomplete='The child held the blue teddy very tightly through the'
+ const calls:Array<{messages:Array<{content:string}>;response_format?:unknown}>=[]
+ const external:typeof fetch=async (_url,opts)=>{
+  const body=JSON.parse(String(opts?.body));calls.push(body)
+  const asksTitle=body.messages?.some((m:{content:string})=>/Write the title/.test(m.content))
+  const isRebreak=body.messages?.some((m:{content:string})=>/Rewrite this children/.test(m.content))
+  const content=asksTitle ? 'The Child and the Blue Teddy' : body.response_format ? JSON.stringify({pages:outline.pages.map(p=>({page:p.page,text:incomplete}))}) : isRebreak ? incomplete : good
+  return new Response(JSON.stringify({choices:[{message:{content}}]}))
+ }
+ let handler:(req:Request)=>Promise<Response>=()=>{throw Error('handler missing')}
+ const ctx={...draftHelpers,...craftHelpers,...castHelpers,...textHelpers,...sceneHelpers,...titleHelpers,Request,Response,JSON,Map,AbortSignal,console:{log(){},warn(){},error(){}},fetch:external,Deno:{env:{get:(key:string)=>key==='OPENAI_API_KEY'?'synthetic-key':undefined}},serve:(fn:typeof handler)=>{handler=fn},AuthError:class extends Error{},requireUser:async()=>({id:'synthetic-user'}),unauthorisedResponse:()=>new Response('unauthorized',{status:401}),getCorsHeaders:()=>({}),serviceClient:()=>({}),claimBook:async()=>true,bookPaymentRequired:()=>new Response('payment',{status:402}),validateStoryConfig:()=>null}
+ const source=fs.readFileSync(path.join(import.meta.dirname,'index.ts'),'utf8').replace(/^import[^\n]+\n/gm,'')
+ vm.runInNewContext(ts.transpile(source,{target:ts.ScriptTarget.ES2022}),ctx)
+ const response=await handler(new Request('https://test.invalid',{method:'POST',body:JSON.stringify({config,outline,storyId:'synthetic-story'})}))
+ const body=await response.json()
+ assert.equal(response.status,200)
+ const finishCalls=calls.filter(c=>c.messages.some(m=>/ends mid-sentence, which cannot ship/.test(m.content)))
+ assert.equal(finishCalls.length,6,'one finish pass per stuck page')
+ for(const page of body.pages){assert.ok(page.text.trim().endsWith('.'),`page ${page.page} ends complete`);assert.equal(page.textNeedsFix,undefined)}
+})
