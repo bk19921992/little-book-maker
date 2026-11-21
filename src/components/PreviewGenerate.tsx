@@ -16,7 +16,7 @@ import { imageConfig } from '../lib/imageRequest';
 import { writeResultUpdates } from '../lib/backMatter';
 import { applyJobItems, finishedBookConfig, illustrationTracker, runImageJob } from '../lib/imageJob';
 import { CheckoutSheet } from './CheckoutSheet';
-import { CHAPTER_BOOKS_PAID_ENABLED, CHAPTER_BOOK_PAID_NOTICE } from '../lib/pricing';
+import { CHAPTER_BOOKS_PAID_ENABLED, CHAPTER_BOOK_PAID_NOTICE, MAINTENANCE_CREDITS_PAUSED, MAINTENANCE_NOTICE } from '../lib/pricing';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { clearCheckpoint, saveCheckpoint, type GenerationCheckpoint } from '../lib/generationCheckpoint';
 import { saveBook } from '../lib/savedBooks';
@@ -225,6 +225,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       if (errorMessage.includes('Payment required to create another book.')) {
         // Chaptered books stay free-first-book only until their price is set.
         if (config.bookType === 'chaptered' && !CHAPTER_BOOKS_PAID_ENABLED) setError(CHAPTER_BOOK_PAID_NOTICE);
+        else if (MAINTENANCE_CREDITS_PAUSED) toast.error(MAINTENANCE_NOTICE);
         else setShowBookCheckout(true);
       }
       else toast.error(errorMessage);
@@ -663,7 +664,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
               onClick={resumeIllustrations}
               size="lg"
               className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"
-              disabled={isGenerating}
+              disabled={isGenerating || MAINTENANCE_CREDITS_PAUSED}
             >
               <Image className="w-5 h-5 mr-2" />
               Resume illustrations
@@ -675,7 +676,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
               onClick={()=>void generateStory()}
               size="lg"
               className="px-8 py-3 text-lg font-medium animate-gentle-bounce"
-              disabled={isGenerating}
+              disabled={isGenerating || MAINTENANCE_CREDITS_PAUSED}
             >
               <Sparkles className="w-5 h-5 mr-2" />
               Generate Story

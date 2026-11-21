@@ -13,7 +13,7 @@ import { FormatPicker } from './FormatPicker';
 import { CharacterPhotoPicker } from './CharacterPhotoPicker';
 import { validateStoryConfig } from '../lib/validation';
 import { themePresets, storyTypePresets, characterPresets, settingPresets } from '../lib/presets';
-import { CHAPTER_BOOKS_ENABLED } from '../lib/pricing';
+import { CHAPTER_BOOKS_ENABLED, MAINTENANCE_CREDITS_PAUSED, MAINTENANCE_NOTICE } from '../lib/pricing';
 
 const PAGES_PER_CHAPTER = 4;
 
@@ -613,10 +613,13 @@ export const SetupForm: React.FC<SetupFormProps> = ({
       </div>
 
       {/* Next Button */}
+      {MAINTENANCE_CREDITS_PAUSED && (
+        <p role="status" className="rounded-xl border bg-muted/50 p-4 text-sm text-center">{MAINTENANCE_NOTICE}</p>
+      )}
       <div className="flex justify-center">
         <Button
           onClick={handleCreate}
-          disabled={!canProceed}
+          disabled={!canProceed || MAINTENANCE_CREDITS_PAUSED}
           aria-describedby="setup-readiness"
           size="lg"
           className="px-4 sm:px-8 py-3 text-base sm:text-lg font-medium w-full sm:w-auto"

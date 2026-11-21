@@ -24,3 +24,9 @@ export const CHAPTER_BOOKS_ENABLED = true;
 export const CHAPTER_BOOKS_PAID_ENABLED = false;
 export const CHAPTER_BOOK_PAID_NOTICE = 'Chapter books are brand new. Paid chapter books are coming soon - your first book is still free.';
 export const CHAPTER_BOOK_MAX_TOTAL_PAGES = 24;
+
+// Temporary maintenance pause (21 Nov): the AI provider balance ran dry, so
+// story creation and paid checkout are off until it is topped up. Flip back
+// to false the moment credits land.
+export const MAINTENANCE_CREDITS_PAUSED = true;
+export const MAINTENANCE_NOTICE = 'Story creation is paused for a short while tonight while we top up our story engine. No payments are being taken. Please come back soon.';
