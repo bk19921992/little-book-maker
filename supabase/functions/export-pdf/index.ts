@@ -144,13 +144,15 @@ const OCHRE = rgb(0.714, 0.541, 0.333);   // #B68A55
 // function renders path point (px, py) at (x + px, y - py), so we emit the
 // negated PDF user-space y and place at (0,0). Optional offset and scale
 // let a small viewBox (the sprig ornament) be placed anywhere at any size.
-function mmPathToPdf(path: string, pageHeightPt: number, cv: (mm: number) => number, dxMm = 0, dyMm = 0, scale = 1): string {
+function mmPathToPdf(path: string, pageHeightPt: number, cv: (mm: number) => number, dxMm = 0, dyMm = 0, scale = 1, posCvX?: (mm: number) => number, posCvY?: (mm: number) => number): string {
   const tokens = path.match(/[MHVQZmhvqz]|-?\d*\.?\d+/g) ?? [];
   const out: string[] = [];
   let cmd = '';
   let i = 0;
-  const x = () => cv(dxMm + parseFloat(tokens[i++]) * scale).toFixed(2);
-  const y = () => (cv(dyMm + parseFloat(tokens[i++]) * scale) - pageHeightPt).toFixed(2);
+  const px = posCvX ?? cv;
+  const py = posCvY ?? cv;
+  const x = () => (px(dxMm) + cv(parseFloat(tokens[i++]) * scale)).toFixed(2);
+  const y = () => (py(dyMm) + cv(parseFloat(tokens[i++]) * scale) - pageHeightPt).toFixed(2);
   while (i < tokens.length) {
     const t = tokens[i];
     if (/[MHVQZmhvqz]/.test(t)) { cmd = t.toUpperCase(); i++; if (cmd === 'Z') { out.push('Z'); continue; } }
@@ -175,12 +177,12 @@ const SPRIG_PATHS = [
 ];
 
 // Draw the sprig centred at (cxMm, cyMm) (top-left origin), sized wMm wide.
-function drawSprig(page: PDFPage, pageHeightPt: number, cv: (mm: number) => number, cxMm: number, cyMm: number, wMm: number, color: ReturnType<typeof rgb>) {
+function drawSprig(page: PDFPage, pageHeightPt: number, cv: (mm: number) => number, cxMm: number, cyMm: number, wMm: number, color: ReturnType<typeof rgb>, posCvX?: (mm: number) => number, posCvY?: (mm: number) => number) {
   const scale = wMm / 8;
   const dx = cxMm - (8 * scale) / 2;
   const dy = cyMm - (4 * scale) / 2;
   SPRIG_PATHS.forEach((p, idx) => {
-    page.drawSvgPath(mmPathToPdf(p, pageHeightPt, cv, dx, dy, scale), idx === 0
+    page.drawSvgPath(mmPathToPdf(p, pageHeightPt, cv, dx, dy, scale, posCvX, posCvY), idx === 0
       ? { borderColor: color, borderWidth: cv(0.2) * scale }
       : { color });
   });
@@ -381,6 +383,17 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // scale it for other trim sizes so the composition holds.
   const coverScale = pageWidth / mmToPdfPoints(210);
   const cv = (mm: number) => mmToPdfPoints(mm) * coverScale;
+  // 21 Nov 2026 format fix: the pass-2 design is authored on a 210mm square
+  // artboard. Vertical geometry must scale with page HEIGHT (cvY), not
+  // width - on A4 landscape the width-derived cv pushed every y offset
+  // 1.414x too low and the story text, panel, imprint and back-cover lockup
+  // ran off the bottom edge. Type and ornaments scale with the smaller of
+  // the two scales (sizeScale) so they never distort or overflow. On
+  // 210x210 square all three scales are 1 and output is unchanged.
+  const coverScaleY = pageHeight / mmToPdfPoints(210);
+  const cvY = (mm: number) => mmToPdfPoints(mm) * coverScaleY;
+  const sizeScale = Math.min(coverScale, coverScaleY);
+  const cvS = (mm: number) => mmToPdfPoints(mm) * sizeScale;
 
   // ---- Cover ----
   // Dedicated cover art is composed with title space reserved. If it cannot
@@ -437,7 +450,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // Print (v6): the title sits above the art on a 170mm measure at up to
   // 40pt (30pt when it wraps to two lines). Web keeps its own measure.
   const maxTitleWidth = includeBleed ? cv(170) : pageWidth * TEXT_MEASURE;
-  const fitted = fitCoverTitle(titleText, coverFonts.display, maxTitleWidth, includeBleed ? Math.max(24, Math.round(40 * coverScale)) : Math.round(pageWidth * 0.085), Math.round(pageWidth * 0.05));
+  const fitted = fitCoverTitle(titleText, coverFonts.display, maxTitleWidth, includeBleed ? Math.max(24, Math.round(40 * sizeScale)) : Math.round(pageWidth * 0.085), Math.round(pageWidth * 0.05));
   const titleSize = fitted.size;
   const titleLines = fitted.lines;
   if (fitted.belowReadable) {
@@ -519,11 +532,11 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         // floor (never beyond). A dedication raises the plate so the bottom
         // text stays inside the safe margin. (Web keeps the band system:
         // the art above a paper band carrying the title.)
-        const platePt = includeBleed ? cv(dedicationText ? 128 : 136) : 0;
+        const platePt = includeBleed ? cvS(dedicationText ? 128 : 136) : 0;
         const plateX = includeBleed ? (pageWidth - platePt) / 2 : 0;
-        const plateY = includeBleed ? cv(dedicationText ? 34 : 26) : 0;
+        const plateY = includeBleed ? cvY(dedicationText ? 34 : 26) : 0;
         if (includeBleed) {
-          const framePt = cv(2);
+          const framePt = cvS(2);
           coverPage.drawRectangle({ x: plateX - framePt, y: plateY - framePt, width: platePt + framePt * 2, height: platePt + framePt * 2, color: WHITE });
         }
         const coverTitleTop = (coverBandHeight + coverBlockHeight) / 2;
@@ -558,14 +571,14 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
           // crop keeps faces below it.
           composedCover = true;
           coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PINE });
-          coverPage.drawRectangle({ x: cv(8), y: pageHeight - cv(8) - cv(194), width: cv(194), height: cv(194), borderColor: OCHRE, borderWidth: cv(0.35) });
-          coverPage.drawRectangle({ x: cv(10.5), y: pageHeight - cv(10.5) - cv(189), width: cv(189), height: cv(189), borderColor: OCHRE, borderWidth: cv(0.18) });
+          coverPage.drawRectangle({ x: cv(8), y: pageHeight - cvY(8) - cvY(194), width: cv(194), height: cvY(194), borderColor: OCHRE, borderWidth: cvS(0.35) });
+          coverPage.drawRectangle({ x: cv(10.5), y: pageHeight - cvY(10.5) - cvY(189), width: cv(189), height: cvY(189), borderColor: OCHRE, borderWidth: cvS(0.18) });
           // Art opening 178x170 at (16,24), crop to fill; keep the bottom
           // of the source image (faces), cut the sky.
           const ax = cv(16);
           const aw = cv(178);
-          const ah = cv(170);
-          const ay = pageHeight - cv(24) - ah;
+          const ah = cvY(170);
+          const ay = pageHeight - cvY(24) - ah;
           const aScale = Math.max(aw / img.width, ah / img.height);
           const adw = img.width * aScale;
           const adh = img.height * aScale;
@@ -576,7 +589,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
           );
           coverPage.drawImage(img, { x: ax - (adw - aw) / 2, y: ay, width: adw, height: adh });
           coverPage.pushOperators(popGraphicsState());
-          coverPage.drawRectangle({ x: ax, y: ay, width: aw, height: ah, borderColor: OCHRE, borderWidth: cv(0.35) });
+          coverPage.drawRectangle({ x: ax, y: ay, width: aw, height: ah, borderColor: OCHRE, borderWidth: cvS(0.35) });
           drawW = adw;
           drawH = adh;
           // Cream cartouche over the art's top strip (path from the spec,
@@ -592,13 +605,13 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
             lock1 = titleText.slice(0, coverChildName.length);
             lock2 = titleText.slice(coverChildName.length).trim();
           } else {
-            const two = fitCoverTitle(titleText, titleFont, cv(126), Math.round(55 * coverScale), Math.round(23 * coverScale));
+            const two = fitCoverTitle(titleText, titleFont, cv(126), Math.round(55 * sizeScale), Math.round(23 * sizeScale));
             lock1 = two.lines[0] ?? titleText;
             lock2 = two.lines.slice(1).join(' ');
           }
           const fitLock = (text: string, font: PDFFont, startPt: number, floorPt: number) => {
-            let s = Math.round(startPt * coverScale);
-            const floor = Math.round(floorPt * coverScale);
+            let s = Math.round(startPt * sizeScale);
+            const floor = Math.round(floorPt * sizeScale);
             while (s > floor && font.widthOfTextAtSize(text, s) > cv(126)) s--;
             return s;
           };
@@ -727,7 +740,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     // Print cover (v6): the title sits ABOVE the art on the flat cover
     // colour - ink on a contrast-verified pair, never on the art. One line
     // at 40pt with its baseline at 34mm; two lines at 26 and 38mm.
-    const titleBaseline = pageHeight - cv(titleLines.length > 1 ? 26 : 34);
+    const titleBaseline = pageHeight - cvY(titleLines.length > 1 ? 26 : 34);
     drawCoverTitle(titleBaseline);
     qa.push({
       where: 'cover',
@@ -736,8 +749,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     });
     // Byline under the art: the story type, personalised when the child's
     // name is known ("A bedtime story for Amelia"), 12pt at 194mm.
-    const bylineFit = fitSubtext(bylineText, Math.max(10, Math.round(12 * coverScale)), 10, 2, 'byline', 'shorten the story type');
-    const bylineBaseline = pageHeight - cv(dedicationText ? 186 : 194);
+    const bylineFit = fitSubtext(bylineText, Math.max(10, Math.round(12 * sizeScale)), 10, 2, 'byline', 'shorten the story type');
+    const bylineBaseline = pageHeight - cvY(dedicationText ? 186 : 194);
     bylineFit.lines.forEach((line, i) => {
       const w = coverFonts.text.widthOfTextAtSize(line, bylineFit.size);
       coverPage.drawText(line, {
@@ -830,37 +843,37 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       // Pass-2 title page (21 Nov 2026 art-direction spec): the sprig, the
       // cover's title lock-up (child name in Bold, the rest SemiBold), the
       // spot art in a circular moss-ringed crop, imprint at the foot.
-      drawSprig(tp, pageHeight, cv, 105, 56, 16, MOSS);
+      drawSprig(tp, pageHeight, cvS, 105, 56, 16, MOSS, cv, cvY);
       const tpName = coverChildName && titleText.startsWith(coverChildName) ? coverChildName : '';
       if (tpName) {
         const nameFont = fonts.bold ?? fonts.display;
-        const nameSize = Math.max(18, Math.round(42 * coverScale));
-        const nameFit = fitCoverSubtext(tpName, nameFont, pageWidth * TEXT_MEASURE, nameSize, Math.max(14, Math.round(20 * coverScale)), 1);
+        const nameSize = Math.max(18, Math.round(42 * sizeScale));
+        const nameFit = fitCoverSubtext(tpName, nameFont, pageWidth * TEXT_MEASURE, nameSize, Math.max(14, Math.round(20 * sizeScale)), 1);
         const nw = nameFont.widthOfTextAtSize(tpName, nameFit.size);
-        tp.drawText(tpName, { x: (pageWidth - nw) / 2, y: pageHeight - cv(81), size: nameFit.size, font: nameFont, color: INK });
+        tp.drawText(tpName, { x: (pageWidth - nw) / 2, y: pageHeight - cvY(81), size: nameFit.size, font: nameFont, color: INK });
         const rest = titleText.slice(tpName.length).trim();
         if (rest) {
-          const restSize = Math.max(12, Math.round(26 * coverScale));
-          const restFit = fitCoverSubtext(rest, coverFonts.display, pageWidth * TEXT_MEASURE, restSize, Math.max(10, Math.round(13 * coverScale)), 2);
+          const restSize = Math.max(12, Math.round(26 * sizeScale));
+          const restFit = fitCoverSubtext(rest, coverFonts.display, pageWidth * TEXT_MEASURE, restSize, Math.max(10, Math.round(13 * sizeScale)), 2);
           if (!restFit.fits) {
             qa.push({ where: 'title page', severity: 'fail', check: 'title page title fitted below the readable threshold; shorten the title' });
           }
           restFit.lines.forEach((line, i) => {
             const w = coverFonts.display.widthOfTextAtSize(line, restFit.size);
-            tp.drawText(line, { x: (pageWidth - w) / 2, y: pageHeight - cv(96) - i * restFit.size * 1.25, size: restFit.size, font: coverFonts.display, color: INK });
+            tp.drawText(line, { x: (pageWidth - w) / 2, y: pageHeight - cvY(96) - i * restFit.size * 1.25, size: restFit.size, font: coverFonts.display, color: INK });
           });
         }
       } else {
-        const wholeFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(34 * coverScale)), Math.round(pageWidth * 0.05));
+        const wholeFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(34 * sizeScale)), Math.round(pageWidth * 0.05));
         if (wholeFit.belowReadable) {
           qa.push({ where: 'title page', severity: 'fail', check: `title page title fitted at ${wholeFit.size}pt, below the readable threshold; shorten the title` });
         }
-        drawLetteredTitle(tp, wholeFit.lines, wholeFit.size, pageHeight - cv(81), rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
+        drawLetteredTitle(tp, wholeFit.lines, wholeFit.size, pageHeight - cvY(81), rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
       }
       if (spotImg) {
-        const cr = cv(19);
+        const cr = cvS(19);
         const cx = cv(105);
-        const cy = pageHeight - cv(133) - cr;
+        const cy = pageHeight - cvY(133) - cr;
         const k = 0.5522847498 * cr;
         tp.pushOperators(
           pushGraphicsState(),
@@ -874,28 +887,28 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const scale = Math.max((cr * 2) / spotImg.width, (cr * 2) / spotImg.height);
         tp.drawImage(spotImg, { x: cx - (spotImg.width * scale) / 2, y: cy - (spotImg.height * scale) / 2, width: spotImg.width * scale, height: spotImg.height * scale });
         tp.pushOperators(popGraphicsState());
-        tp.drawCircle({ x: cx, y: cy, size: cr, borderColor: MOSS, borderWidth: cv(0.35) });
+        tp.drawCircle({ x: cx, y: cy, size: cr, borderColor: MOSS, borderWidth: cvS(0.35) });
         qa.push({ where: 'title page', severity: 'pass', check: 'title page: sprig, title lock-up, spot art in a circular moss-ringed crop (pass-2)' });
       } else {
         qa.push({ where: 'title page', severity: 'pass', check: 'title page: sprig and title lock-up (no spot art available, pass-2)' });
       }
       const tpImprint = `Printed on demand \u00B7 ${new Date().getUTCFullYear()}`;
-      const tpImprintSize = Math.max(6, Math.round(9 * coverScale));
+      const tpImprintSize = Math.max(6, Math.round(9 * sizeScale));
       const iw = fonts.text.widthOfTextAtSize(tpImprint, tpImprintSize);
-      tp.drawText(tpImprint, { x: (pageWidth - iw) / 2, y: pageHeight - cv(184), size: tpImprintSize, font: fonts.text, color: INK, opacity: 0.7 });
+      tp.drawText(tpImprint, { x: (pageWidth - iw) / 2, y: pageHeight - cvY(184), size: tpImprintSize, font: fonts.text, color: INK, opacity: 0.7 });
     } else {
-    const tpFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(30 * coverScale)), Math.round(pageWidth * 0.05));
+    const tpFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(30 * sizeScale)), Math.round(pageWidth * 0.05));
     if (tpFit.belowReadable) {
       qa.push({ where: 'title page', severity: 'fail', check: `title page title fitted at ${tpFit.size}pt, below the readable threshold; shorten the title` });
     }
-    drawLetteredTitle(tp, tpFit.lines, tpFit.size, pageHeight - cv(56), rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
+    drawLetteredTitle(tp, tpFit.lines, tpFit.size, pageHeight - cvY(56), rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
     if (spotImg) {
-      const side = cv(60);
+      const side = cvS(60);
       const spotFit = containFit({ width: side, height: side }, { width: spotImg.width, height: spotImg.height });
       const spotPlaced = includeBleed ? printPlacement({ width: side, height: side }, { width: spotImg.width, height: spotImg.height }, DPI_MINIMUM) : { width: spotFit.width, height: spotFit.height };
       tp.drawImage(spotImg, {
         x: (pageWidth - side) / 2 + spotFit.x + (spotFit.width - spotPlaced.width) / 2,
-        y: pageHeight - cv(96) - side + spotFit.y + (spotFit.height - spotPlaced.height) / 2,
+        y: pageHeight - cvY(96) - side + spotFit.y + (spotFit.height - spotPlaced.height) / 2,
         width: spotPlaced.width,
         height: spotPlaced.height,
       });
@@ -905,12 +918,12 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       qa.push({ where: 'title page', severity: 'pass', check: 'title page: title and byline (no spot art available)' });
     }
     if (bylineText) {
-      const tpBySize = Math.max(10, Math.round(12 * coverScale));
-      const tpByFit = fitCoverSubtext(bylineText, coverFonts.text, pageWidth * TEXT_MEASURE, tpBySize, Math.max(9, Math.round(10 * coverScale)), 2);
+      const tpBySize = Math.max(10, Math.round(12 * sizeScale));
+      const tpByFit = fitCoverSubtext(bylineText, coverFonts.text, pageWidth * TEXT_MEASURE, tpBySize, Math.max(9, Math.round(10 * sizeScale)), 2);
       if (!tpByFit.fits) {
         qa.push({ where: 'title page', severity: 'fail', check: 'title page byline cannot fit at a readable size; shorten the story type' });
       }
-      const byBaseline = pageHeight - cv(spotImg ? 172 : 120);
+      const byBaseline = pageHeight - cvY(spotImg ? 172 : 120);
       tpByFit.lines.forEach((line, i) => {
         const w = coverFonts.text.widthOfTextAtSize(line, tpByFit.size);
         tp.drawText(line, { x: (pageWidth - w) / 2, y: byBaseline - i * tpByFit.size * 1.3, size: tpByFit.size, font: coverFonts.text, color: INK });
@@ -926,26 +939,26 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const dp = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(dp);
     dp.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
-    const belongsSize = Math.max(12, Math.round(15 * coverScale));
+    const belongsSize = Math.max(12, Math.round(15 * sizeScale));
     const belongs = 'This book belongs to';
     let w = fonts.text.widthOfTextAtSize(belongs, belongsSize);
-    dp.drawText(belongs, { x: (pageWidth - w) / 2, y: pageHeight - cv(88), size: belongsSize, font: fonts.text, color: INK });
+    dp.drawText(belongs, { x: (pageWidth - w) / 2, y: pageHeight - cvY(88), size: belongsSize, font: fonts.text, color: INK });
     if (coverChildName) {
-      const nameSize = Math.max(16, Math.round(24 * coverScale));
-      const nameFit = fitCoverSubtext(coverChildName, coverFonts.display, pageWidth * TEXT_MEASURE, nameSize, Math.max(12, Math.round(14 * coverScale)), 1);
+      const nameSize = Math.max(16, Math.round(24 * sizeScale));
+      const nameFit = fitCoverSubtext(coverChildName, coverFonts.display, pageWidth * TEXT_MEASURE, nameSize, Math.max(12, Math.round(14 * sizeScale)), 1);
       if (!nameFit.fits) {
         qa.push({ where: 'dedication', severity: 'fail', check: "the child's name cannot fit the dedication page at a readable size" });
       }
       w = coverFonts.display.widthOfTextAtSize(coverChildName, nameFit.size);
-      dp.drawText(coverChildName, { x: (pageWidth - w) / 2, y: pageHeight - cv(102), size: nameFit.size, font: coverFonts.display, color: INK });
+      dp.drawText(coverChildName, { x: (pageWidth - w) / 2, y: pageHeight - cvY(102), size: nameFit.size, font: coverFonts.display, color: INK });
     } else {
       // A ruled line the family writes the name on, as in a bookshop book.
-      dp.drawLine({ start: { x: cv(60), y: pageHeight - cv(100) }, end: { x: pageWidth - cv(60), y: pageHeight - cv(100) }, thickness: 0.6, color: INK, opacity: 0.5 });
+      dp.drawLine({ start: { x: cv(60), y: pageHeight - cvY(100) }, end: { x: pageWidth - cv(60), y: pageHeight - cvY(100) }, thickness: 0.6, color: INK, opacity: 0.5 });
     }
     if (dedicationText) {
       // The family's message is preserved whole: it wraps up to 6 lines,
       // shrinking to a 9pt floor before it can ever be called unprintable.
-      const msgFit = fitCoverSubtext(dedicationText, fonts.text, pageWidth * TEXT_MEASURE, Math.max(10, Math.round(12 * coverScale)), Math.max(9, Math.round(9 * coverScale)), 6);
+      const msgFit = fitCoverSubtext(dedicationText, fonts.text, pageWidth * TEXT_MEASURE, Math.max(10, Math.round(12 * sizeScale)), Math.max(9, Math.round(9 * sizeScale)), 6);
       if (!msgFit.fits) {
         qa.push({ where: 'dedication', severity: 'fail', check: 'the dedication cannot fit the dedication page at a readable size; shorten the dedication' });
       } else {
@@ -953,13 +966,13 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       }
       msgFit.lines.forEach((line, i) => {
         const lw = fonts.text.widthOfTextAtSize(line, msgFit.size);
-        dp.drawText(line, { x: (pageWidth - lw) / 2, y: pageHeight - cv(122) - i * msgFit.size * 1.4, size: msgFit.size, font: fonts.text, color: INK });
+        dp.drawText(line, { x: (pageWidth - lw) / 2, y: pageHeight - cvY(122) - i * msgFit.size * 1.4, size: msgFit.size, font: fonts.text, color: INK });
       });
     }
-    const imprintSize = Math.max(6, Math.round(7 * coverScale));
+    const imprintSize = Math.max(6, Math.round(7 * sizeScale));
     const imprint = `Printed on demand \u00B7 ${new Date().getUTCFullYear()}`;
     w = fonts.text.widthOfTextAtSize(imprint, imprintSize);
-    dp.drawText(imprint, { x: (pageWidth - w) / 2, y: pageHeight - cv(200), size: imprintSize, font: fonts.text, color: INK, opacity: 0.7 });
+    dp.drawText(imprint, { x: (pageWidth - w) / 2, y: pageHeight - cvY(200), size: imprintSize, font: fonts.text, color: INK, opacity: 0.7 });
     qa.push({ where: 'dedication', severity: 'pass', check: `"This book belongs to" page typeset${coverChildName ? ` for ${coverChildName}` : ' with a write-in line'}` });
   }
 
@@ -992,10 +1005,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
               storyPage,
               embeddedImage,
               cv(35) + fit.x + (fit.width - placed.width) / 2,
-              pageHeight - cv(154) + fit.y + (fit.height - placed.height) / 2,
+              pageHeight - cvY(154) + fit.y + (fit.height - placed.height) / 2,
               placed.width,
               placed.height,
-              cv(4),
+              cvS(4),
             );
             imagePlaced = true;
             qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: placed.width, height: placed.height })));
@@ -1016,8 +1029,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       if (!imagePlaced && !page.imageLocked) {
         const phX = cv(35);
         const phW = cv(140);
-        const phY = pageHeight - cv(154) + cv(28);
-        const phH = cv(84);
+        const phY = pageHeight - cvY(154) + cv(28);
+        const phH = cvY(84);
         storyPage.drawRectangle({ x: phX, y: phY, width: phW, height: phH, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 1 });
         const placeholderText = 'Illustration pending';
         const phTextWidth = fonts.text.widthOfTextAtSize(placeholderText, 12);
@@ -1030,8 +1043,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         });
       }
 
-      const printFontSize = Math.max(11, Math.round(15 * coverScale));
-      const printLeading = Math.max(15, Math.round(21 * coverScale));
+      const printFontSize = Math.max(11, Math.round(15 * sizeScale));
+      const printLeading = Math.max(15, Math.round(21 * sizeScale));
       const printMeasure = pageWidth - safeInset * 2;
       const printLines = rawText.trim() ? typesetVerse(rawText, fonts.text, printFontSize, printMeasure) : [];
       if (printLines.length > 4) {
@@ -1041,7 +1054,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const w = fonts.text.widthOfTextAtSize(line.text, printFontSize);
         storyPage.drawText(line.text, {
           x: (pageWidth - w) / 2,
-          y: pageHeight - cv(166) - i * printLeading,
+          y: pageHeight - cvY(166) - i * printLeading,
           size: printFontSize,
           font: fonts.text,
           color: INK,
@@ -1067,7 +1080,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     // strip would sit on the artwork, so the heading is left to the reader.
     const chapterList = Array.isArray(config?.outline?.chapters) ? config.outline.chapters : [];
     const chapterHere = chapterList.find((c: {startPage?:number;title?:string}) => c && c.startPage === page.page && typeof c.title === 'string' && c.title.trim()) || null;
-    const headingStrip = chapterHere && !overlay ? cv(10) : 0;
+    const headingStrip = chapterHere && !overlay ? cvY(10) : 0;
 
     // Pass-2 web story page (21 Nov 2026 art-direction spec): the art sits
     // in a cream mount with a moss keyline (split) or runs full-bleed with
@@ -1079,11 +1092,11 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       const rightHand = page.page % 2 === 1;
       const x0mm = rightHand ? 20 : 16; // binding margin mirrors per side
       const x0 = cv(x0mm);
-      const p2Size = Math.max(12, Math.round(22 * coverScale));
-      const p2Leading = Math.max(16, Math.round(27 * coverScale));
+      const p2Size = Math.max(12, Math.round(22 * sizeScale));
+      const p2Leading = Math.max(16, Math.round(27 * sizeScale));
       const p2Measure = cv(158);
       const storyX = overlay ? x0 + cv(8) : x0;
-      const firstBaseline = pageHeight - cv(overlay ? 147 : 155);
+      const firstBaseline = pageHeight - cvY(overlay ? 147 : 155);
       let p2ImagePlaced = false;
       if (!page.imageLocked && page.imageUrl) {
         const imageData = await fetchImageBytes(page.imageUrl);
@@ -1096,13 +1109,13 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
               const dh = embeddedImage.height * scale;
               storyPage.drawImage(embeddedImage, { x: (pageWidth - dw) / 2, y: (pageHeight - dh) / 2, width: dw, height: dh });
               // Solid cream panel with a moss border for the story.
-              storyPage.drawRectangle({ x: x0, y: pageHeight - cv(128) - cv(69), width: cv(174), height: cv(69), color: PAPER, borderColor: MOSS, borderWidth: cv(0.25) });
+              storyPage.drawRectangle({ x: x0, y: pageHeight - cvY(128) - cvY(69), width: cv(174), height: cvY(69), color: PAPER, borderColor: MOSS, borderWidth: cvS(0.25) });
             } else {
-              storyPage.drawRectangle({ x: x0, y: pageHeight - cv(11) - cv(123), width: cv(174), height: cv(123), color: PAPER, borderColor: MOSS, borderWidth: cv(0.25) });
+              storyPage.drawRectangle({ x: x0, y: pageHeight - cvY(11) - cvY(123), width: cv(174), height: cvY(123), color: PAPER, borderColor: MOSS, borderWidth: cvS(0.25) });
               const ix = x0 + cv(3);
               const iw = cv(168);
-              const ih = cv(117);
-              const iy = pageHeight - cv(14) - ih;
+              const ih = cvY(117);
+              const iy = pageHeight - cvY(14) - ih;
               const scale = Math.max(iw / embeddedImage.width, ih / embeddedImage.height);
               const dw = embeddedImage.width * scale;
               const dh = embeddedImage.height * scale;
@@ -1114,7 +1127,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
               // Centre-crop to fill the opening.
               storyPage.drawImage(embeddedImage, { x: ix - (dw - iw) / 2, y: iy - (dh - ih) / 2, width: dw, height: dh });
               storyPage.pushOperators(popGraphicsState());
-              storyPage.drawRectangle({ x: ix, y: iy, width: iw, height: ih, borderColor: MOSS, borderWidth: cv(0.2) });
+              storyPage.drawRectangle({ x: ix, y: iy, width: iw, height: ih, borderColor: MOSS, borderWidth: cvS(0.2) });
             }
             p2ImagePlaced = true;
           } catch (p2ImageError) {
@@ -1135,9 +1148,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       // Divider: sprig flanked by moss rules, centred on the story column.
       const dividerY = overlay ? 135 : 141;
       const columnCentre = storyX + p2Measure / 2;
-      drawSprig(storyPage, pageHeight, cv, x0mm + (overlay ? 8 : 0) + 79, dividerY, 8, MOSS);
-      storyPage.drawLine({ start: { x: columnCentre - cv(23), y: pageHeight - cv(dividerY) }, end: { x: columnCentre - cv(9), y: pageHeight - cv(dividerY) }, thickness: cv(0.2), color: MOSS });
-      storyPage.drawLine({ start: { x: columnCentre + cv(9), y: pageHeight - cv(dividerY) }, end: { x: columnCentre + cv(23), y: pageHeight - cv(dividerY) }, thickness: cv(0.2), color: MOSS });
+      drawSprig(storyPage, pageHeight, cvS, x0mm + (overlay ? 8 : 0) + 79, dividerY, 8, MOSS, cv, cvY);
+      storyPage.drawLine({ start: { x: columnCentre - cv(23), y: pageHeight - cvY(dividerY) }, end: { x: columnCentre - cv(9), y: pageHeight - cvY(dividerY) }, thickness: cvS(0.2), color: MOSS });
+      storyPage.drawLine({ start: { x: columnCentre + cv(9), y: pageHeight - cvY(dividerY) }, end: { x: columnCentre + cv(23), y: pageHeight - cvY(dividerY) }, thickness: cvS(0.2), color: MOSS });
 
       // Story text: hard (verse) lines preserved, each soft-wrapped to the
       // measure; single-word wrap tails pull a companion word down.
@@ -1170,9 +1183,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       });
       if (dropCap) {
         const initial = wrapped[0][0];
-        const initSize = Math.round(52 * coverScale);
+        const initSize = Math.round(52 * sizeScale);
         // Baseline dropped so the initial's cap top meets the body's cap top.
-        storyPage.drawText(initial, { x: x0, y: firstBaseline - Math.round(21 * coverScale), size: initSize, font: fonts.display, color: MOSS });
+        storyPage.drawText(initial, { x: x0, y: firstBaseline - Math.round(21 * sizeScale), size: initSize, font: fonts.display, color: MOSS });
       }
       qa.push({ where: `page ${page.page}`, severity: 'pass', check: `pass-2 story: ${Math.min(wrapped.length, p2Cap)} line(s) at ${p2Size}/${p2Leading}pt, left-aligned 158mm column${dropCap ? ', drop-cap opening' : ''}` });
       continue;
@@ -1271,7 +1284,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       const headingWidth = fonts.display.widthOfTextAtSize(heading, headingSize);
       storyPage.drawText(heading, {
         x: (pageWidth - headingWidth) / 2,
-        y: bandTop + cv(3),
+        y: bandTop + cvY(3),
         size: headingSize,
         font: fonts.display,
         color: INK,
@@ -1350,10 +1363,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const ep = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(ep);
     ep.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
-    const endSize = Math.max(16, Math.round(24 * coverScale));
+    const endSize = Math.max(16, Math.round(24 * sizeScale));
     const endText = 'The End';
     const w = coverFonts.display.widthOfTextAtSize(endText, endSize);
-    ep.drawText(endText, { x: (pageWidth - w) / 2, y: pageHeight - cv(108), size: endSize, font: coverFonts.display, color: INK });
+    ep.drawText(endText, { x: (pageWidth - w) / 2, y: pageHeight - cvY(108), size: endSize, font: coverFonts.display, color: INK });
     qa.push({ where: 'back matter', severity: 'pass', check: 'closing page: "The End" at 24pt, nothing else' });
   }
 
@@ -1445,13 +1458,13 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       // sits in a circular cream vignette; the blurb sets cream on pine on
       // the plate's own column; sign-off, ochre rule, logo, brand line.
       backPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PINE });
-      backPage.drawRectangle({ x: cv(10), y: cv(10), width: pageWidth - cv(20), height: pageHeight - cv(20), borderColor: OCHRE, borderWidth: cv(0.4) });
-      backPage.drawRectangle({ x: cv(13), y: cv(13), width: pageWidth - cv(26), height: pageHeight - cv(26), borderColor: OCHRE, borderWidth: cv(0.2) });
+      backPage.drawRectangle({ x: cv(10), y: cvY(10), width: pageWidth - cv(20), height: pageHeight - cvY(20), borderColor: OCHRE, borderWidth: cvS(0.4) });
+      backPage.drawRectangle({ x: cv(13), y: cvY(13), width: pageWidth - cv(26), height: pageHeight - cvY(26), borderColor: OCHRE, borderWidth: cvS(0.2) });
       if (spotImg) {
-        const cr = cv(24);
+        const cr = cvS(24);
         const cx = cv(105);
-        const cy = pageHeight - cv(51);
-        backPage.drawCircle({ x: cx, y: cy, size: cv(28), color: PAPER, borderColor: OCHRE, borderWidth: cv(0.4) });
+        const cy = pageHeight - cvY(51);
+        backPage.drawCircle({ x: cx, y: cy, size: cvS(28), color: PAPER, borderColor: OCHRE, borderWidth: cvS(0.4) });
         const k = 0.5522847498 * cr;
         backPage.pushOperators(
           pushGraphicsState(),
@@ -1469,11 +1482,11 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       } else {
         qa.push({ where: 'back', severity: 'pass', check: 'back cover without spot art (it lands with the generation wiring)' });
       }
-      const bSize = Math.max(12, Math.round(17 * coverScale));
-      const bLeading = Math.max(15, Math.round(22 * coverScale));
+      const bSize = Math.max(12, Math.round(17 * sizeScale));
+      const bLeading = Math.max(15, Math.round(22 * sizeScale));
       const bLines = wrapToMeasure(blurbText, fonts.text, bSize, cv(124));
       bLines.slice(0, 6).forEach((line, i) => {
-        backPage.drawText(line, { x: cv(43), y: pageHeight - cv(96) - i * bLeading, size: bSize, font: fonts.text, color: PAPER });
+        backPage.drawText(line, { x: cv(43), y: pageHeight - cvY(96) - i * bLeading, size: bSize, font: fonts.text, color: PAPER });
       });
       qa.push({
         where: 'back',
@@ -1484,43 +1497,43 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       });
       const signOff = blurbSignOff(config.storyType, coverChildName || undefined);
       if (signOff) {
-        const soSize = Math.max(11, Math.round(16 * coverScale));
+        const soSize = Math.max(11, Math.round(16 * sizeScale));
         const soFont = fonts.accent ?? fonts.display;
         const sw = soFont.widthOfTextAtSize(signOff, soSize);
-        backPage.drawText(signOff, { x: (pageWidth - sw) / 2, y: pageHeight - cv(151), size: soSize, font: soFont, color: PAPER });
+        backPage.drawText(signOff, { x: (pageWidth - sw) / 2, y: pageHeight - cvY(151), size: soSize, font: soFont, color: PAPER });
         qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off plated' });
       }
-      backPage.drawLine({ start: { x: cv(87), y: pageHeight - cv(165) }, end: { x: cv(123), y: pageHeight - cv(165) }, thickness: cv(0.3), color: OCHRE });
+      backPage.drawLine({ start: { x: cv(87), y: pageHeight - cvY(165) }, end: { x: cv(123), y: pageHeight - cvY(165) }, thickness: cvS(0.3), color: OCHRE });
       let logoPlated = false;
       try {
         const logoBytes = Uint8Array.from(atob(MAKE_YOUR_OWN_LOGO_CREAM_PNG_BASE64), (ch) => ch.charCodeAt(0));
         const logoImg = await pdfDoc.embedPng(logoBytes);
-        const logoHeight = cv(6);
+        const logoHeight = cvS(6);
         const logoWidth = logoHeight * MAKE_YOUR_OWN_LOGO_ASPECT;
-        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: pageHeight - cv(174), width: logoWidth, height: logoHeight, opacity: 0.95 });
+        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: pageHeight - cvY(174), width: logoWidth, height: logoHeight, opacity: 0.95 });
         logoPlated = true;
       } catch (logoError) {
         console.warn('Make Your Own logo embed failed; brand line only', logoError);
       }
       const brand = "by The Children's Library";
-      const brandSize = Math.max(8, Math.round(10 * coverScale));
+      const brandSize = Math.max(8, Math.round(10 * sizeScale));
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
-      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: pageHeight - cv(185), size: brandSize, font: fonts.text, color: PAPER, opacity: 0.85 });
+      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: pageHeight - cvY(185), size: brandSize, font: fonts.text, color: PAPER, opacity: 0.85 });
       qa.push({ where: 'back', severity: 'pass', check: logoPlated ? 'web back cover brand line and Make Your Own logo plated (pass-2)' : 'web back cover brand line plated; logo embed failed (pass-2)' });
     } else {
     // 21 Nov 2026 design overhaul (art-direction spec): one reading voice -
     // Source Sans 3 Regular 17/23, left aligned on a 116mm measure at x47mm,
     // first baseline 79mm, at most six lines, all inside the safe area.
     const blurbMeasure = cv(116);
-    const blurbSize = Math.max(12, Math.round(17 * coverScale));
-    const blurbLeading = Math.max(16, Math.round(23 * coverScale));
+    const blurbSize = Math.max(12, Math.round(17 * sizeScale));
+    const blurbLeading = Math.max(16, Math.round(23 * sizeScale));
     const blurbLines = wrapToMeasure(blurbText, fonts.text, blurbSize, blurbMeasure);
     const blurbOverflow = blurbLines.length > 6;
     // With no vignette the blurb and sign-off move up (spec's no-art variant).
     const hasVignette = !!(backCoverImage && spotImg);
     const blurbTop = hasVignette ? 79 : 67;
     blurbLines.slice(0, 6).forEach((line, i) => {
-      backPage.drawText(line, { x: cv(47), y: pageHeight - cv(blurbTop) - i * blurbLeading, size: blurbSize, font: fonts.text, color: paletteInk });
+      backPage.drawText(line, { x: cv(47), y: pageHeight - cvY(blurbTop) - i * blurbLeading, size: blurbSize, font: fonts.text, color: paletteInk });
     });
     qa.push({
       where: 'back',
@@ -1538,10 +1551,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       if (spotImg) {
         try {
           const backImg = spotImg;
-          const spotPt = cv(44);
+          const spotPt = cvS(44);
           const spotX = (pageWidth - spotPt) / 2;
-          const spotY = pageHeight - cv(24) - spotPt;
-          const spotFrame = cv(2);
+          const spotY = pageHeight - cvY(24) - spotPt;
+          const spotFrame = cvS(2);
           backPage.drawRectangle({ x: spotX - spotFrame, y: spotY - spotFrame, width: spotPt + spotFrame * 2, height: spotPt + spotFrame * 2, color: WHITE });
           const spotFit = containFit({ width: spotPt, height: spotPt }, { width: backImg.width, height: backImg.height });
           const spotPlaced = printPlacement({ width: spotPt, height: spotPt }, { width: backImg.width, height: backImg.height }, DPI_MINIMUM);
@@ -1568,10 +1581,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     // set in Source Serif 4 Medium Italic 15/19, centred, baseline 145mm.
     const signOff = blurbSignOff(config.storyType, coverChildName || undefined);
     if (signOff) {
-      const signOffSize = Math.max(11, Math.round(15 * coverScale));
+      const signOffSize = Math.max(11, Math.round(15 * sizeScale));
       const signOffFont = fonts.accent ?? fonts.display;
       const w = signOffFont.widthOfTextAtSize(signOff, signOffSize);
-      backPage.drawText(signOff, { x: (pageWidth - w) / 2, y: pageHeight - cv(hasVignette ? 145 : 133), size: signOffSize, font: signOffFont, color: paletteInk });
+      backPage.drawText(signOff, { x: (pageWidth - w) / 2, y: pageHeight - cvY(hasVignette ? 145 : 133), size: signOffSize, font: signOffFont, color: paletteInk });
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off plated' });
     } else {
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off omitted (no child name on record)' });
@@ -1596,9 +1609,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const logoB64 = bgLum > 0.5 ? MAKE_YOUR_OWN_LOGO_DARK_PNG_BASE64 : MAKE_YOUR_OWN_LOGO_CREAM_PNG_BASE64;
         const logoBytes = Uint8Array.from(atob(logoB64), (ch) => ch.charCodeAt(0));
         const logoImg = await pdfDoc.embedPng(logoBytes);
-        const logoHeight = cv(10);
+        const logoHeight = cvS(10);
         const logoWidth = logoHeight * MAKE_YOUR_OWN_LOGO_ASPECT;
-        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: cv(28), width: logoWidth, height: logoHeight, opacity: 0.9 });
+        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: cvY(28), width: logoWidth, height: logoHeight, opacity: 0.9 });
         logoPlated = true;
       } catch (logoError) {
         console.warn('Make Your Own logo embed failed; brand line only', logoError);
@@ -1606,9 +1619,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       // The logo carries "Make Your Own"; the line under it names the parent
       // brand only (owner review, 21 Nov 2026).
       const brand = "by The Children's Library";
-      const brandSize = Math.max(9, Math.round(11 * coverScale));
+      const brandSize = Math.max(9, Math.round(11 * sizeScale));
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
-      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(20), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
+      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cvY(20), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
       qa.push({ where: 'back', severity: 'pass', check: logoPlated ? 'web back cover brand line and Make Your Own logo plated (print omits them, 11 Nov 2026 decision)' : 'web back cover brand line plated; logo embed failed (print omits both, 11 Nov 2026 decision)' });
     }
     }
