@@ -1238,7 +1238,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
 
     // Web only: the brand sign-off print omits by customer decision.
     if (!includeBleed) {
-      const brand = 'Made with Make · The Children's Library';
+      const brand = "Made with Make · The Children's Library";
       const brandSize = Math.max(9, Math.round(11 * coverScale));
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
       backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(12), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
