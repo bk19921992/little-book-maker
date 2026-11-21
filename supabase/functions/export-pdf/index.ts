@@ -1252,9 +1252,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const logoB64 = bgLum > 0.5 ? MAKE_YOUR_OWN_LOGO_DARK_PNG_BASE64 : MAKE_YOUR_OWN_LOGO_CREAM_PNG_BASE64;
         const logoBytes = Uint8Array.from(atob(logoB64), (ch) => ch.charCodeAt(0));
         const logoImg = await pdfDoc.embedPng(logoBytes);
-        const logoHeight = cv(8);
+        const logoHeight = cv(10);
         const logoWidth = logoHeight * MAKE_YOUR_OWN_LOGO_ASPECT;
-        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: cv(17), width: logoWidth, height: logoHeight, opacity: 0.9 });
+        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: cv(18), width: logoWidth, height: logoHeight, opacity: 0.9 });
         logoPlated = true;
       } catch (logoError) {
         console.warn('Make Your Own logo embed failed; brand line only', logoError);
