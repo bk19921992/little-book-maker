@@ -53,12 +53,14 @@ const WHITE = rgb(1, 1, 1);
 const FONT_URLS = {
   text: "https://cdn.jsdelivr.net/fontsource/fonts/source-sans-3@5.2.5/latin-400-normal.ttf",
   display: "https://cdn.jsdelivr.net/fontsource/fonts/source-serif-4@5.2.5/latin-600-normal.ttf",
-  accent: "https://cdn.jsdelivr.net/fontsource/fonts/source-serif-4@5.2.5/latin-500-italic.ttf",
+  bold: "https://cdn.jsdelivr.net/fontsource/fonts/source-serif-4@5.2.5/latin-700-normal.ttf",
+  accent: "https://cdn.jsdelivr.net/fontsource/fonts/source-serif-4@5.2.5/latin-600-italic.ttf",
 };
 
 interface EmbeddedFonts {
   text: PDFFont;
   display: PDFFont;
+  bold?: PDFFont;
   accent?: PDFFont;
   custom: boolean;
 }
@@ -68,15 +70,17 @@ interface EmbeddedFonts {
 // font download.
 async function embedFonts(pdfDoc: PDFDocument): Promise<EmbeddedFonts> {
   try {
-    const [textRes, displayRes, accentRes] = await Promise.all([
+    const [textRes, displayRes, boldRes, accentRes] = await Promise.all([
       fetch(FONT_URLS.text),
       fetch(FONT_URLS.display),
+      fetch(FONT_URLS.bold),
       fetch(FONT_URLS.accent),
     ]);
-    if (!textRes.ok || !displayRes.ok || !accentRes.ok) throw new Error('font fetch failed');
-    const [textBytes, displayBytes, accentBytes] = await Promise.all([
+    if (!textRes.ok || !displayRes.ok || !boldRes.ok || !accentRes.ok) throw new Error('font fetch failed');
+    const [textBytes, displayBytes, boldBytes, accentBytes] = await Promise.all([
       textRes.arrayBuffer(),
       displayRes.arrayBuffer(),
+      boldRes.arrayBuffer(),
       accentRes.arrayBuffer(),
     ]);
     // esm.sh exposes fontkit's CommonJS export under .default in a namespace import.
@@ -88,8 +92,9 @@ async function embedFonts(pdfDoc: PDFDocument): Promise<EmbeddedFonts> {
     // leaving visible gaps inside words ('flies', 'and the').
     const text = await pdfDoc.embedFont(new Uint8Array(textBytes), { features: { liga: false, kern: false } });
     const display = await pdfDoc.embedFont(new Uint8Array(displayBytes), { features: { liga: false, kern: false } });
+    const bold = await pdfDoc.embedFont(new Uint8Array(boldBytes), { features: { liga: false, kern: false } });
     const accent = await pdfDoc.embedFont(new Uint8Array(accentBytes), { features: { liga: false, kern: false } });
-    return { text, display, accent, custom: true };
+    return { text, display, bold, accent, custom: true };
   } catch (fontError) {
     console.warn('Custom font embed failed, falling back to Helvetica', fontError);
     const fallback = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -127,6 +132,58 @@ async function embedCoverFonts(pdfDoc: PDFDocument, typeface: CoverTypeface, bod
     console.warn('Cover font embed failed, using body fonts', coverFontError);
     return body;
   }
+}
+
+// Pass-2 design system colours (21 Nov 2026 art-direction spec).
+const PINE = rgb(0.118, 0.263, 0.2);      // #1E4333
+const MOSS = rgb(0.322, 0.439, 0.31);     // #52704F
+const OCHRE = rgb(0.714, 0.541, 0.333);   // #B68A55
+
+// Transform an absolute-coordinates SVG path subset (M/H/V/Q/Z) from mm
+// space (origin top-left, y down) into pdf-lib's drawSvgPath space: that
+// function renders path point (px, py) at (x + px, y - py), so we emit the
+// negated PDF user-space y and place at (0,0). Optional offset and scale
+// let a small viewBox (the sprig ornament) be placed anywhere at any size.
+function mmPathToPdf(path: string, pageHeightPt: number, cv: (mm: number) => number, dxMm = 0, dyMm = 0, scale = 1): string {
+  const tokens = path.match(/[MHVQZmhvqz]|-?\d*\.?\d+/g) ?? [];
+  const out: string[] = [];
+  let cmd = '';
+  let i = 0;
+  const x = () => cv(dxMm + parseFloat(tokens[i++]) * scale).toFixed(2);
+  const y = () => (cv(dyMm + parseFloat(tokens[i++]) * scale) - pageHeightPt).toFixed(2);
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (/[MHVQZmhvqz]/.test(t)) { cmd = t.toUpperCase(); i++; if (cmd === 'Z') { out.push('Z'); continue; } }
+    if (cmd === 'M' || cmd === 'Q') {
+      const x1 = x(), y1 = y();
+      if (cmd === 'M') { out.push(`M ${x1} ${y1}`); cmd = 'L'; }
+      else { const x2 = x(), y2 = y(); out.push(`Q ${x1} ${y1} ${x2} ${y2}`); }
+    } else if (cmd === 'L') { out.push(`L ${x()} ${y()}`); }
+    else if (cmd === 'H') { out.push(`L ${x()} ${out.length ? out[out.length - 1].split(' ').slice(-1)[0] : '0'}`); }
+    else if (cmd === 'V') { out.push(`L ${out.length ? out[out.length - 1].split(' ').slice(-2)[0] : '0'} ${y()}`); }
+    else { i++; }
+  }
+  return out.join(' ');
+}
+
+// The three-leaf sprig ornament from the pass-2 spec, in an 8x4 viewBox.
+const SPRIG_PATHS = [
+  'M 0.7 3.5 Q 3.9 3.2 7.3 1.2',
+  'M 2.8 3.2 Q 0.8 2.7 1.2 1.0 Q 3.0 1.2 2.8 3.2 Z',
+  'M 4.5 2.7 Q 2.8 1.8 3.7 0.4 Q 5.3 0.8 4.5 2.7 Z',
+  'M 5.7 2.2 Q 6.0 0.5 7.8 0.4 Q 7.8 1.8 5.7 2.2 Z',
+];
+
+// Draw the sprig centred at (cxMm, cyMm) (top-left origin), sized wMm wide.
+function drawSprig(page: PDFPage, pageHeightPt: number, cv: (mm: number) => number, cxMm: number, cyMm: number, wMm: number, color: ReturnType<typeof rgb>) {
+  const scale = wMm / 8;
+  const dx = cxMm - (8 * scale) / 2;
+  const dy = cyMm - (4 * scale) / 2;
+  SPRIG_PATHS.forEach((p, idx) => {
+    page.drawSvgPath(mmPathToPdf(p, pageHeightPt, cv, dx, dy, scale), idx === 0
+      ? { borderColor: color, borderWidth: cv(0.2) * scale }
+      : { color });
+  });
 }
 
 // WCAG-style contrast ratio between two 0-1 rgb triples.
@@ -332,6 +389,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // dedicated cover art use the first story image.
   const coverArtPage = pages.find((p) => p.imageUrl && !p.imageLocked);
   let fullBleedCover = false;
+  let composedCover = false;
   // Print pages are trim-sized with no boxes: the printer's system
   // generates bleed and cut marks (Peecho file spec, 10 Nov 2026).
   const markPrintBoxes = (_page: ReturnType<typeof pdfDoc.addPage>) => {};
@@ -491,15 +549,76 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
             height: placed.height,
           });
         } else {
-          const coverSpare = coverRegionH - placed.height;
-          coverPage.drawImage(img, {
-            x: fit.x + (fit.width - placed.width) / 2,
-            y: coverRegionBottom + (coverSpare * 1.15) / 2.15,
-            width: placed.width,
-            height: placed.height,
-          });
+          // Pass-2 composed web cover (21 Nov 2026 art-direction spec; the
+          // owner asked for the bolder direction at 12:30): pine field with
+          // a double ochre frame, the art cropped to fill a framed opening,
+          // and the title typeset in a cream cartouche overlapping the
+          // art's top strip. This consciously succeeds the same-day "no
+          // text over art" band: the cartouche is a designed plate and the
+          // crop keeps faces below it.
+          composedCover = true;
+          coverPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PINE });
+          coverPage.drawRectangle({ x: cv(8), y: pageHeight - cv(8) - cv(194), width: cv(194), height: cv(194), borderColor: OCHRE, borderWidth: cv(0.35) });
+          coverPage.drawRectangle({ x: cv(10.5), y: pageHeight - cv(10.5) - cv(189), width: cv(189), height: cv(189), borderColor: OCHRE, borderWidth: cv(0.18) });
+          // Art opening 178x170 at (16,24), crop to fill; keep the bottom
+          // of the source image (faces), cut the sky.
+          const ax = cv(16);
+          const aw = cv(178);
+          const ah = cv(170);
+          const ay = pageHeight - cv(24) - ah;
+          const aScale = Math.max(aw / img.width, ah / img.height);
+          const adw = img.width * aScale;
+          const adh = img.height * aScale;
+          coverPage.pushOperators(
+            pushGraphicsState(),
+            moveTo(ax, ay), lineTo(ax + aw, ay), lineTo(ax + aw, ay + ah), lineTo(ax, ay + ah),
+            closePath(), clip(), endPath(),
+          );
+          coverPage.drawImage(img, { x: ax - (adw - aw) / 2, y: ay, width: adw, height: adh });
+          coverPage.pushOperators(popGraphicsState());
+          coverPage.drawRectangle({ x: ax, y: ay, width: aw, height: ah, borderColor: OCHRE, borderWidth: cv(0.35) });
+          drawW = adw;
+          drawH = adh;
+          // Cream cartouche over the art's top strip (path from the spec,
+          // absolute page mm).
+          const cartouche = 'M 42 17 H 79 Q 105 9 131 17 H 168 Q 168 27 183 30 V 53 Q 168 56 168 66 H 130 Q 105 74 80 66 H 42 Q 42 56 27 53 V 30 Q 42 27 42 17 Z';
+          coverPage.drawSvgPath(mmPathToPdf(cartouche, pageHeight, cv), { color: PAPER, borderColor: OCHRE, borderWidth: cv(0.5) });
+          // Title lock-up: the child's name gets the largest type on the
+          // book when it leads the title; otherwise a balanced two-line fit.
+          const titleFont = fonts.bold ?? fonts.display;
+          let lock1 = '';
+          let lock2 = '';
+          if (coverChildName && titleText.toLowerCase().startsWith(coverChildName.toLowerCase() + ' ')) {
+            lock1 = titleText.slice(0, coverChildName.length);
+            lock2 = titleText.slice(coverChildName.length).trim();
+          } else {
+            const two = fitCoverTitle(titleText, titleFont, cv(126), Math.round(55 * coverScale), Math.round(23 * coverScale));
+            lock1 = two.lines[0] ?? titleText;
+            lock2 = two.lines.slice(1).join(' ');
+          }
+          const fitLock = (text: string, font: PDFFont, startPt: number, floorPt: number) => {
+            let s = Math.round(startPt * coverScale);
+            const floor = Math.round(floorPt * coverScale);
+            while (s > floor && font.widthOfTextAtSize(text, s) > cv(126)) s--;
+            return s;
+          };
+          const lock1Size = fitLock(lock1, titleFont, 55, 35);
+          const lock2Size = lock2 ? fitLock(lock2, fonts.display, 28, 23) : 0;
+          if (titleFont.widthOfTextAtSize(lock1, lock1Size) > cv(126) || (lock2 && fonts.display.widthOfTextAtSize(lock2, lock2Size) > cv(126))) {
+            qa.push({ where: 'cover', severity: 'fail', check: 'cover title cannot fit the cartouche at a readable size; shorten the title' });
+          }
+          const lock1Width = titleFont.widthOfTextAtSize(lock1, lock1Size);
+          coverPage.drawText(lock1, { x: (pageWidth - lock1Width) / 2, y: pageHeight - cv(lock2 ? 40 : 47), size: lock1Size, font: titleFont, color: PINE });
+          if (lock2) {
+            const lock2Width = fonts.display.widthOfTextAtSize(lock2, lock2Size);
+            coverPage.drawText(lock2, { x: (pageWidth - lock2Width) / 2, y: pageHeight - cv(54), size: lock2Size, font: fonts.display, color: PINE });
+          }
+          // Ornament under the title: sprig flanked by ochre rules.
+          drawSprig(coverPage, pageHeight, cv, 105, 62, 8, MOSS);
+          coverPage.drawLine({ start: { x: cv(84), y: pageHeight - cv(62) }, end: { x: cv(96), y: pageHeight - cv(62) }, thickness: cv(0.2), color: OCHRE });
+          coverPage.drawLine({ start: { x: cv(114), y: pageHeight - cv(62) }, end: { x: cv(126), y: pageHeight - cv(62) }, thickness: cv(0.2), color: OCHRE });
         }
-        qa.push({ where: 'cover', severity: 'pass', check: includeBleed ? (fromDedicated ? 'dedicated cover illustration plated full-frame in a white mount, uncropped, title above on the cover colour' : 'cover illustration plated full-frame in a white mount, uncropped, title above (page art fallback)') : (fromDedicated ? 'cover illustration shown whole, uncropped, title on paper band (art shape differs from the page)' : 'cover illustration present, uncropped, title on paper band (page art fallback)') });
+        qa.push({ where: 'cover', severity: 'pass', check: includeBleed ? (fromDedicated ? 'dedicated cover illustration plated full-frame in a white mount, uncropped, title above on the cover colour' : 'cover illustration plated full-frame in a white mount, uncropped, title above (page art fallback)') : (fromDedicated ? 'composed cover: framed art crop under a cream title cartouche (pass-2 design)' : 'composed cover: framed page-art crop under a cream title cartouche (pass-2 design)') });
       }
       if (dedicatedUnreadable) qa.push({ where: 'cover', severity: 'warn', check: 'dedicated cover illustration could not be read; reused page art, uncropped' });
       if (includeBleed) qa.push(dpiCheck('cover', effectiveDpi(img, { width: drawW, height: drawH })));
@@ -644,7 +763,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         });
       });
     }
-  } else {
+  } else if (!composedCover) {
     // Web band: title block centred in the paper band; dedication (if any)
     // beneath it. The whole block - including the lowest line's descent
     // (the dedication or subtitle, whichever is last) - stays at or above
@@ -707,6 +826,64 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const tp = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(tp);
     tp.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    if (!includeBleed && composedCover) {
+      // Pass-2 title page (21 Nov 2026 art-direction spec): the sprig, the
+      // cover's title lock-up (child name in Bold, the rest SemiBold), the
+      // spot art in a circular moss-ringed crop, imprint at the foot.
+      drawSprig(tp, pageHeight, cv, 105, 56, 16, MOSS);
+      const tpName = coverChildName && titleText.startsWith(coverChildName) ? coverChildName : '';
+      if (tpName) {
+        const nameFont = fonts.bold ?? fonts.display;
+        const nameSize = Math.max(18, Math.round(42 * coverScale));
+        const nameFit = fitCoverSubtext(tpName, nameFont, pageWidth * TEXT_MEASURE, nameSize, Math.max(14, Math.round(20 * coverScale)), 1);
+        const nw = nameFont.widthOfTextAtSize(tpName, nameFit.size);
+        tp.drawText(tpName, { x: (pageWidth - nw) / 2, y: pageHeight - cv(81), size: nameFit.size, font: nameFont, color: INK });
+        const rest = titleText.slice(tpName.length).trim();
+        if (rest) {
+          const restSize = Math.max(12, Math.round(26 * coverScale));
+          const restFit = fitCoverSubtext(rest, coverFonts.display, pageWidth * TEXT_MEASURE, restSize, Math.max(10, Math.round(13 * coverScale)), 2);
+          if (!restFit.fits) {
+            qa.push({ where: 'title page', severity: 'fail', check: 'title page title fitted below the readable threshold; shorten the title' });
+          }
+          restFit.lines.forEach((line, i) => {
+            const w = coverFonts.display.widthOfTextAtSize(line, restFit.size);
+            tp.drawText(line, { x: (pageWidth - w) / 2, y: pageHeight - cv(96) - i * restFit.size * 1.25, size: restFit.size, font: coverFonts.display, color: INK });
+          });
+        }
+      } else {
+        const wholeFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(34 * coverScale)), Math.round(pageWidth * 0.05));
+        if (wholeFit.belowReadable) {
+          qa.push({ where: 'title page', severity: 'fail', check: `title page title fitted at ${wholeFit.size}pt, below the readable threshold; shorten the title` });
+        }
+        drawLetteredTitle(tp, wholeFit.lines, wholeFit.size, pageHeight - cv(81), rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
+      }
+      if (spotImg) {
+        const cr = cv(19);
+        const cx = cv(105);
+        const cy = pageHeight - cv(133) - cr;
+        const k = 0.5522847498 * cr;
+        tp.pushOperators(
+          pushGraphicsState(),
+          moveTo(cx + cr, cy),
+          appendBezierCurve(cx + cr, cy + k, cx + k, cy + cr, cx, cy + cr),
+          appendBezierCurve(cx - k, cy + cr, cx - cr, cy + k, cx - cr, cy),
+          appendBezierCurve(cx - cr, cy - k, cx - k, cy - cr, cx, cy - cr),
+          appendBezierCurve(cx + k, cy - cr, cx + cr, cy - k, cx + cr, cy),
+          closePath(), clip(), endPath(),
+        );
+        const scale = Math.max((cr * 2) / spotImg.width, (cr * 2) / spotImg.height);
+        tp.drawImage(spotImg, { x: cx - (spotImg.width * scale) / 2, y: cy - (spotImg.height * scale) / 2, width: spotImg.width * scale, height: spotImg.height * scale });
+        tp.pushOperators(popGraphicsState());
+        tp.drawCircle({ x: cx, y: cy, size: cr, borderColor: MOSS, borderWidth: cv(0.35) });
+        qa.push({ where: 'title page', severity: 'pass', check: 'title page: sprig, title lock-up, spot art in a circular moss-ringed crop (pass-2)' });
+      } else {
+        qa.push({ where: 'title page', severity: 'pass', check: 'title page: sprig and title lock-up (no spot art available, pass-2)' });
+      }
+      const tpImprint = `Printed on demand \u00B7 ${new Date().getUTCFullYear()}`;
+      const tpImprintSize = Math.max(6, Math.round(9 * coverScale));
+      const iw = fonts.text.widthOfTextAtSize(tpImprint, tpImprintSize);
+      tp.drawText(tpImprint, { x: (pageWidth - iw) / 2, y: pageHeight - cv(184), size: tpImprintSize, font: fonts.text, color: INK, opacity: 0.7 });
+    } else {
     const tpFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(30 * coverScale)), Math.round(pageWidth * 0.05));
     if (tpFit.belowReadable) {
       qa.push({ where: 'title page', severity: 'fail', check: `title page title fitted at ${tpFit.size}pt, below the readable threshold; shorten the title` });
@@ -738,6 +915,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const w = coverFonts.text.widthOfTextAtSize(line, tpByFit.size);
         tp.drawText(line, { x: (pageWidth - w) / 2, y: byBaseline - i * tpByFit.size * 1.3, size: tpByFit.size, font: coverFonts.text, color: INK });
       });
+    }
     }
   }
 
@@ -890,6 +1068,116 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const chapterList = Array.isArray(config?.outline?.chapters) ? config.outline.chapters : [];
     const chapterHere = chapterList.find((c: {startPage?:number;title?:string}) => c && c.startPage === page.page && typeof c.title === 'string' && c.title.trim()) || null;
     const headingStrip = chapterHere && !overlay ? cv(10) : 0;
+
+    // Pass-2 web story page (21 Nov 2026 art-direction spec): the art sits
+    // in a cream mount with a moss keyline (split) or runs full-bleed with
+    // a bordered cream panel (overlay); the story sets left-aligned in
+    // Source Sans 3 22/27 under a sprig divider, with a two-line Source
+    // Serif 4 drop cap opening the first page. Chaptered books keep the
+    // band system until their template gets its own pass.
+    if (!chapterHere) {
+      const rightHand = page.page % 2 === 1;
+      const x0mm = rightHand ? 20 : 16; // binding margin mirrors per side
+      const x0 = cv(x0mm);
+      const p2Size = Math.max(12, Math.round(22 * coverScale));
+      const p2Leading = Math.max(16, Math.round(27 * coverScale));
+      const p2Measure = cv(158);
+      const storyX = overlay ? x0 + cv(8) : x0;
+      const firstBaseline = pageHeight - cv(overlay ? 147 : 155);
+      let p2ImagePlaced = false;
+      if (!page.imageLocked && page.imageUrl) {
+        const imageData = await fetchImageBytes(page.imageUrl);
+        if (imageData) {
+          try {
+            const embeddedImage = await embedAny(pdfDoc, imageData);
+            if (overlay) {
+              const scale = Math.max(pageWidth / embeddedImage.width, pageHeight / embeddedImage.height);
+              const dw = embeddedImage.width * scale;
+              const dh = embeddedImage.height * scale;
+              storyPage.drawImage(embeddedImage, { x: (pageWidth - dw) / 2, y: (pageHeight - dh) / 2, width: dw, height: dh });
+              // Solid cream panel with a moss border for the story.
+              storyPage.drawRectangle({ x: x0, y: pageHeight - cv(128) - cv(69), width: cv(174), height: cv(69), color: PAPER, borderColor: MOSS, borderWidth: cv(0.25) });
+            } else {
+              storyPage.drawRectangle({ x: x0, y: pageHeight - cv(11) - cv(123), width: cv(174), height: cv(123), color: PAPER, borderColor: MOSS, borderWidth: cv(0.25) });
+              const ix = x0 + cv(3);
+              const iw = cv(168);
+              const ih = cv(117);
+              const iy = pageHeight - cv(14) - ih;
+              const scale = Math.max(iw / embeddedImage.width, ih / embeddedImage.height);
+              const dw = embeddedImage.width * scale;
+              const dh = embeddedImage.height * scale;
+              storyPage.pushOperators(
+                pushGraphicsState(),
+                moveTo(ix, iy), lineTo(ix + iw, iy), lineTo(ix + iw, iy + ih), lineTo(ix, iy + ih),
+                closePath(), clip(), endPath(),
+              );
+              // Centre-crop to fill the opening.
+              storyPage.drawImage(embeddedImage, { x: ix - (dw - iw) / 2, y: iy - (dh - ih) / 2, width: dw, height: dh });
+              storyPage.pushOperators(popGraphicsState());
+              storyPage.drawRectangle({ x: ix, y: iy, width: iw, height: ih, borderColor: MOSS, borderWidth: cv(0.2) });
+            }
+            p2ImagePlaced = true;
+          } catch (p2ImageError) {
+            console.error('Failed to embed image in PDF:', p2ImageError);
+          }
+        }
+      }
+      qa.push({
+        where: `page ${page.page}`,
+        severity: p2ImagePlaced ? 'pass' : page.imageLocked ? 'pass' : 'fail',
+        check: p2ImagePlaced
+          ? (overlay ? 'illustration full-bleed behind a bordered cream story panel (pass-2)' : 'illustration crop-filled in a cream mount with moss keyline (pass-2)')
+          : page.imageLocked
+            ? 'illustration intentionally omitted'
+            : 'illustration MISSING',
+      });
+
+      // Divider: sprig flanked by moss rules, centred on the story column.
+      const dividerY = overlay ? 135 : 141;
+      const columnCentre = storyX + p2Measure / 2;
+      drawSprig(storyPage, pageHeight, cv, x0mm + (overlay ? 8 : 0) + 79, dividerY, 8, MOSS);
+      storyPage.drawLine({ start: { x: columnCentre - cv(23), y: pageHeight - cv(dividerY) }, end: { x: columnCentre - cv(9), y: pageHeight - cv(dividerY) }, thickness: cv(0.2), color: MOSS });
+      storyPage.drawLine({ start: { x: columnCentre + cv(9), y: pageHeight - cv(dividerY) }, end: { x: columnCentre + cv(23), y: pageHeight - cv(dividerY) }, thickness: cv(0.2), color: MOSS });
+
+      // Story text: hard (verse) lines preserved, each soft-wrapped to the
+      // measure; single-word wrap tails pull a companion word down.
+      const hardLines = rawText.trim() ? rawText.split(/\n+/) : [];
+      const wrapped: string[] = [];
+      for (const hard of hardLines) {
+        const lines = wrapToMeasure(hard.trim(), fonts.text, p2Size, p2Measure);
+        if (lines.length > 1) {
+          const last = lines[lines.length - 1];
+          const prev = lines[lines.length - 2];
+          if (/^\S+$/.test(last) && prev.trim().split(/\s+/).length > 1) {
+            const cut = prev.lastIndexOf(' ');
+            lines[lines.length - 2] = prev.slice(0, cut);
+            lines[lines.length - 1] = `${prev.slice(cut + 1)} ${last}`;
+          }
+        }
+        wrapped.push(...lines);
+      }
+      const p2Cap = 5;
+      if (wrapped.length > p2Cap) {
+        qa.push({ where: `page ${page.page}`, severity: 'warn', check: `page typesets to ${wrapped.length} lines at ${p2Size}pt (pass-2 cap ${p2Cap}); shorten the copy upstream` });
+      }
+      const dropCap = !overlay && page.page === 1 && wrapped.length > 0 && /^[A-Za-z]/.test(wrapped[0]);
+      wrapped.slice(0, p2Cap).forEach((line, i) => {
+        let text = line;
+        let lx = storyX;
+        if (dropCap && i === 0) text = text.slice(1);
+        if (dropCap && i < 2) lx = storyX + cv(18);
+        storyPage.drawText(text, { x: lx, y: firstBaseline - i * p2Leading, size: p2Size, font: fonts.text, color: INK });
+      });
+      if (dropCap) {
+        const initial = wrapped[0][0];
+        const initSize = Math.round(52 * coverScale);
+        // Baseline dropped so the initial's cap top meets the body's cap top.
+        storyPage.drawText(initial, { x: x0, y: firstBaseline - Math.round(21 * coverScale), size: initSize, font: fonts.display, color: MOSS });
+      }
+      qa.push({ where: `page ${page.page}`, severity: 'pass', check: `pass-2 story: ${Math.min(wrapped.length, p2Cap)} line(s) at ${p2Size}/${p2Leading}pt, left-aligned 158mm column${dropCap ? ', drop-cap opening' : ''}` });
+      continue;
+    }
+
 
     // Text block geometry: common left axis, centred as a block.
     const blockWidth = lineWidths.length ? Math.max(...lineWidths) : 0;
@@ -1151,6 +1439,75 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       blurbText = normaliseTypography(fallbackBlurb(config.storyType, config.setting, coverChildName || undefined));
       qa.push({ where: 'back', severity: 'pass', check: 'back cover blurb: template (a written blurb lands with the generation wiring)' });
     }
+    if (!includeBleed && composedCover) {
+      // Pass-2 back cover (21 Nov 2026 art-direction spec): the pine field
+      // and ochre double frame continue from the front cover; the spot art
+      // sits in a circular cream vignette; the blurb sets cream on pine on
+      // the plate's own column; sign-off, ochre rule, logo, brand line.
+      backPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PINE });
+      backPage.drawRectangle({ x: cv(10), y: cv(10), width: pageWidth - cv(20), height: pageHeight - cv(20), borderColor: OCHRE, borderWidth: cv(0.4) });
+      backPage.drawRectangle({ x: cv(13), y: cv(13), width: pageWidth - cv(26), height: pageHeight - cv(26), borderColor: OCHRE, borderWidth: cv(0.2) });
+      if (spotImg) {
+        const cr = cv(24);
+        const cx = cv(105);
+        const cy = pageHeight - cv(51);
+        backPage.drawCircle({ x: cx, y: cy, size: cv(28), color: PAPER, borderColor: OCHRE, borderWidth: cv(0.4) });
+        const k = 0.5522847498 * cr;
+        backPage.pushOperators(
+          pushGraphicsState(),
+          moveTo(cx + cr, cy),
+          appendBezierCurve(cx + cr, cy + k, cx + k, cy + cr, cx, cy + cr),
+          appendBezierCurve(cx - k, cy + cr, cx - cr, cy + k, cx - cr, cy),
+          appendBezierCurve(cx - cr, cy - k, cx - k, cy - cr, cx, cy - cr),
+          appendBezierCurve(cx + k, cy - cr, cx + cr, cy - k, cx + cr, cy),
+          closePath(), clip(), endPath(),
+        );
+        const scale = Math.max((cr * 2) / spotImg.width, (cr * 2) / spotImg.height);
+        backPage.drawImage(spotImg, { x: cx - (spotImg.width * scale) / 2, y: cy - (spotImg.height * scale) / 2, width: spotImg.width * scale, height: spotImg.height * scale });
+        backPage.pushOperators(popGraphicsState());
+        qa.push({ where: 'back', severity: 'pass', check: 'back cover spot illustration in a circular cream vignette (pass-2)' });
+      } else {
+        qa.push({ where: 'back', severity: 'pass', check: 'back cover without spot art (it lands with the generation wiring)' });
+      }
+      const bSize = Math.max(12, Math.round(17 * coverScale));
+      const bLeading = Math.max(15, Math.round(22 * coverScale));
+      const bLines = wrapToMeasure(blurbText, fonts.text, bSize, cv(124));
+      bLines.slice(0, 6).forEach((line, i) => {
+        backPage.drawText(line, { x: cv(43), y: pageHeight - cv(96) - i * bLeading, size: bSize, font: fonts.text, color: PAPER });
+      });
+      qa.push({
+        where: 'back',
+        severity: bLines.length > 6 ? 'warn' : 'pass',
+        check: bLines.length > 6
+          ? `blurb wraps to ${bLines.length} lines on the 124mm measure; plated the first six`
+          : `blurb plated (${bLines.length} lines on the 124mm measure, pass-2)`,
+      });
+      const signOff = blurbSignOff(config.storyType, coverChildName || undefined);
+      if (signOff) {
+        const soSize = Math.max(11, Math.round(16 * coverScale));
+        const soFont = fonts.accent ?? fonts.display;
+        const sw = soFont.widthOfTextAtSize(signOff, soSize);
+        backPage.drawText(signOff, { x: (pageWidth - sw) / 2, y: pageHeight - cv(151), size: soSize, font: soFont, color: PAPER });
+        qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off plated' });
+      }
+      backPage.drawLine({ start: { x: cv(87), y: pageHeight - cv(165) }, end: { x: cv(123), y: pageHeight - cv(165) }, thickness: cv(0.3), color: OCHRE });
+      let logoPlated = false;
+      try {
+        const logoBytes = Uint8Array.from(atob(MAKE_YOUR_OWN_LOGO_CREAM_PNG_BASE64), (ch) => ch.charCodeAt(0));
+        const logoImg = await pdfDoc.embedPng(logoBytes);
+        const logoHeight = cv(6);
+        const logoWidth = logoHeight * MAKE_YOUR_OWN_LOGO_ASPECT;
+        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: pageHeight - cv(174), width: logoWidth, height: logoHeight, opacity: 0.95 });
+        logoPlated = true;
+      } catch (logoError) {
+        console.warn('Make Your Own logo embed failed; brand line only', logoError);
+      }
+      const brand = "by The Children's Library";
+      const brandSize = Math.max(8, Math.round(10 * coverScale));
+      const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
+      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: pageHeight - cv(185), size: brandSize, font: fonts.text, color: PAPER, opacity: 0.85 });
+      qa.push({ where: 'back', severity: 'pass', check: logoPlated ? 'web back cover brand line and Make Your Own logo plated (pass-2)' : 'web back cover brand line plated; logo embed failed (pass-2)' });
+    } else {
     // 21 Nov 2026 design overhaul (art-direction spec): one reading voice -
     // Source Sans 3 Regular 17/23, left aligned on a 116mm measure at x47mm,
     // first baseline 79mm, at most six lines, all inside the safe area.
@@ -1253,6 +1610,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
       backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(20), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
       qa.push({ where: 'back', severity: 'pass', check: logoPlated ? 'web back cover brand line and Make Your Own logo plated (print omits them, 11 Nov 2026 decision)' : 'web back cover brand line plated; logo embed failed (print omits both, 11 Nov 2026 decision)' });
+    }
     }
   }
 
