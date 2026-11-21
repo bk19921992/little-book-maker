@@ -1259,7 +1259,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       } catch (logoError) {
         console.warn('Make Your Own logo embed failed; brand line only', logoError);
       }
-      const brand = "Make Your Own by The Children's Library";
+      // The logo carries "Make Your Own"; the line under it names the parent
+      // brand only (owner review, 21 Nov 2026).
+      const brand = "by The Children's Library";
       const brandSize = Math.max(9, Math.round(11 * coverScale));
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
       backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(12), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
