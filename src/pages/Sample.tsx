@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, BookOpen, PencilLine } from 'lucide-react';
 import hero from '@/assets/storybook-hero.jpg';
+import { MAINTENANCE_CREDITS_PAUSED, MAINTENANCE_STATUS_SHORT } from '@/lib/pricing';
 import './landing.css';
 
 const samplePages = [
@@ -27,8 +28,9 @@ export default function Sample() {
             <h1 id="sample-title">Fern and the<br /><em>Moon Lantern.</em></h1>
             <p className="sprout-intro">A short sample showing the tone, pacing and page-by-page reading experience. The words below are a fixed example, not a customer story.</p>
             <div className="sprout-actions">
-              <Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link>
-              <Link className="sprout-secondary" to="/"><ArrowLeft aria-hidden="true" /> Back to home</Link>
+              {!MAINTENANCE_CREDITS_PAUSED && <Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link>}
+              <Link className={MAINTENANCE_CREDITS_PAUSED ? 'sprout-button' : 'sprout-secondary'} to="/"><ArrowLeft aria-hidden="true" /> Back to home</Link>
+              {MAINTENANCE_CREDITS_PAUSED && <span className="sprout-note" role="status">{MAINTENANCE_STATUS_SHORT}</span>}
             </div>
           </div>
           <figure className="sprout-book-scene">

@@ -30,3 +30,4 @@ export const CHAPTER_BOOK_MAX_TOTAL_PAGES = 24;
 // to false the moment credits land.
 export const MAINTENANCE_CREDITS_PAUSED = true;
 export const MAINTENANCE_NOTICE = 'Story creation is paused for a short while tonight while we top up our story engine. No payments are being taken. Please come back soon.';
+export const MAINTENANCE_STATUS_SHORT = 'Story creation is paused while we top up our story engine. No payments are being taken.';

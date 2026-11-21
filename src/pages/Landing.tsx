@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, Sprout, PencilLine, Download, ChevronDown } from 'lucide-react';
-import { PRICES, ADDITIONAL_BOOK_POLICY, PAID_CHECKOUT_ENABLED, PAID_CHECKOUT_NOTICE, MAINTENANCE_CREDITS_PAUSED, MAINTENANCE_NOTICE } from '@/lib/pricing';
+import { PRICES, ADDITIONAL_BOOK_POLICY, PAID_CHECKOUT_ENABLED, PAID_CHECKOUT_NOTICE, MAINTENANCE_CREDITS_PAUSED, MAINTENANCE_STATUS_SHORT } from '@/lib/pricing';
 import hero from '@/assets/storybook-hero.jpg';
 import './landing.css';
 
@@ -26,9 +26,16 @@ export default function Landing() {
             <p className="sprout-eyebrow"><BookOpen aria-hidden="true" /> A little story. A world of their own.</p>
             <h1 id="hero-title">Their imagination.<br />Your next<br /><em>bedtime story.</em></h1>
             <p className="sprout-intro">Create an AI-written, illustrated book from their favourite characters and big ideas. Edit the pages, then read it together.</p>
-            <div className="sprout-actions"><Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link><Link className="sprout-secondary" to="/sample">See a sample story</Link></div>
-            <p className="sprout-note">Create an account. Your first generation and PDF are free; each additional book and PDF is £2.99. Printed orders are not available yet.</p>
-            {MAINTENANCE_CREDITS_PAUSED && <p className="sprout-note" role="status"><strong>{MAINTENANCE_NOTICE}</strong></p>}
+            {MAINTENANCE_CREDITS_PAUSED ? (
+              <>
+                <div className="sprout-actions"><Link className="sprout-button" to="/sample">See a sample story <ArrowRight aria-hidden="true" /></Link><span className="sprout-note" role="status">{MAINTENANCE_STATUS_SHORT}</span></div>
+              </>
+            ) : (
+              <>
+                <div className="sprout-actions"><Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link><Link className="sprout-secondary" to="/sample">See a sample story</Link></div>
+                <p className="sprout-note">Create an account. Your first generation and PDF are free; each additional book and PDF is £2.99. Printed orders are not available yet.</p>
+              </>
+            )}
           </div>
           <figure className="sprout-book-scene">
             <div className="sprout-art"><img src={hero} width="1429" height="804" fetchPriority="high" alt="Two friendly illustrated dragons sitting on the pages of an open storybook" /></div>
