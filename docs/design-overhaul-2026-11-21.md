@@ -105,3 +105,117 @@ Before export, check title and story overflow, missing glyphs, art crops, mirror
 ---
 
 Source: ChatGPT (GPT-6.2) art-direction critique of rendered cover/story/back pages, commissioned 21 Nov 2026 after the owner judged the output "not professional". Implementation status: Phase 1 shipped (commit 9a80d3d) - fonts (Source Serif 4 replaces the spec's Fraunces, whose available build renders with in-word gaps under pdf-lib/fontkit), colours, folios off, back cover layout. Phase 2 outstanding: cover title lock-up above art, wider art crop with shared left edge, mirrored binding margins, overlay band repositioning, orphan-word control, per-format type tables.
+
+
+---
+
+# Pass 2: A framed storybook with a cream title cartouche (bolder direction, 21 Nov 2026)
+
+ChatGPT said:
+Pass 2: A framed storybook with a cream title cartouche
+
+Give the cover a deep pine-green field, a fine double frame and a large cream title cartouche that overlaps the illustration. Carry the same frame and a small three-leaf ornament through the interior and back. At thumbnail size, the green field and cream cartouche should be the first differences you see.
+
+All measurements are for a 210 × 210 mm trimmed page, from the top-left. Text coordinates are baselines. Sizes and leading are in points. Centred elements use x = 105 mm unless specified.
+
+Colour	Value	Use
+Pine	#1E4333	Front and back fields, display type
+Cream	#F2EFE9	Cartouche, interior paper, reversed text
+Moss	#52704F	Interior initials and ornaments
+Ochre	#B68A55	Cover and back framing lines
+Ink	#282822	Story text
+1. Front cover: put the title inside the composition
+
+What to change. Frame the illustration on green and overlap its upper edge with a wide, shaped cream cartouche. Give the child’s name the largest type on the book.
+
+Why. The current cover reads as a sequence of separate blocks. Here, the cartouche interrupts the art frame and sits over the sky. The title, picture and border become one recognisable silhouette.
+
+Element	Exact spec
+Cover field	Pine to bleed. Use 3 mm as the default bleed, subject to the printer’s spec
+Double frame	First rectangle x 8, y 8, w 194, h 194, ochre 0.35 mm stroke. Second rectangle x 10.5, y 10.5, w 189, h 189, ochre 0.18 mm stroke. Square corners
+Illustration	x 16, y 24, w 178, h 170 mm, crop to fill. Add a 0.35 mm ochre border centred on the image edge
+Cartouche	Cream fill, 0.50 mm ochre stroke, drawn over the art and its border. Bounds x 27–183, y 13–70 mm. Use the path below
+Title, first line	Pip, Source Serif 4 Bold, 55 pt, tracking −12/1000 em, pine, centred at x 105, baseline y 40
+Title, second line	and the Red Fox, Source Serif 4 Semibold, 28 pt, tracking −5/1000 em, pine, centred at x 105, baseline y 54
+Ornament	One 8 × 4 mm moss sprig centred at (105, 62). Flank it with ochre rules from x 84–96 and x 114–126, both at y 62, 0.20 mm thick
+M 42 17 H 79
+Q 105 9 131 17
+H 168 Q 168 27 183 30
+V 53 Q 168 56 168 66
+H 130 Q 105 74 80 66
+H 42 Q 42 56 27 53
+V 30 Q 42 27 42 17 Z
+
+For the crop, use the plate path as an occlusion mask. The centre of the illustration is covered down to y 70, while the sides stay visible. Position Pip’s face below the plate, keep the fox clear, and let the lighthouse sit off to the right. Score candidate crops against those three areas before choosing one. For new art, pass the plate mask to the illustrator or image generator.
+
+Personalisation rule. Measure shaped text including tracking. Fit each line to 126 mm. Reduce the name from 55 to 35 pt and the second line from 28 to 23 pt, in 1 pt steps. If either needs two lines, use baselines 31 / 43 / 55 mm, with 30 pt for name lines and 23 pt for subtitle lines. Flag any title that still overflows. Drop the “Adventure” label.
+
+2. Interior: a mounted illustration and a visible reading entrance
+
+What to change. Set the picture into a cream mount. Mark the first story page and genuine scene openings with a two-line initial. Use a small sprig and rule on each split page.
+
+Why. You’ll see the change before reading a word. The mount makes the illustration feel deliberately placed, while the initial gives the reader a clear place to begin. Reserving initials for openings gives them a job across the book.
+
+Element	Exact spec
+Page grid	20 mm binding margin, 16 mm outer margin. Set x₀ = 20 on right-hand pages and x₀ = 16 on left-hand pages
+Outer mount	x x₀, y 11, w 174, h 123 mm. Cream fill, 0.25 mm moss stroke
+Illustration opening	x x₀ + 3, y 14, w 168, h 117 mm. Crop to fill, with a 0.20 mm moss keyline centred on its edge
+Divider	Centred over the 158 mm story column at y 141. Moss sprig 8 × 4 mm, with two 14 mm moss rules, 0.20 mm thick, each starting 9 mm from the centre
+Story	x x₀, w 158 mm, first baseline y 155. Source Sans 3 Regular 22/27 pt, tracking 0, ink, left-aligned with a ragged right edge
+Opening initial	Source Serif 4 Semibold 52 pt, moss. Align its visible cap top with the body cap top on line 1. Reserve 18 mm at the start of lines 1 and 2, widening the reserve to the initial’s ink width plus 3 mm for wider letters
+Continuation pages	Use the full 158 mm measure from line 1. Keep the divider and first baseline in the same position
+Folios	Off by default. If needed, 9 pt Source Sans 3 Regular, moss, baseline y 202, aligned to the outer edge of the mount
+
+Use actual glyph bounds for the initial. If the story starts with a quotation mark or a glyph that will not fit the two-line space, use the normal paragraph opening. Wrap against the actual line widths, allow five lines maximum, and penalise single-word final lines. For a crowded opening, try the full-width paragraph first, then 21/26 pt. Flag anything still over five lines for repagination.
+
+For the supplied illustration, protect Pip’s feet, the fox’s face and the lighthouse. If all three cannot survive the wide crop, place a 117 × 117 mm square inside the same mount, centred horizontally, and move its keyline to the actual image edge.
+
+Overlay variant. Run the image to bleed. Use a solid cream panel x x₀, y 128, w 174, h 69 mm, with a 0.25 mm moss border. Place the divider at y 135 and the first story baseline at y 147, with 8 mm side insets for the same 158 mm measure. Use regular paragraph openings on overlays. Protect essential action above y 122, or use the split template for that scene.
+
+3. Back cover: a framed vignette and one clear reading order
+
+What to change. Repeat the pine field and double border. Set a round lighthouse vignette above the blurb, with the personalised sign-off and imprint grouped below.
+
+Why. The back will read as the other side of the same book. The circular mount contrasts with the large rectangular front image and gives the eye a clear starting point.
+
+Element	Exact spec
+Field and border	Same as front, including bleed
+Vignette mount	Circle centred at (105, 51), cream fill, radius 28 mm, 0.40 mm ochre stroke. Clip the lighthouse image to radius 24 mm and put a 0.20 mm ochre ring at that edge
+Blurb	x 43, w 124 mm, first baseline y 96. Source Sans 3 Regular 17/22 pt, cream, ragged right. Aim for four to five lines, maximum six
+Personalised sign-off	“Made especially for Pip.” Source Serif 4 Semibold Italic 16 pt, cream, centred, baseline y 151. Allow 140 mm width. For two lines, use y 147 / 154
+Imprint divider	Ochre rule x 87–123, y 165, 0.25 mm thick
+Imprint	Centre the logo and wordmark as a group, maximum 62 mm wide. Use a 6 mm logo mark, 3 mm gap, Source Sans 3 Semibold 12 pt, baseline y 177. Centre “by The Children’s Library” beneath it at 10 pt, baseline y 185
+
+Keep the vignette focused on one subject. For this book, use the lighthouse against a small patch of sky and sea. Crop from the existing art if the lighthouse reads cleanly at 48 mm across. Here’s the blurb I’d use:
+
+Pip spots a flash of red in the grass. A little fox is watching from behind the dunes. Will it come out to play?
+
+4. Repeat one ornament
+
+What to change. Use one three-leaf sprig on the cover plate, story dividers and title page. Use it alone at genuine section breaks.
+
+Why. A repeated ornament helps the pages feel like one book. Keeping it small lets the illustrations carry the detail.
+
+Define the sprig in an 8 × 4 mm viewBox. Fill the leaves in moss on cream and use cream on pine. Draw the stem with a 0.20 mm stroke and round caps.
+
+<!-- Stem -->
+M 0.7 3.5 Q 3.9 3.2 7.3 1.2
+
+<!-- Filled leaves -->
+M 2.8 3.2 Q 0.8 2.7 1.2 1.0 Q 3.0 1.2 2.8 3.2 Z
+M 4.5 2.7 Q 2.8 1.8 3.7 0.4 Q 5.3 0.8 4.5 2.7 Z
+M 5.7 2.2 Q 6.0 0.5 7.8 0.4 Q 7.8 1.8 5.7 2.2 Z
+
+Title page. Use cream paper. Centre a 16 × 8 mm moss sprig at (105, 56). Set the name at 42 pt Source Serif 4 Bold, baseline y 81, and the rest of the title at 26 pt Semibold, baseline y 96. Add a 38 mm diameter circular crop of a story detail centred at (105, 133), with a 0.25 mm moss ring. Place the imprint at y 184, 10 pt. Use a single 8 mm sprig for section breaks, centred with 6 mm clear space above and below.
+
+5. Scale the ornament and cover geometry. Reflow the story type.
+Trim	Cover and back	Interior
+A5 portrait, 148 × 210	Scale square composition coordinates, paths and display type by 148/210. Centre the composition vertically with +31 mm on y. Keep the pine field to bleed. Back blurb 13/17 pt in the scaled 87 mm column. Allow six lines and a seventh only if it clears the sign-off by 8 mm	Binding/outer margins 15/12 mm. Mount 121 × 117 mm, top y 12, with 2.5 mm inset. Divider y 137. Story 19/24 pt, 115 mm wide, first baseline y 150. Initial 43 pt. Allow six lines
+A4 portrait, 210 × 297	Use the square composition at 1×, with +43.5 mm on y. Pine to bleed	Use the square horizontal grid. Mount 174 × 163 mm, top y 17. Divider y 192. Story 24/31 pt, first baseline y 208. Initial 56 pt
+A4 landscape, 297 × 210	Use the square composition at 1×, with +43.5 mm on x. Pine to bleed	Centre the square split or overlay grid horizontally with +43.5 mm on x. Keep 22/27 pt story type and the 158 mm column. Use the side space for full-bleed art on overlay pages
+
+For portrait overlays, use the split template’s horizontal grid. In A5 use a 121 × 74 mm cream panel at y 127, with 3 mm side insets and first baseline y 146. In A4 use a 174 × 82 mm panel at y 204, with 8 mm side insets and first baseline y 226. Keep the divider 8 mm below the panel top.
+
+Acceptance test. Put the old and new covers side by side at 120 px wide. The pine field, cream cartouche and title hierarchy should register before the copy is legible. Then print the interior at 100% and test an opening, a continuation and a long personalised name. Check that the sprig and fine rules hold in print, the title clears the illustration’s focal points, and the story reads aloud without awkward breaks.
+
+
