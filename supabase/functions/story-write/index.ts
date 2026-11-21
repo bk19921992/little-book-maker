@@ -7,7 +7,7 @@ import { serviceClient } from "../_shared/auth.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
 import { castDetailLines, speciesRule } from "./castText.ts"
-import { contractViolations, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, wordRange } from "../_shared/textContract.ts"
+import { contractViolations, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, pageLines, wordRange } from "../_shared/textContract.ts"
 import { buildTitlePrompt, validateTitle } from "../_shared/title.ts"
 
 serve(async (req) => {
@@ -94,6 +94,7 @@ ${sequenceContext}
 
 Page Requirements:
 - Target word count: ${pageOutline.wordCount || pageOutline.wordsTarget} words
+- Hard word limit: ${range.min}-${range.max} words for this page. Never exceed ${range.max} words, even by one.
 - Visual brief: ${pageOutline.visualBrief}
 ${pageSceneContext(pageOutline.page)}
 - This is page ${pageOutline.page} of ${config.lengthPages}
@@ -114,7 +115,7 @@ Important Instructions:
 - ${config.children.length ? 'Include the supplied child names naturally, unchanged.' : 'The child is unnamed. Use the child or consistent pronouns, never invent a name.'}
 - ${speciesRule(config)}
 - Incorporate ALL personal details where appropriate and natural
-- Keep within the target word count (self-check)
+- Keep within the target word count and never exceed the hard limit (count your words before finishing)
 - Write in FULL sentences with articles (a, the) - never telegraphic fragments like "Dotty PJs feel soft and light"
 - At most two sentences per page
 - Say something the picture cannot show: what the character thinks, hears, feels or wants - do not just describe what is plainly visible
@@ -140,9 +141,14 @@ Important Instructions:
       const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
       const { min, max } = range
       const target = Math.min(Math.max(pageOutline.wordCount || pageOutline.wordsTarget || max, min), max)
-      const words = countWords(pageText)
-      if (words < min || words > max) {
-        console.log(`Adjusting page ${pageOutline.page} from ${words} words to within ${min}-${max}`)
+      // Word-range enforcement: verify the count after every pass and keep
+      // adjusting (up to 3). A single pass did not converge often enough -
+      // whole-book drafts overshoot the band systematically - and every page
+      // left out of range stops the book at the editor wall.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const words = countWords(pageText)
+        if (words >= min && words <= max) break
+        console.log(`Adjusting page ${pageOutline.page} from ${words} words to within ${min}-${max} (attempt ${attempt + 1})`)
         const adjust = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
@@ -150,15 +156,28 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
-              { role: 'user', content: `${revisionContext}\n\nAdjust the following text to be between ${min}-${max} words (aim ${target}). Keep UK English and the canonical cast identities. Do not preserve a conflicting invented name. Keep the format: newline-separated lines, ${lineRule}. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `${revisionContext}\n\nAdjust the following text to be between ${min} and ${max} words (aim ${target}). Count the words: the result MUST NOT exceed ${max} words. Keep UK English and the canonical cast identities. Do not preserve a conflicting invented name. Keep the format: newline-separated lines, ${lineRule}. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
         })
-        if (adjust.ok) {
-          const adj = await adjust.json()
-          pageText = adj.choices[0].message.content.trim()
-        }
+        if (!adjust.ok) break
+        const adj = await adjust.json()
+        const candidate = (adj.choices?.[0]?.message?.content || '').trim()
+        if (candidate.length < 10) break
+        pageText = candidate
+      }
+      // Deterministic last resort for a word overflow the LLM passes did not
+      // fix: drop trailing whole lines (never mid-line cuts) while the page
+      // stays at or above the minimum. A slightly shorter page beats stopping
+      // the whole book at the editor wall; the drop is logged loudly.
+      for (let guard = 0; guard < 10 && countWords(pageText) > max; guard++) {
+        const lines = pageLines(pageText)
+        if (lines.length <= 1) break
+        const next = lines.slice(0, -1).join('\n')
+        if (countWords(next) < min) break
+        pageText = next
+        console.warn(`Dropped the trailing line on page ${pageOutline.page} to meet the ${min}-${max} word range`)
       }
       // Line-format enforcement (typesetting contract): the export typesets
       // hard lines and soft-wraps anything too long, which swells the paper
