@@ -30,12 +30,42 @@ const createInitialConfig = (): StoryConfig => ({
   imageSeed: null,
 });
 
+// Deferred sign-up: a guest's planned story is parked in localStorage before
+// the account wall, so it survives the email-confirmation round trip. It is
+// loaded once, then cleared; drafts older than a day are abandoned.
+const GUEST_DRAFT_KEY = 'sprout-guest-draft';
+
+const loadGuestDraft = (): AppState | null => {
+  try {
+    const raw = localStorage.getItem(GUEST_DRAFT_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (!draft?.config?.scenePlanDraft || Date.now() - (draft.savedAt || 0) > 24 * 60 * 60 * 1000) return null;
+    return { currentStep: 'preview', config: draft.config, isGenerating: false, errors: [] };
+  } catch {
+    return null;
+  }
+};
+
+export const saveGuestDraft = (config: StoryConfig) => {
+  try {
+    localStorage.setItem(GUEST_DRAFT_KEY, JSON.stringify({ savedAt: Date.now(), config }));
+  } catch { /* storage full or unavailable: the in-memory draft still works */ }
+};
+
 export const useAppState = () => {
-  const [state, setState] = useState<AppState>({
-    currentStep: 'setup',
-    config: createInitialConfig(),
-    isGenerating: false,
-    errors: [],
+  const [state, setState] = useState<AppState>(() => {
+    const draft = loadGuestDraft();
+    if (draft) {
+      try { localStorage.removeItem(GUEST_DRAFT_KEY); } catch { /* ignore */ }
+      return draft;
+    }
+    return {
+      currentStep: 'setup',
+      config: createInitialConfig(),
+      isGenerating: false,
+      errors: [],
+    };
   });
 
   const updateConfig = useCallback((updates: Partial<StoryConfig>) => {
@@ -67,6 +97,7 @@ export const useAppState = () => {
   }, []);
 
   const resetState = useCallback(() => {
+    try { localStorage.removeItem(GUEST_DRAFT_KEY); } catch { /* ignore */ }
     setState({
       currentStep: 'setup',
       config: createInitialConfig(),

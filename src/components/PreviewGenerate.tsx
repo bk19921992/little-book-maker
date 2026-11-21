@@ -11,6 +11,7 @@ import { StoryConfig, StoryPage, StoryOutline, StyleBible, PageSizePreset, PageL
 import { api } from '../api';
 import { pagesNeedingTextFix, validateStoryConfig } from '../lib/validation';
 import { toast } from 'sonner';
+import { saveGuestDraft } from '../state';
 import { andList, coverFallbackNote, resolveAutoFormat } from '../lib/format';
 import { imageConfig } from '../lib/imageRequest';
 import { writeResultUpdates } from '../lib/backMatter';
@@ -32,6 +33,8 @@ interface PreviewGenerateProps {
   // reloaded: continue its job instead of starting again.
   resume?: GenerationCheckpoint | null;
   onResumeHandled?: () => void;
+  // Guest mode: ask the host for the account wall (paid steps stay gated).
+  onRequestAuth?: () => void;
 }
 
 type GenerationStep = 'idle' | 'planning' | 'writing' | 'images' | 'complete';
@@ -43,6 +46,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
   onBack,
   resume,
   onResumeHandled,
+  onRequestAuth,
 }) => {
   const [currentStep, setCurrentStep] = useState<GenerationStep>('idle');
   const [progress, setProgress] = useState(0);
@@ -78,6 +82,39 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       }
     } else {
       setEstimatedTimeRemaining('');
+    }
+  };
+
+  // Guest preview: plan only. Writing the full text and illustrating are the
+  // account-gated paid steps, so visitors without an account stop here with
+  // their saved scene plan.
+  const planPreview = async () => {
+    const validationErrors = validateStoryConfig(config);
+    if (validationErrors.length > 0) {
+      setError(`Please fix these issues: ${validationErrors.map((e) => e.message).join(', ')}`);
+      toast.error('Please complete the setup form');
+      return;
+    }
+    setError(null);
+    setIsGenerating(true);
+    setCurrentStep('planning');
+    try {
+      const storyId = config.storyId || crypto.randomUUID();
+      const planResponse = await api.planStory(config, storyId);
+      if ('needsSceneRepair' in planResponse && planResponse.needsSceneRepair) {
+        onConfigChange({ storyId, scenePlanDraft: { outline: planResponse.outline, styleBible: planResponse.styleBible, format: planResponse.format, issues: planResponse.issues || [] } });
+        setError('Scene plan saved for local repair. No writing or illustration started.');
+        return;
+      }
+      const guestConfig = { ...config, storyId, scenePlanDraft: { outline: planResponse.outline, styleBible: planResponse.styleBible, format: planResponse.format, issues: [] } };
+      onConfigChange({ storyId, scenePlanDraft: guestConfig.scenePlanDraft });
+      saveGuestDraft(guestConfig);
+      toast.success('Your story plan is ready. Create a free account to bring it to life.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to plan the story');
+    } finally {
+      setIsGenerating(false);
+      setCurrentStep('idle');
     }
   };
 
@@ -368,7 +405,26 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
       </div>
 
       {(config.scenePlanDraft || config.outline) && <ScenePlanRepair config={config} onConfigChange={onConfigChange} />}
-      {config.scenePlanDraft && <Button disabled={isGenerating || sceneLedgerIssues(config.scenePlanDraft.outline.sceneLedger,config.lengthPages).length>0} onClick={()=>void generateStory(true)}>Continue saved plan: write text and create illustrations</Button>}
+      {config.scenePlanDraft && user && <Button disabled={isGenerating || sceneLedgerIssues(config.scenePlanDraft.outline.sceneLedger,config.lengthPages).length>0} onClick={()=>void generateStory(true)}>Continue saved plan: write text and create illustrations</Button>}
+      {config.scenePlanDraft && !user && (
+        <Card className="story-card">
+          <CardHeader><CardTitle>Your story plan</CardTitle></CardHeader>
+          <CardContent>
+            {config.scenePlanDraft.outline.chapters && config.scenePlanDraft.outline.chapters.length > 0 && (
+              <ol className="space-y-1 mb-4">
+                {config.scenePlanDraft.outline.chapters.map((ch) => (
+                  <li key={ch.number}><strong>Chapter {ch.number}:</strong> {ch.title}</li>
+                ))}
+              </ol>
+            )}
+            <ol className="space-y-2">
+              {config.scenePlanDraft.outline.pages.map((p) => (
+                <li key={p.page} className="text-sm"><strong>Page {p.page}:</strong> {p.visualBrief}</li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
+      )}
       {/* Story Configuration Summary */}
       <Card className="story-card">
         <CardHeader>
@@ -671,7 +727,7 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             </Button>
           )}
 
-          {currentStep === 'idle' && !pendingJob && !config.scenePlanDraft && (
+          {currentStep === 'idle' && !pendingJob && !config.scenePlanDraft && user && (
             <Button
               onClick={()=>void generateStory()}
               size="lg"
@@ -680,6 +736,29 @@ export const PreviewGenerate: React.FC<PreviewGenerateProps> = ({
             >
               <Sparkles className="w-5 h-5 mr-2" />
               Generate Story
+            </Button>
+          )}
+
+          {currentStep === 'idle' && !pendingJob && !config.scenePlanDraft && !user && (
+            <Button
+              onClick={()=>void planPreview()}
+              size="lg"
+              className="px-8 py-3 text-lg font-medium animate-gentle-bounce"
+              disabled={isGenerating || MAINTENANCE_CREDITS_PAUSED}
+            >
+              <Sparkles className="w-5 h-5 mr-2" />
+              See your story plan
+            </Button>
+          )}
+
+          {currentStep === 'idle' && config.scenePlanDraft && !user && (
+            <Button
+              onClick={onRequestAuth}
+              size="lg"
+              className="px-8 py-3 text-lg font-medium animate-gentle-bounce"
+            >
+              <Sparkles className="w-5 h-5 mr-2" />
+              Create your free account to bring it to life
             </Button>
           )}
           

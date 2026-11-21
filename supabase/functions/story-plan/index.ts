@@ -20,6 +20,29 @@ export function storyTypeNote(storyType?: string): string {
     : '';
 }
 
+// Guest plan preview rate limit (deferred sign-up): a few plans per IP per
+// day, kept in Deno KV so no database migration is needed. Fails closed: if
+// the counter cannot run, the preview is refused rather than the model call
+// leaking.
+const GUEST_PLAN_DAILY_LIMIT = 3
+async function checkAndRecordGuestPlan(ip: string): Promise<string | null> {
+  try {
+    const kv = await Deno.openKv()
+    const day = new Date().toISOString().slice(0, 10)
+    const key = ['guest-plan', day, ip]
+    const entry = await kv.get<number>(key)
+    const used = entry.value ?? 0
+    if (used >= GUEST_PLAN_DAILY_LIMIT) {
+      return 'You have made a few story plans already today. Create a free account to keep going.'
+    }
+    await kv.set(key, used + 1, { expireIn: 48 * 60 * 60 * 1000 })
+    return null
+  } catch (kvError) {
+    console.error('Guest plan rate limit unavailable', kvError)
+    return 'Story previews are unavailable right now. Please try again in a little while.'
+  }
+}
+
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
   if (req.method === 'OPTIONS') {
@@ -28,11 +51,20 @@ serve(async (req) => {
 
   try {
     let user
+    let guestIp: string | null = null
     try {
       user = await requireUser(req)
     } catch (authError) {
-      if (authError instanceof AuthError) return unauthorisedResponse(corsHeaders)
-      throw authError
+      if (authError instanceof AuthError) {
+        // Deferred sign-up: guests may preview a story plan before creating
+        // an account. Writing the text and illustrating stay account-gated;
+        // guest plans are rate-limited per IP above so the preview cannot
+        // become a free-generation leak.
+        user = null
+        guestIp = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown'
+      } else {
+        throw authError
+      }
     }
 
     const { config, storyId } = await req.json()
@@ -64,14 +96,22 @@ serve(async (req) => {
       })
     }
 
-    if (!await claimBook(serviceClient(), user.id, storyId)) return bookPaymentRequired(corsHeaders)
+    if (user) {
+      if (!await claimBook(serviceClient(), user.id, storyId)) return bookPaymentRequired(corsHeaders)
 
-    const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'story', 1)
-    if (limitMessage) {
-      return tooManyRequestsResponse(corsHeaders, limitMessage)
+      const limitMessage = await checkAndRecordUsage(serviceClient(), user.id, 'story', 1)
+      if (limitMessage) {
+        return tooManyRequestsResponse(corsHeaders, limitMessage)
+      }
+
+      console.log('Story plan request: user', user.id, 'pages', config.lengthPages)
+    } else {
+      const guestLimit = await checkAndRecordGuestPlan(guestIp || 'unknown')
+      if (guestLimit) {
+        return tooManyRequestsResponse(corsHeaders, guestLimit)
+      }
+      console.log('Guest story plan preview: ip', guestIp, 'pages', config.lengthPages)
     }
-
-    console.log('Story plan request: user', user.id, 'pages', config.lengthPages)
 
     const openaiKey = Deno.env.get('OPENAI_API_KEY')
 

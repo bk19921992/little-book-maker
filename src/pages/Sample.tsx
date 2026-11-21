@@ -19,7 +19,7 @@ export default function Sample() {
       <a className="sprout-skip" href="#main">Skip to content</a>
       <header className="sprout-header sprout-wrap">
         <Link className="sprout-brand" to="/" aria-label="Make, by The Children's Library - home"><img src="/favicon.svg" alt="" width="28" height="28" /><span translate="no">Make</span><span className="sprout-brand-parent">The Children's Library</span></Link>
-        <nav aria-label="Main navigation"><Link className="sprout-nav-link" to="/">Home</Link><Link className="sprout-nav-link" to="/app">Sign in <ArrowRight aria-hidden="true" /></Link></nav>
+        <nav aria-label="Main navigation"><Link className="sprout-nav-link" to="/">Home</Link><Link className="sprout-nav-link" to="/app?mode=sign-in">Sign in <ArrowRight aria-hidden="true" /></Link></nav>
       </header>
       <main id="main">
         <section className="sprout-sample-hero sprout-wrap" aria-labelledby="sample-title">
@@ -28,7 +28,7 @@ export default function Sample() {
             <h1 id="sample-title">Fern and the<br /><em>Moon Lantern.</em></h1>
             <p className="sprout-intro">A short sample showing the tone, pacing and page-by-page reading experience. The words below are a fixed example, not a customer story.</p>
             <div className="sprout-actions">
-              {!MAINTENANCE_CREDITS_PAUSED && <Link className="sprout-button" to="/app?mode=sign-up">Create your first book <ArrowRight aria-hidden="true" /></Link>}
+              {!MAINTENANCE_CREDITS_PAUSED && <Link className="sprout-button" to="/app">Create your first book <ArrowRight aria-hidden="true" /></Link>}
               <Link className={MAINTENANCE_CREDITS_PAUSED ? 'sprout-button' : 'sprout-secondary'} to="/"><ArrowLeft aria-hidden="true" /> Back to home</Link>
               {MAINTENANCE_CREDITS_PAUSED && <span className="sprout-note" role="status">{MAINTENANCE_STATUS_SHORT}</span>}
             </div>

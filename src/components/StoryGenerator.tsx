@@ -15,7 +15,13 @@ import { PageEditor } from './PageEditor';
 import { ExportPanel } from './ExportPanel';
 import heroImage from '../assets/storybook-hero.jpg';
 
-export const StoryGenerator: React.FC = () => {
+interface StoryGeneratorProps {
+  // Guest mode: called when a visitor without an account reaches the paid
+  // steps, so the host can show the sign-in/sign-up wall.
+  onRequestAuth?: () => void;
+}
+
+export const StoryGenerator: React.FC<StoryGeneratorProps> = ({ onRequestAuth }) => {
   const {
     state,
     updateConfig,
@@ -221,6 +227,7 @@ export const StoryGenerator: React.FC = () => {
             onBack={handleBack}
             resume={resuming}
             onResumeHandled={() => setResuming(null)}
+            onRequestAuth={onRequestAuth}
           />
         )}
         

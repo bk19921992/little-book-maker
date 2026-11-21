@@ -8,3 +8,27 @@ html:root {
 .sprout-app-entry a:focus-visible,.sprout-app-entry button:focus-visible {outline: 3px solid hsl(var(--ring)); outline-offset: 3px;}
 .sprout-app-entry input {min-height: 44px;}
 .sprout-app-entry button {min-height: 44px;}
+
+/* Deferred sign-up: auth wall overlays the guest builder without unmounting it. */
+.sprout-auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow: auto;
+  background: #f2efe9;
+}
+.sprout-auth-overlay-bar {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 0.75rem 1.5rem 0;
+}
+.sprout-auth-overlay-back {
+  background: none;
+  border: none;
+  color: #52704f;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+.sprout-auth-overlay-back:hover { text-decoration: underline; }
