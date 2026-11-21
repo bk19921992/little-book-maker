@@ -33,7 +33,7 @@ export default function Landing() {
             ) : (
               <>
                 <div className="sprout-actions"><Link className="sprout-button" to="/app">Create your first book <ArrowRight aria-hidden="true" /></Link><Link className="sprout-secondary" to="/sample">See a sample story</Link></div>
-                <p className="sprout-note">Create an account. Your first generation and PDF are free; each additional book and PDF is £2.99. Printed orders are not available yet.</p>
+                <p className="sprout-note">No account needed to start. Your first generation and PDF are free; each additional book and PDF is £2.99. Printed orders are not available yet.</p>
               </>
             )}
           </div>
