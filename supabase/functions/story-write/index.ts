@@ -167,18 +167,6 @@ Important Instructions:
         if (candidate.length < 10) break
         pageText = candidate
       }
-      // Deterministic last resort for a word overflow the LLM passes did not
-      // fix: drop trailing whole lines (never mid-line cuts) while the page
-      // stays at or above the minimum. A slightly shorter page beats stopping
-      // the whole book at the editor wall; the drop is logged loudly.
-      for (let guard = 0; guard < 10 && countWords(pageText) > max; guard++) {
-        const lines = pageLines(pageText)
-        if (lines.length <= 1) break
-        const next = lines.slice(0, -1).join('\n')
-        if (countWords(next) < min) break
-        pageText = next
-        console.warn(`Dropped the trailing line on page ${pageOutline.page} to meet the ${min}-${max} word range`)
-      }
       // Line-format enforcement (typesetting contract): the export typesets
       // hard lines and soft-wraps anything too long, which swells the paper
       // band past its cap. Prompts alone do not hold the limits, so verify
@@ -206,22 +194,32 @@ Important Instructions:
           break
         }
       }
-      if (lineShapeViolations(pageText, config.readingLevel, config.pageSize).length) {
-        // Deterministic last resort, for line-shape breaches only: packLines
-        // repairs line length and line count but cannot change the word
-        // total, so a word-count-only breach skips it (running it would
-        // discard the model's line breaks - rhyme placement - for nothing)
-        // and is flagged for the editor below instead. Line length is then
-        // guaranteed; line COUNT holds whenever the copy is within the word
-        // range (the adjust pass above targets that). Rhyme placement
-        // degrades on this path - it is the safety net, not the norm.
+      if (contractViolations(pageText, config.readingLevel, config.pageSize).length) {
+        // Deterministic convergence when the LLM passes did not. The band's
+        // char budget (MAX_LINE_CHARS) binds before the word ceiling for
+        // ordinary copy, so a page can be inside its word range and still
+        // not typeset: repack, then drop trailing whole lines (never
+        // mid-line cuts), repacking after each drop, until the shared
+        // contract passes or the page would fall below its word minimum.
+        // A slightly shorter page beats stopping the whole book at the
+        // editor wall; every drop is logged. Rhyme placement degrades on
+        // this path - it is the safety net, not the norm.
         pageText = packLines(pageText)
-        console.log(`Mechanical rebreak applied to page ${pageOutline.page} (LLM rebreak did not converge)`)
+        console.log(`Mechanical rebreak applied to page ${pageOutline.page} (LLM passes did not converge)`)
+        for (let guard = 0; guard < 12 && contractViolations(pageText, config.readingLevel, config.pageSize).length; guard++) {
+          const lines = pageLines(pageText)
+          if (lines.length <= 1) break
+          const next = lines.slice(0, -1).join('\n')
+          if (countWords(next) < min) break
+          pageText = packLines(next)
+          console.warn(`Dropped the trailing line on page ${pageOutline.page} to meet the text contract`)
+        }
         const remaining = contractViolations(pageText, config.readingLevel, config.pageSize)
         if (remaining.length) {
-          // Only unusually long words land here. Export then steps the type
-          // tier down; if even the floor tier cannot fit, its QA fails the page.
-          console.warn(`Page ${pageOutline.page} still exceeds the text contract after repack: ${remaining.join('; ')}`)
+          // Should not happen for copy at or above the word minimum: the
+          // band holds the minimum even at the char cap. If it does, export
+          // steps the type tier down; the floor tier's QA fails the page.
+          console.warn(`Page ${pageOutline.page} still exceeds the text contract after deterministic trimming: ${remaining.join('; ')}`)
         }
       }
       const contractIssues = contractViolations(pageText, config.readingLevel, config.pageSize)
