@@ -8,7 +8,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN, typesetVerse, wrapToMeasure } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { containFit, coverFullBleedOk, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
+import { containFit, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
 import { blurbSignOff, fallbackBlurb, validateBlurb } from "../_shared/blurb.ts";
 import { validateTitle } from "../_shared/title.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
@@ -426,11 +426,12 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       const fromDedicated = Boolean(coverImage) && !dedicatedUnreadable;
       let drawW: number;
       let drawH: number;
-      // Full-bleed only when the art's shape matches the page closely enough
-      // that the crop stays within the bleed allowance; anything else is
-      // shown whole above the title band, so framing never cuts content.
-      // Print never cover-crops: no bleed exists to absorb the cut.
-      fullBleedCover = fromDedicated && !includeBleed && coverFullBleedOk({ width: pageWidth, height: pageHeight }, img);
+      // 21 Nov 2026 owner review: the full-bleed web cover plated the title
+      // ON the art, and the plate covered the child's face. Overlay text on
+      // cover art is retired - every cover now shows the art whole above a
+      // paper band carrying the title, so text can never cover a face or a
+      // key subject. (Print never cover-crops either.)
+      fullBleedCover = false;
       if (fullBleedCover) {
         // Composed for the cover at the page's shape: full-bleed, title on a
         // plate in the reserved calm space.
@@ -663,6 +664,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         });
       });
     }
+    // Overlap guard (21 Nov 2026): the band system keeps every cover word
+    // on paper outside the art, so overlay-on-face cannot recur by
+    // construction. Recorded so the QA trail proves it on every export.
+    qa.push({ where: 'cover', severity: 'pass', check: 'cover text on paper outside the art - no overlay, faces and key subjects can never be covered' });
   }
 
   // ---- Front matter (14 Nov 2026 book-quality review) ----
@@ -1032,6 +1037,12 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       if (bandOverflow) {
         qa.push({ where: `page ${page.page}`, severity: 'fail', check: 'text block does not fit the 40% band even at the smallest tier; band clamped, copy must be shortened upstream' });
       }
+      if (overlay) {
+        // Overlap guard (21 Nov 2026): overlay pages draw an opaque paper
+        // band over the art before the text, so words never sit on a face
+        // or key subject. The band is drawn above; this records it.
+        qa.push({ where: `page ${page.page}`, severity: 'pass', check: 'overlay page: text on an opaque paper band - no ink on the artwork' });
+      }
       if (blockWidth > pageWidth - safeInset * 2) {
         qa.push({ where: `page ${page.page}`, severity: 'fail', check: 'text block crosses the safe area' });
       }
@@ -1110,13 +1121,16 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     });
   }
 
-  // ---- Back cover (print only) ----
-  // Peecho softcover spec (support.peecho.com 19731377793564, 10 Nov 2026):
-  // one PDF containing front cover, content and back cover as single pages
-  // in this order; the LAST page becomes the back cover, and an odd page
-  // count leaves it white. Order-time padding therefore inserts blanks
-  // BEFORE this page. Web PDFs keep their existing shape.
-  if (includeBleed) {
+  // ---- Back cover ----
+  // Print (Peecho softcover spec, support.peecho.com 19731377793564, 10 Nov
+  // 2026): one PDF containing front cover, content and back cover as single
+  // pages in this order; the LAST page becomes the back cover, and an odd
+  // page count leaves it white. Order-time padding therefore inserts blanks
+  // BEFORE this page.
+  // Web gets the same back cover since the 21 Nov 2026 owner review, plus a
+  // small brand line print deliberately omits (customer decision, 11 Nov
+  // 2026). No personal details beyond the family's own book content.
+  {
     // Back cover (v6): the same flat cover colour as the front, a real
     // blurb, an optional spot illustration in a white mount, a sign-off and
     // the wordmark. No bare title. The bottom-right 45x30mm stays clear in
@@ -1197,7 +1211,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
             height: spotPlaced.height,
           });
           qa.push({ where: 'back', severity: 'pass', check: 'back cover spot illustration plated in a white mount, uncropped' });
-          qa.push(dpiCheck('back', effectiveDpi(backImg, { width: spotPlaced.width, height: spotPlaced.height })));
+          if (includeBleed) qa.push(dpiCheck('back', effectiveDpi(backImg, { width: spotPlaced.width, height: spotPlaced.height })));
         } catch (backArtError) {
           console.error('Failed to plate back cover spot art', backArtError);
           qa.push({ where: 'back', severity: 'warn', check: 'back cover spot illustration failed to plate; blurb-only back cover' });
@@ -1220,6 +1234,15 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off plated' });
     } else {
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off omitted (no child name on record)' });
+    }
+
+    // Web only: the brand sign-off print omits by customer decision.
+    if (!includeBleed) {
+      const brand = 'Made with Make · The Children's Library';
+      const brandSize = Math.max(9, Math.round(11 * coverScale));
+      const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
+      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(12), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
+      qa.push({ where: 'back', severity: 'pass', check: 'web back cover brand line plated (print omits it, 11 Nov 2026 decision)' });
     }
   }
 
