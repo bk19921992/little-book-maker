@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { storyTypeNote } from './planPrompt.ts';
+import { storyTypeNote, STORY_SHAPE_INSTRUCTIONS } from './planPrompt.ts';
 
 test('"going to nursery" is disambiguated to childcare, any casing', () => {
   for (const s of ['Going to nursery', 'going to nursery', 'GOING TO NURSERY']) {
@@ -15,4 +15,11 @@ test('other story types and settings are left alone', () => {
   assert.equal(storyTypeNote('A day in the nursery room'), '', 'only the exact going-to-nursery phrase is clarified');
   assert.equal(storyTypeNote(''), '');
   assert.equal(storyTypeNote(undefined), '');
+});
+
+test('story shape requires a real arc: hook, forward motion, high point, resolving echo', () => {
+  assert.match(STORY_SHAPE_INSTRUCTIONS, /one clear want, question or plan/);
+  assert.match(STORY_SHAPE_INSTRUCTIONS, /every page moves the story forward/);
+  assert.match(STORY_SHAPE_INSTRUCTIONS, /Penultimate page: the high point/);
+  assert.match(STORY_SHAPE_INSTRUCTIONS, /echoes page 1/);
 });

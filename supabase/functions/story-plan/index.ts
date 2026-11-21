@@ -9,6 +9,7 @@ import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.t
 import { wordRange } from "../_shared/textContract.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { coerceFormatSuggestion } from "./format.ts"
+import { STORY_SHAPE_INSTRUCTIONS } from "./planPrompt.ts"
 
 // Vocabulary note for story types whose everyday meaning is ambiguous.
 // "Going to nursery" means childcare - the place a child goes to during the
@@ -171,6 +172,8 @@ config.readingLevel === 'Early 4–5' ?
 config.readingLevel === 'Primary 6–8' ?
   `- Write ${planRange.min}-${planRange.max} words per page\n- Use 4-8 word sentences\n- Include basic adjectives and simple dialogue\n- Focus on clear story progression\n- Use slightly more complex vocabulary\n- Example: "Sarah found a beautiful butterfly in the garden. It had bright orange wings with black spots."` :
   '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate'}
+
+${STORY_SHAPE_INSTRUCTIONS}
 
 Create exactly ${config.lengthPages} pages. Each page should have:
 - Page number (1 to ${config.lengthPages})

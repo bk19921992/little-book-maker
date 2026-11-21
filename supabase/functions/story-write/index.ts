@@ -9,6 +9,7 @@ import { validateStoryConfig } from "../_shared/validation.ts"
 import { castDetailLines, speciesRule } from "./castText.ts"
 import { contractViolations, endsComplete, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, pageLines, wordRange } from "../_shared/textContract.ts"
 import { buildTitlePrompt, validateTitle } from "../_shared/title.ts"
+import { CRAFT_RULES } from "./craftRules.ts"
 
 serve(async (req) => {
   const corsHeaders = getCorsHeaders(req)
@@ -109,6 +110,7 @@ config.readingLevel === 'Primary 6–8' ?
   '- Adjust complexity to specified reading level\n- Keep vocabulary and sentence structure appropriate for the age group'}
 
 Important Instructions:
+${CRAFT_RULES}
 - Write ONLY the story text for this page, nothing else
 - STRICTLY follow the reading level requirements above
 - Use the specified narration style: ${config.narrationStyle}
@@ -157,7 +159,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: `Revise children's story text to meet word-count and level exactly while maintaining professional quality and ${config.narrationStyle} style.` },
-              { role: 'user', content: `${revisionContext}\n\nAdjust the following text to be between ${min} and ${max} words (aim ${target}). Count the words: the result MUST NOT exceed ${max} words. Keep UK English and the canonical cast identities. Do not preserve a conflicting invented name. Keep the format: newline-separated lines, ${lineRule}. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `${revisionContext}\n\nAdjust the following text to be between ${min} and ${max} words (aim ${target}). Count the words: the result MUST NOT exceed ${max} words. Keep UK English and the canonical cast identities. Do not preserve a conflicting invented name. Keep the format: newline-separated lines, ${lineRule}. Keep every sentence complete (a verb in each) and active; never chop a sentence into a fragment to hit the word count. Return ONLY the revised text.\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -182,7 +184,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: 'You reformat children\'s story pages for typesetting. You never drop meaning.' },
-              { role: 'user', content: `${revisionContext}\n\nRewrite this children's book page as newline-separated lines: ${lineRule}. Total words on the page: between ${min} and ${max}. All limits are hard. The page must END WITH A COMPLETE SENTENCE (closing punctuation) - never stop mid-sentence. You may reword and compress freely to fit them, but keep the story beats, canonical cast identities, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nFix these contract breaches: ${contractViolations(pageText, config.readingLevel, config.pageSize).join('; ')}\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `${revisionContext}\n\nRewrite this children's book page as newline-separated lines: ${lineRule}. Total words on the page: between ${min} and ${max}. All limits are hard. The page must END WITH A COMPLETE SENTENCE (closing punctuation) - never stop mid-sentence. You may reword and compress freely to fit them, but keep the story beats, canonical cast identities, UK English and the ${config.narrationStyle} feel. Keep every sentence complete (a verb in each) and active; never chop a sentence into a fragment to fit a limit. Return ONLY the rewritten text.\n\nFix these contract breaches: ${contractViolations(pageText, config.readingLevel, config.pageSize).join('; ')}\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })

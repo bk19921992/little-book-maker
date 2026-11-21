@@ -30,7 +30,7 @@ export async function generateBookDraft(opts: { fetcher: typeof fetch; key: stri
   const response = await opts.fetcher('https://api.openai.com/v1/chat/completions', {
     method: 'POST', headers: { Authorization: `Bearer ${opts.key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: 'gpt-4.1', response_format: { type: 'json_object' },
-      messages: [{ role: 'system', content: `Write one coherent children's book in UK English, with the same cast on every page. ${opts.castLock}` },
+      messages: [{ role: 'system', content: `Write one coherent children's book in UK English, with the same cast on every page. Give the book a clear arc: page 1 hooks with a want or question, the middle builds, the penultimate page is the high point, and the final page resolves with an echo of the opening. Vary sentence openings across the book and avoid repeating the same phrases on different pages. ${opts.castLock}` },
         { role: 'user', content: `Write ALL pages together as a single coherent draft. Read the complete plan before writing. Return ONLY JSON {"pages":[{"page":1,"text":"newline-separated story text"},...]}, with exactly these page numbers: ${JSON.stringify(opts.pageNumbers)}. Do not add a cast of invented names.\n\n${opts.prompts.join('\n\nNEXT PAGE REQUIREMENTS:\n')}` }],
       max_completion_tokens: Math.min(12000, opts.pageNumbers.length * 600) })
   })
