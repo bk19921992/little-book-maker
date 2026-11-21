@@ -1237,7 +1237,11 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off omitted (no child name on record)' });
     }
 
-    // Web only: the brand sign-off print omits by customer decision.
+    // Web only for now: print omitted branding by the 11 Nov 2026 customer
+    // decision, but the owner reversed that on 21 Nov 2026 - print back
+    // covers SHOULD carry the logo and "by The Children's Library" too.
+    // Plate them when the print layout is made format-aware (print ordering
+    // is off until then); keep the web/print difference until that work.
     if (!includeBleed) {
       // 21 Nov 2026 owner review: the "Make Your Own" logo (open-book mark +
       // wordmark) sits above the brand line, in the plate's ink colour: the
