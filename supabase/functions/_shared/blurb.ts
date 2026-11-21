@@ -107,5 +107,6 @@ export function blurbSignOff(storyType: string | undefined, childName?: string):
   const name = (childName || '').trim();
   if (!name) return '';
   const t = (storyType || '').trim().toLowerCase() || 'story';
-  return `A ${t} story made especially for ${name}.`;
+  const article = /^[aeiou]/.test(t) ? 'An' : 'A';
+  return `${article} ${t} story made especially for ${name}.`;
 }

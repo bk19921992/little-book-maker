@@ -35,6 +35,7 @@ test('fallbackBlurb covers every known story type plus default, within word boun
 
 test('blurbSignOff only when the child is named', () => {
   assert.equal(blurbSignOff('Bedtime', 'Amelia'), 'A bedtime story made especially for Amelia.');
+  assert.equal(blurbSignOff('Adventure', 'Pip'), 'An adventure story made especially for Pip.');
   assert.equal(blurbSignOff('Bedtime'), '');
 });
 
