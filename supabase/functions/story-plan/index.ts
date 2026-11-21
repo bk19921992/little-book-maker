@@ -21,24 +21,29 @@ export function storyTypeNote(storyType?: string): string {
 }
 
 // Guest plan preview rate limit (deferred sign-up): a few plans per IP per
-// day, kept in Deno KV so no database migration is needed. Fails closed: if
-// the counter cannot run, the preview is refused rather than the model call
+// day, recorded in the guest_plan_usage table via the service client (RLS has
+// no anonymous access; only edge functions write it). Fails closed: if the
+// counter cannot run, the preview is refused rather than the model call
 // leaking.
 const GUEST_PLAN_DAILY_LIMIT = 3
 async function checkAndRecordGuestPlan(ip: string): Promise<string | null> {
   try {
-    const kv = await Deno.openKv()
-    const day = new Date().toISOString().slice(0, 10)
-    const key = ['guest-plan', day, ip]
-    const entry = await kv.get<number>(key)
-    const used = entry.value ?? 0
-    if (used >= GUEST_PLAN_DAILY_LIMIT) {
+    const service = serviceClient()
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const { count, error } = await service
+      .from('guest_plan_usage')
+      .select('id', { count: 'exact', head: true })
+      .eq('ip', ip)
+      .gte('created_at', since)
+    if (error) throw error
+    if ((count ?? 0) >= GUEST_PLAN_DAILY_LIMIT) {
       return 'You have made a few story plans already today. Create a free account to keep going.'
     }
-    await kv.set(key, used + 1, { expireIn: 48 * 60 * 60 * 1000 })
+    const { error: insertError } = await service.from('guest_plan_usage').insert({ ip })
+    if (insertError) throw insertError
     return null
-  } catch (kvError) {
-    console.error('Guest plan rate limit unavailable', kvError)
+  } catch (limitError) {
+    console.error('Guest plan rate limit unavailable', limitError)
     return 'Story previews are unavailable right now. Please try again in a little while.'
   }
 }
