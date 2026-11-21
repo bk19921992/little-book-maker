@@ -8,7 +8,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN, typesetVerse, wrapToMeasure } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { containFit, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printFolioBaseline, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
+import { containFit, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
 import { blurbSignOff, fallbackBlurb, validateBlurb } from "../_shared/blurb.ts";
 import { validateTitle } from "../_shared/title.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
@@ -39,43 +39,57 @@ function mmToPdfPoints(mm: number): number {
 
 // Paper-plate design system: artwork on top, story text on a warm paper band
 // below. Dark ink on paper always passes contrast; no strokes or halos.
-const PAPER = rgb(1, 0.976, 0.941);      // #FFF9F0
-const INK = rgb(0.169, 0.149, 0.133);    // #2B2622
+// 21 Nov 2026 design overhaul (art-direction spec): brand paper and a
+// warmer, softer story ink replace the old cream/brown.
+const PAPER = rgb(0.949, 0.937, 0.914);   // #F2EFE9
+const INK = rgb(0.157, 0.157, 0.133);     // #282822
 const WHITE = rgb(1, 1, 1);
 
+// 21 Nov 2026 design overhaul (art-direction spec): Source Sans 3 Regular
+// for reading, Source Serif 4 SemiBold for display, Source Serif 4 Medium
+// Italic for the back-cover sign-off. All OFL-licensed static TTFs. (The
+// spec's first choice, Fraunces, was rejected after testing: its fontsource
+// build lays out with gaps inside words under pdf-lib/fontkit.)
 const FONT_URLS = {
-  text: "https://cdn.jsdelivr.net/fontsource/fonts/nunito@5.3.0/latin-600-normal.ttf",
-  display: "https://cdn.jsdelivr.net/fontsource/fonts/nunito@5.3.0/latin-800-normal.ttf",
+  text: "https://cdn.jsdelivr.net/fontsource/fonts/source-sans-3@5.2.5/latin-400-normal.ttf",
+  display: "https://cdn.jsdelivr.net/fontsource/fonts/source-serif-4@5.2.5/latin-600-normal.ttf",
+  accent: "https://cdn.jsdelivr.net/fontsource/fonts/source-serif-4@5.2.5/latin-500-italic.ttf",
 };
 
 interface EmbeddedFonts {
   text: PDFFont;
   display: PDFFont;
+  accent?: PDFFont;
   custom: boolean;
 }
 
-// Nunito (SemiBold text, ExtraBold display) embedded from static TTFs; falls
-// back to Helvetica when the fetch fails so an export can never hard-break on
-// a font download.
+// Source Sans 3 / Fraunces embedded from static TTFs; falls back to
+// Helvetica when the fetch fails so an export can never hard-break on a
+// font download.
 async function embedFonts(pdfDoc: PDFDocument): Promise<EmbeddedFonts> {
   try {
-    const [textRes, displayRes] = await Promise.all([
+    const [textRes, displayRes, accentRes] = await Promise.all([
       fetch(FONT_URLS.text),
       fetch(FONT_URLS.display),
+      fetch(FONT_URLS.accent),
     ]);
-    if (!textRes.ok || !displayRes.ok) throw new Error('font fetch failed');
-    const [textBytes, displayBytes] = await Promise.all([
+    if (!textRes.ok || !displayRes.ok || !accentRes.ok) throw new Error('font fetch failed');
+    const [textBytes, displayBytes, accentBytes] = await Promise.all([
       textRes.arrayBuffer(),
       displayRes.arrayBuffer(),
+      accentRes.arrayBuffer(),
     ]);
     // esm.sh exposes fontkit's CommonJS export under .default in a namespace import.
     const fk = (fontkit as unknown as { default?: typeof fontkit }).default ?? fontkit;
     pdfDoc.registerFontkit(fk);
     // liga disabled: pdf-lib/fontkit double-counts ligature advances, leaving
     // visible gaps inside words like 'flies'.
-    const text = await pdfDoc.embedFont(new Uint8Array(textBytes), { features: { liga: false } });
-    const display = await pdfDoc.embedFont(new Uint8Array(displayBytes), { features: { liga: false } });
-    return { text, display, custom: true };
+    // liga and kern disabled: pdf-lib/fontkit double-counts those advances,
+    // leaving visible gaps inside words ('flies', 'and the').
+    const text = await pdfDoc.embedFont(new Uint8Array(textBytes), { features: { liga: false, kern: false } });
+    const display = await pdfDoc.embedFont(new Uint8Array(displayBytes), { features: { liga: false, kern: false } });
+    const accent = await pdfDoc.embedFont(new Uint8Array(accentBytes), { features: { liga: false, kern: false } });
+    return { text, display, accent, custom: true };
   } catch (fontError) {
     console.warn('Custom font embed failed, falling back to Helvetica', fontError);
     const fallback = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -859,17 +873,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         qa.push({ where: `page ${page.page}`, severity: 'pass', check: `text centred under the art: ${Math.min(printLines.length, 4)} line(s) at ${printFontSize}pt on ${printLeading}pt leading` });
       }
 
-      const folio = `${page.page}`;
-      const folioSize = Math.max(7, Math.round(8 * coverScale));
-      const folioWidth = fonts.text.widthOfTextAtSize(folio, folioSize);
-      storyPage.drawText(folio, {
-        x: (pageWidth - folioWidth) / 2,
-        y: pageHeight - cv(203),
-        size: folioSize,
-        font: fonts.text,
-        color: INK,
-        opacity: 0.6,
-      });
+      // 21 Nov 2026 design overhaul: no folios (art-direction spec).
       continue;
     }
 
@@ -1049,20 +1053,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       }
     }
 
-    // Folio: page number, bottom outer corner, inside the safe area.
-    const folio = `${page.page}`;
-    const folioSize = Math.max(9, Math.round(pageWidth * 0.019));
-    const folioWidth = fonts.text.widthOfTextAtSize(folio, folioSize);
-    storyPage.drawText(folio, {
-      x: pageWidth - safeInset - folioWidth,
-      // Print: baseline high enough that the descent still ends inside the
-      // 10 mm safe inset; web keeps its subtler placement.
-      y: includeBleed ? printFolioBaseline(safeInset, folioSize) : safeInset * 0.55,
-      size: folioSize,
-      font: fonts.text,
-      color: INK,
-      opacity: 0.6,
-    });
+    // 21 Nov 2026 design overhaul (art-direction spec): folios are off by
+    // default; the page is art and story only.
   }
 
   // ---- Closing page (14 Nov 2026 review): "The End" at 24pt, nothing else ----
@@ -1159,48 +1151,39 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       blurbText = normaliseTypography(fallbackBlurb(config.storyType, config.setting, coverChildName || undefined));
       qa.push({ where: 'back', severity: 'pass', check: 'back cover blurb: template (a written blurb lands with the generation wiring)' });
     }
-    // Centred on a 120mm measure: the first sentence at 16pt, the rest at
-    // 12.5pt on 18pt leading, at most six lines, all inside the safe area.
-    const blurbMeasure = cv(120);
-    const blurbSplit = blurbText.match(/^(.+?[.!?])\s+([\s\S]+)$/);
-    const firstSentence = blurbSplit ? blurbSplit[1] : blurbText;
-    const restText = blurbSplit ? blurbSplit[2] : '';
-    const firstSize = Math.max(12, Math.round(16 * coverScale));
-    const firstFit = fitCoverSubtext(firstSentence, fonts.text, blurbMeasure, firstSize, Math.max(11, Math.round(12 * coverScale)), 3);
-    let blurbCursor = pageHeight - cv(36);
-    firstFit.lines.forEach((line, i) => {
-      const w = fonts.text.widthOfTextAtSize(line, firstFit.size);
-      backPage.drawText(line, { x: (pageWidth - w) / 2, y: blurbCursor - i * firstFit.size * 1.3, size: firstFit.size, font: fonts.text, color: paletteInk });
+    // 21 Nov 2026 design overhaul (art-direction spec): one reading voice -
+    // Source Sans 3 Regular 17/23, left aligned on a 116mm measure at x47mm,
+    // first baseline 79mm, at most six lines, all inside the safe area.
+    const blurbMeasure = cv(116);
+    const blurbSize = Math.max(12, Math.round(17 * coverScale));
+    const blurbLeading = Math.max(16, Math.round(23 * coverScale));
+    const blurbLines = wrapToMeasure(blurbText, fonts.text, blurbSize, blurbMeasure);
+    const blurbOverflow = blurbLines.length > 6;
+    // With no vignette the blurb and sign-off move up (spec's no-art variant).
+    const hasVignette = !!(backCoverImage && spotImg);
+    const blurbTop = hasVignette ? 79 : 67;
+    blurbLines.slice(0, 6).forEach((line, i) => {
+      backPage.drawText(line, { x: cv(47), y: pageHeight - cv(blurbTop) - i * blurbLeading, size: blurbSize, font: fonts.text, color: paletteInk });
     });
-    blurbCursor -= firstFit.lines.length * firstFit.size * 1.3 + cv(3);
-    if (restText) {
-      const restSize = Math.max(11, Math.round(12.5 * coverScale));
-      const restLeading = Math.max(16, Math.round(18 * coverScale));
-      const restLines = wrapToMeasure(restText, fonts.text, restSize, blurbMeasure);
-      const restOverflow = restLines.length > 6;
-      restLines.slice(0, 6).forEach((line, i) => {
-        const w = fonts.text.widthOfTextAtSize(line, restSize);
-        backPage.drawText(line, { x: (pageWidth - w) / 2, y: blurbCursor - i * restLeading, size: restSize, font: fonts.text, color: paletteInk });
-      });
-      qa.push({
-        where: 'back',
-        severity: restOverflow ? 'warn' : 'pass',
-        check: restOverflow
-          ? `blurb wraps to ${restLines.length} lines on the 120mm measure; plated the first six`
-          : `blurb plated (${firstFit.lines.length + restLines.length} lines on the 120mm measure)`,
-      });
-    }
+    qa.push({
+      where: 'back',
+      severity: blurbOverflow ? 'warn' : 'pass',
+      check: blurbOverflow
+        ? `blurb wraps to ${blurbLines.length} lines on the 116mm measure; plated the first six`
+        : `blurb plated (${blurbLines.length} lines on the 116mm measure, left aligned)`,
+    });
 
     // Spot illustration: a quiet closing beat, plated small in a white
-    // mount centred at 126mm from the top. Optional until the generation
-    // wiring lands; the cover works with blurb alone.
+    // mount as a top-centred vignette (21 Nov 2026 design overhaul: 44mm
+    // box, top edge 24mm). Optional until the generation wiring lands; the
+    // cover works with blurb alone.
     if (backCoverImage) {
       if (spotImg) {
         try {
           const backImg = spotImg;
-          const spotPt = cv(70);
+          const spotPt = cv(44);
           const spotX = (pageWidth - spotPt) / 2;
-          const spotY = pageHeight - cv(126) - spotPt / 2;
+          const spotY = pageHeight - cv(24) - spotPt;
           const spotFrame = cv(2);
           backPage.drawRectangle({ x: spotX - spotFrame, y: spotY - spotFrame, width: spotPt + spotFrame * 2, height: spotPt + spotFrame * 2, color: WHITE });
           const spotFit = containFit({ width: spotPt, height: spotPt }, { width: backImg.width, height: backImg.height });
@@ -1224,14 +1207,14 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       qa.push({ where: 'back', severity: 'pass', check: 'back cover without spot art (it lands with the generation wiring)' });
     }
 
-    // Sign-off (only when the child is named). No italic face is embedded,
-    // so the sign-off sets in the text face. No brand wordmark on the back
-    // cover (customer decision, 11 Nov 2026).
+    // Sign-off (only when the child is named). 21 Nov 2026 design overhaul:
+    // set in Source Serif 4 Medium Italic 15/19, centred, baseline 145mm.
     const signOff = blurbSignOff(config.storyType, coverChildName || undefined);
     if (signOff) {
-      const signOffSize = Math.max(10, Math.round(12 * coverScale));
-      const w = fonts.text.widthOfTextAtSize(signOff, signOffSize);
-      backPage.drawText(signOff, { x: (pageWidth - w) / 2, y: pageHeight - cv(174), size: signOffSize, font: fonts.text, color: paletteInk });
+      const signOffSize = Math.max(11, Math.round(15 * coverScale));
+      const signOffFont = fonts.accent ?? fonts.display;
+      const w = signOffFont.widthOfTextAtSize(signOff, signOffSize);
+      backPage.drawText(signOff, { x: (pageWidth - w) / 2, y: pageHeight - cv(hasVignette ? 145 : 133), size: signOffSize, font: signOffFont, color: paletteInk });
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off plated' });
     } else {
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off omitted (no child name on record)' });
@@ -1258,7 +1241,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         const logoImg = await pdfDoc.embedPng(logoBytes);
         const logoHeight = cv(10);
         const logoWidth = logoHeight * MAKE_YOUR_OWN_LOGO_ASPECT;
-        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: cv(18), width: logoWidth, height: logoHeight, opacity: 0.9 });
+        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: cv(28), width: logoWidth, height: logoHeight, opacity: 0.9 });
         logoPlated = true;
       } catch (logoError) {
         console.warn('Make Your Own logo embed failed; brand line only', logoError);
@@ -1268,7 +1251,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       const brand = "by The Children's Library";
       const brandSize = Math.max(9, Math.round(11 * coverScale));
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
-      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(12), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
+      backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(20), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
       qa.push({ where: 'back', severity: 'pass', check: logoPlated ? 'web back cover brand line and Make Your Own logo plated (print omits them, 11 Nov 2026 decision)' : 'web back cover brand line plated; logo embed failed (print omits both, 11 Nov 2026 decision)' });
     }
   }
