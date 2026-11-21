@@ -342,8 +342,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
   // (via the sign-off) the back cover. 12pt minimum since the 14 Nov 2026
   // review: 11pt cream-on-navy was too fine and could fill in on press.
   const storyTypeLower = (config.storyType || '').trim().toLowerCase();
+  const bylineArticle = /^[aeiou]/.test(storyTypeLower) ? 'An' : 'A';
   const bylineText = coverChildName && storyTypeLower
-    ? `A ${storyTypeLower} story for ${coverChildName}`
+    ? `${bylineArticle} ${storyTypeLower} story for ${coverChildName}`
     : (coverChildName ? `A story for ${coverChildName}` : subtitleText);
   // A configured title that would fail the generation-time title checks
   // still prints (the family's words are theirs), but the QA trail says so.

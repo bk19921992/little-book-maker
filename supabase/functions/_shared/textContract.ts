@@ -60,6 +60,11 @@ export function lineShapeViolations(text: string, readingLevel: string, pageSize
   return out;
 }
 
+// A page must end with a complete sentence. The writer otherwise fits the
+// line budget by stopping mid-sentence ("Today, Pip"), which typesets fine
+// and reads broken. Closing punctuation may carry a closing quote after it.
+export const endsComplete = (text: string): boolean => /[.!?…]['"’”)]?\s*$/.test(text.trim());
+
 // Human-readable contract breaches for one page; empty when it complies.
 export function contractViolations(text: string, readingLevel: string, pageSize?: string): string[] {
   // Total word range is part of the contract: line-shape limits alone leave
@@ -70,6 +75,7 @@ export function contractViolations(text: string, readingLevel: string, pageSize?
   const total = words(text).length;
   if (total > range.max) out.push(`${total} words (max ${range.max})`);
   if (total < range.min) out.push(`${total} words (min ${range.min})`);
+  if (total > 0 && !endsComplete(text)) out.push('ends mid-sentence (no closing punctuation)');
   return out.concat(lineShapeViolations(text, readingLevel, pageSize));
 }
 

@@ -33,7 +33,7 @@ test('fit advice: fixable line breaks offer Fit lines; a fitting page gets none'
   // 28 words on one over-long line: within the total range, so 'Fit lines'
     // (re-breaking, no rewording) genuinely can fix it. (The old 16-word
     // fixture was under the 20-word minimum - never line-fixable.)
-    const oneLongLine = 'Mia and the wise old owl walked slowly through the enchanted forest listening to the whispering leaves and watching the golden fireflies dance above the quiet mossy path';
+    const oneLongLine = 'Mia and the wise old owl walked slowly through the enchanted forest listening to the whispering leaves and watching the golden fireflies dance above the quiet mossy path.';
   assert.equal(pageFitAdvice(oneLongLine, 'Early 4–5', 'A5 portrait')!.canFitLines, true);
   // A page that genuinely meets the shared contract (20-30 words, compliant
     // lines) gets no advice. (The old fixture was 8 words - under the minimum -

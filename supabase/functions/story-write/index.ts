@@ -7,7 +7,7 @@ import { serviceClient } from "../_shared/auth.ts"
 import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { validateStoryConfig } from "../_shared/validation.ts"
 import { castDetailLines, speciesRule } from "./castText.ts"
-import { contractViolations, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, pageLines, wordRange } from "../_shared/textContract.ts"
+import { contractViolations, endsComplete, lineBudget, lineShapeViolations, MAX_LINE_CHARS, MAX_LINE_WORDS, packLines, pageLines, wordRange } from "../_shared/textContract.ts"
 import { buildTitlePrompt, validateTitle } from "../_shared/title.ts"
 
 serve(async (req) => {
@@ -124,7 +124,8 @@ Important Instructions:
 - The text should flow naturally with the overall story arc
 - Reflect the chosen theme and color palette in descriptions when natural
 - FORMAT (critical for typesetting): write the page as short newline-separated lines, one thought per line: ${lineRule}. Never put a long sentence or a whole paragraph on one line - long lines wrap badly when typeset.
-- Fewer, shorter lines always beats more, longer ones.`
+- Fewer, shorter lines always beats more, longer ones.
+- End the page with a complete sentence, with closing punctuation. Never stop mid-sentence: if the space is tight, write one complete sentence rather than two broken ones.`
 
       return { pageOutline, writingPrompt: `${writingPrompt}\n\n${castLock}` }
     })
@@ -181,7 +182,7 @@ Important Instructions:
             model: 'gpt-4.1',
             messages: [
               { role: 'system', content: 'You reformat children\'s story pages for typesetting. You never drop meaning.' },
-              { role: 'user', content: `${revisionContext}\n\nRewrite this children's book page as newline-separated lines: ${lineRule}. Total words on the page: between ${min} and ${max}. All limits are hard. You may reword and compress freely to fit them, but keep the story beats, canonical cast identities, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nText:\n"""${pageText}"""` }
+              { role: 'user', content: `${revisionContext}\n\nRewrite this children's book page as newline-separated lines: ${lineRule}. Total words on the page: between ${min} and ${max}. All limits are hard. The page must END WITH A COMPLETE SENTENCE (closing punctuation) - never stop mid-sentence. You may reword and compress freely to fit them, but keep the story beats, canonical cast identities, UK English and the ${config.narrationStyle} feel (short rhyming lines welcome). Return ONLY the rewritten text.\n\nFix these contract breaches: ${contractViolations(pageText, config.readingLevel, config.pageSize).join('; ')}\n\nText:\n"""${pageText}"""` }
             ],
             max_completion_tokens: 600
           })
@@ -213,6 +214,21 @@ Important Instructions:
           if (countWords(next) < min) break
           pageText = packLines(next)
           console.warn(`Dropped the trailing line on page ${pageOutline.page} to meet the text contract`)
+        }
+        // A mid-sentence stop is the one breach repacking cannot fix. Trim
+        // back to the last complete sentence instead (never mid-word), as
+        // long as the page keeps its word minimum; otherwise leave it flagged
+        // for the editor gate.
+        if (!endsComplete(pageText)) {
+          const flat = pageText.replace(/\s+/g, ' ').trim()
+          const re = /[.!?…]['\"’”)]?/g
+          let mm: RegExpExecArray | null, end = -1
+          while ((mm = re.exec(flat))) end = mm.index + mm[0].length
+          const cut = end > 0 ? flat.slice(0, end).trim() : ''
+          if (cut && countWords(cut) >= min) {
+            pageText = packLines(cut)
+            console.warn(`Trimmed page ${pageOutline.page} to the last complete sentence to meet the text contract`)
+          }
         }
         const remaining = contractViolations(pageText, config.readingLevel, config.pageSize)
         if (remaining.length) {

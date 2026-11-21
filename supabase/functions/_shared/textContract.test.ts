@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { contractViolations, lineShapeViolations, wordRange, packLines } from './textContract.ts';
+import { contractViolations, endsComplete, lineShapeViolations, wordRange, packLines } from './textContract.ts';
 
 // Early 4-5 on A4 landscape: 5 lines x 6 full-line words = 20-30 total.
 test('word range for Early 4-5 A4 landscape is 20-30', () => {
@@ -57,4 +57,17 @@ test('lineShapeViolations flags over-word and over-long lines', () => {
   const text = 'This particular line has far too many words on it for one single typeset line.';
   assert.ok(lineShapeViolations(text, 'Early 4–5', 'A4 portrait').length > 0);
   assert.deepEqual(lineShapeViolations('Pip wags her tail.', 'Early 4–5', 'A4 portrait'), []);
+});
+
+// Regression (21 Nov 2026 e2e): the writer fitted the line budget by
+// stopping mid-sentence ("Today, Pip") and the contract waved it through.
+test('a page ending mid-sentence is a contract violation', () => {
+  const page = 'Pip hugs their favourite toy so\nclose. Cool morning air makes Pip\nsmile. Adventure waits just beyond\nthe cottages. The sea sparkles,\ncalling Pip to play. Today, Pip';
+  const v = contractViolations(page, 'Early 4–5', 'A4 landscape');
+  assert.ok(v.some((s) => s.includes('mid-sentence')), 'expected mid-sentence violation, got: ' + v.join('; '));
+});
+
+test('closing punctuation with a trailing quote passes', () => {
+  const page = 'Alex puts on his yellow shirt.\nAlex picks up his blue truck.\nThey walk to the front door.\nAlex smiles when Pip is near.\nPip wags her soft black tail!"';
+  assert.ok(!contractViolations(page, 'Early 4–5', 'A4 landscape').some((s) => s.includes('mid-sentence')));
 });
