@@ -12,6 +12,7 @@ import { containFit, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, 
 import { blurbSignOff, fallbackBlurb, validateBlurb } from "../_shared/blurb.ts";
 import { validateTitle } from "../_shared/title.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
+import { MAKE_YOUR_OWN_LOGO_ASPECT, MAKE_YOUR_OWN_LOGO_CREAM_PNG_BASE64, MAKE_YOUR_OWN_LOGO_DARK_PNG_BASE64 } from "../_shared/makeYourOwnLogo.ts";
 
 const PAGE_SIZES = {
   'A5 portrait': {
@@ -1238,11 +1239,31 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
 
     // Web only: the brand sign-off print omits by customer decision.
     if (!includeBleed) {
-      const brand = "Made with Make · The Children's Library";
+      // 21 Nov 2026 owner review: the "Make Your Own" logo (open-book mark +
+      // wordmark) sits above the brand line, in the plate's ink colour: the
+      // cream PNG on dark cover palettes, the dark PNG on light ones (the
+      // default amber plate would swallow the cream art). The PNGs are
+      // embedded from the repo asset (public/brand/make-your-own-logo.svg) so
+      // an export never depends on a network fetch; a failed embed falls back
+      // to the brand line alone.
+      let logoPlated = false;
+      try {
+        const bgLum = 0.2126 * paletteBg.red + 0.7152 * paletteBg.green + 0.0722 * paletteBg.blue;
+        const logoB64 = bgLum > 0.5 ? MAKE_YOUR_OWN_LOGO_DARK_PNG_BASE64 : MAKE_YOUR_OWN_LOGO_CREAM_PNG_BASE64;
+        const logoBytes = Uint8Array.from(atob(logoB64), (ch) => ch.charCodeAt(0));
+        const logoImg = await pdfDoc.embedPng(logoBytes);
+        const logoHeight = cv(8);
+        const logoWidth = logoHeight * MAKE_YOUR_OWN_LOGO_ASPECT;
+        backPage.drawImage(logoImg, { x: (pageWidth - logoWidth) / 2, y: cv(17), width: logoWidth, height: logoHeight, opacity: 0.9 });
+        logoPlated = true;
+      } catch (logoError) {
+        console.warn('Make Your Own logo embed failed; brand line only', logoError);
+      }
+      const brand = "Make Your Own by The Children's Library";
       const brandSize = Math.max(9, Math.round(11 * coverScale));
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
       backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cv(12), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
-      qa.push({ where: 'back', severity: 'pass', check: 'web back cover brand line plated (print omits it, 11 Nov 2026 decision)' });
+      qa.push({ where: 'back', severity: 'pass', check: logoPlated ? 'web back cover brand line and Make Your Own logo plated (print omits them, 11 Nov 2026 decision)' : 'web back cover brand line plated; logo embed failed (print omits both, 11 Nov 2026 decision)' });
     }
   }
 

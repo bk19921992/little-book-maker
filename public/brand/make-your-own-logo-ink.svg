@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="624" height="120" viewBox="0 0 624 120" role="img" aria-labelledby="title">
+  <title id="title">Make Your Own</title>
+  <!-- Open-book mark: same geometry as the shared favicon, stroke-only so it
+       reads on the dark back-cover plate. -->
+  <g transform="translate(6,10) scale(1.5625)">
+    <path d="M8 15c8-3 16-2 24 4v34c-8-6-16-7-24-4z" fill="none" stroke="#52704f" stroke-width="3.5" stroke-linejoin="round"/>
+    <path d="M56 15c-8-3-16-2-24 4v34c8-6 16-7 24-4z" fill="none" stroke="#52704f" stroke-width="3.5" stroke-linejoin="round"/>
+    <path d="M32 19v34" fill="none" stroke="#52704f" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M43 14v13l4-3 4 3V14" fill="#c8614f" stroke="#8e3f32" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+  <text x="124" y="86" font-family="Nunito ExtraLight, Nunito, sans-serif" font-weight="800" font-size="64" letter-spacing="1" fill="#52704f">Make Your Own</text>
+</svg>
