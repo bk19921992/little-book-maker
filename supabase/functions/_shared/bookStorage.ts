@@ -14,18 +14,19 @@ export async function storeBookPdfs(
   db: SupabaseClient,
   userId: string,
   storyId: string,
-  pdfs: { web: Uint8Array; print: Uint8Array },
+  pdfs: { web: Uint8Array; print?: Uint8Array },
   title: string,
-): Promise<{ webUrl: string; printUrl: string }> {
+): Promise<{ webUrl: string; printUrl: string | null }> {
   const paths = { web: bookPdfPath(userId, storyId, 'web'), print: bookPdfPath(userId, storyId, 'print') }
-  for (const kind of ['web', 'print'] as const) {
+  const kinds = (['web', 'print'] as const).filter((kind) => pdfs[kind])
+  for (const kind of kinds) {
     const { error } = await db.storage.from(BOOKS_BUCKET).upload(paths[kind], new Blob([pdfs[kind] as unknown as BlobPart], { type: 'application/pdf' }), { upsert: true, contentType: 'application/pdf' })
     if (error) throw error
   }
   const now = new Date().toISOString()
   const { data: existing, error: readError } = await db.from('books').select('story_id').eq('user_id', userId).eq('story_id', storyId).maybeSingle()
   if (readError) throw readError
-  const pdfColumns = { web_pdf_path: paths.web, print_pdf_path: paths.print, exported_at: now, updated_at: now }
+  const pdfColumns = { web_pdf_path: paths.web, ...(pdfs.print ? { print_pdf_path: paths.print } : {}), exported_at: now, updated_at: now }
   const { error: writeError } = existing
     ? await db.from('books').update(pdfColumns).eq('user_id', userId).eq('story_id', storyId)
     : await db.from('books').insert({ user_id: userId, story_id: storyId, title, config: {}, ...pdfColumns })
@@ -35,5 +36,5 @@ export async function storeBookPdfs(
     if (error || !data) throw error || new Error('could not sign ' + path)
     return data.signedUrl
   }
-  return { webUrl: await sign(paths.web), printUrl: await sign(paths.print) }
+  return { webUrl: await sign(paths.web), printUrl: pdfs.print ? await sign(paths.print) : null }
 }

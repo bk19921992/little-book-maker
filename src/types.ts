@@ -184,7 +184,7 @@ export interface WriteResponse {
 
 export interface ExportResponse {
   webPdfUrl: string;
-  printPdfUrl: string;
+  printPdfUrl: string | null;   // null while print ordering is off: no press plate is made
 }
 
 export interface PrintOrderResponse {

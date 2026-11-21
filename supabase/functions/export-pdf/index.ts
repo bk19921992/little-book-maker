@@ -1291,14 +1291,19 @@ serve(async (req) => {
       );
     }
 
-    // Generate both web and print PDFs
+    // The press plate only exists while print ordering is live. Its story-page
+    // composition (14 Nov 2026 review) hard-caps text at 4 lines and assumes a
+    // 210mm page, while the writer contract allows up to 6 lines on A5 portrait:
+    // gating the customer's digital PDF on press QA would refuse contract-valid
+    // books. Resolve the press composition's format awareness before enabling.
+    const printEnabled = Deno.env.get('PRINT_ENABLED') === 'true';
     const web = await createPDF(config, pages, false, coverImage, backCoverImage);
-    const print = await createPDF(config, pages, true, coverImage, backCoverImage);
+    const print = printEnabled ? await createPDF(config, pages, true, coverImage, backCoverImage) : null;
     // Web and print runs raise many of the same findings; drop exact
     // duplicates but keep distinct print passes (print cover, front matter,
     // back cover) so the QA trail shows how the press pages were typeset.
     const seenQa = new Set<string>();
-    const qa = [...web.qa, ...print.qa].filter((e) => {
+    const qa = [...web.qa, ...(print?.qa ?? [])].filter((e) => {
       const key = `${e.where}|${e.severity}|${e.check}`;
       if (seenQa.has(key)) return false;
       seenQa.add(key);
@@ -1328,13 +1333,13 @@ serve(async (req) => {
     // download links. If storage fails, fall back to inline PDFs so an export
     // is never lost.
     let webPdfUrl: string;
-    let printPdfUrl: string;
+    let printPdfUrl: string | null;
     let saved = false;
     try {
       const title = config.children?.length ? `${config.children.join(' & ')}'s Story` : 'My Story';
-      const links = await storeBookPdfs(serviceClient(), user.id, storyId, { web: web.bytes, print: print.bytes }, title);
+      const links = await storeBookPdfs(serviceClient(), user.id, storyId, print ? { web: web.bytes, print: print.bytes } : { web: web.bytes }, title);
       webPdfUrl = links.webUrl;
-      printPdfUrl = links.printUrl;
+      printPdfUrl = links.printUrl ?? null;
       saved = true;
     } catch (storageError) {
       console.error('Storing PDFs failed; returning them inline instead:', storageError);
@@ -1347,7 +1352,7 @@ serve(async (req) => {
         return btoa(binary);
       };
       webPdfUrl = `data:application/pdf;base64,${toBase64(web.bytes)}`;
-      printPdfUrl = `data:application/pdf;base64,${toBase64(print.bytes)}`;
+      printPdfUrl = print ? `data:application/pdf;base64,${toBase64(print.bytes)}` : null;
     }
 
     return new Response(
@@ -1357,9 +1362,9 @@ serve(async (req) => {
         printPdfUrl,
         saved,
         webFilename: `${config.children?.join('-') || 'story'}-web.pdf`,
-        printFilename: `${config.children?.join('-') || 'story'}-print.pdf`,
+        printFilename: print ? `${config.children?.join('-') || 'story'}-print.pdf` : null,
         pageCount: web.pageCount,
-        printPageCount: print.pageCount,
+        printPageCount: print?.pageCount ?? null,
         dimensions: (PAGE_SIZES as Record<string, unknown>)[config.pageSize] || PAGE_SIZES['A5 portrait'],
         qa,
       }),

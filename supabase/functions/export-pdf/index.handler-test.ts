@@ -22,6 +22,9 @@ const SUPA = "http://supabase.test";
 Deno.env.set("SUPABASE_URL", SUPA);
 Deno.env.set("SUPABASE_ANON_KEY", "anon-test-key");
 Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "service-test-key");
+// These tests exercise the press plate as well as the web PDF; production
+// only renders the plate while print ordering is live.
+Deno.env.set("PRINT_ENABLED", "true");
 
 // 300x200 JPEG (3:2, like landscape story art), embedded for portability.
 const FIXTURE_JPEG_B64 =
