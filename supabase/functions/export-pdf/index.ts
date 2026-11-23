@@ -1,4 +1,5 @@
 import { continuityReadiness } from '../_shared/bookContinuity.ts';
+import { activityPrompts, missingTextZone } from './activityPages.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { appendBezierCurve, clip, closePath, degrees, endPath, lineTo, moveTo, PDFDocument, popGraphicsState, pushGraphicsState, rgb, StandardFonts } from "https://esm.sh/pdf-lib@1.17.1";
 import type { PDFFont, PDFImage, PDFPage } from "https://esm.sh/pdf-lib@1.17.1";
@@ -1165,9 +1166,14 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
         const maxLineW = Math.max(...shownLines.map((l) => fonts.text.widthOfTextAtSize(l.text, printFontSize)));
         const panelW = Math.min(maxLineW + 2 * padH, safeW);
         const panelH = shownLines.length * printLeading + 2 * padV - (printLeading - printFontSize);
-        // The panel sits ONLY in the page's declared text zone (default
-        // bottom-centre, the layout every pre-zone book was composed for).
-        const zone = typeof page.textZone === 'string' ? page.textZone : 'bottom';
+        // The panel sits ONLY in the page's declared text zone. A missing
+        // zone on an illustrated page fails the QA gate (export refuses) -
+        // the old silent bottom default is how a verse panel nearly shipped
+        // over a face (D4-8).
+        if (missingTextZone(rawText, page.textZone, imagePlaced)) {
+          qa.push({ where: `page ${page.page}`, severity: 'fail', check: 'no declared text zone: generation must name where the verse sits so the panel can never cover a face or key subject' });
+        }
+        const zone = typeof page.textZone === 'string' && page.textZone.trim() ? page.textZone : 'bottom';
         const zoneTop = zone.startsWith('top');
         const panelX = zone.endsWith('-left') ? insetL : zone.endsWith('-right') ? insetL + safeW - panelW : insetL + (safeW - panelW) / 2;
         const panelY = zoneTop ? pageHeight - SAFE_MARGIN_PT - panelH : SAFE_MARGIN_PT;
@@ -1517,13 +1523,7 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
   if (includeBleed) {
     const childName = (Array.isArray(config.children) && config.children[0]) || 'your little one';
     const toyFull = ((config.personal as { favouriteToy?: string } | undefined) || {}).favouriteToy || '';
-    const toyShort = toyFull.split(',')[0].trim();
-    const acts: { heading: string; prompt: string }[] = ([
-      toyShort ? { heading: 'Can you find it?', prompt: `${toyShort} appears on every page of this book. Can you spot ${toyShort} each time?` } : null,
-      { heading: 'Count out loud', prompt: 'Point at the picture. How many can you count? Count out loud together.' },
-      { heading: 'Talk about the story', prompt: `What was ${childName}'s best bit? What do you think happens next?` },
-      { heading: 'Tell it back', prompt: `Can you tell ${childName}'s adventure in your own words?` },
-    ].filter((a): a is { heading: string; prompt: string } => !!a));
+    const acts = activityPrompts(childName, toyFull);
     const totalWithBack = pdfDoc.getPageCount() + 1;
     let padCount = (4 - (totalWithBack % 4)) % 4;
     while (totalWithBack + padCount < MIN_PRINT_PAGES) padCount += 4;
