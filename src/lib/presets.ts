@@ -37,6 +37,11 @@ export const themePresets: ThemePreset[] = [
 // Story type presets
 export const storyTypePresets: StoryTypePreset[] = [
   {
+    name: 'Everyday & first times',
+    description: 'Real-life days and milestones: nursery, new sibling, moving house, first shoes',
+    tags: ['everyday', 'milestones', 'reassurance'],
+  },
+  {
     name: 'Adventure',
     description: 'Exciting journeys and discoveries',
     tags: ['exploration', 'courage', 'friendship'],
