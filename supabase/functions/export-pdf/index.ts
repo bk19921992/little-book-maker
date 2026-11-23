@@ -1813,7 +1813,9 @@ function plainReasons(blockers: { where: string; check: string }[]): string {
     blockers.map((b) =>
       /title|story type|dedication|subtitle/i.test(b.check)
         ? 'the cover title, story type or dedication does not fit at a readable size'
-        : /text|band|lines|copy/i.test(b.check)
+        : /text zone/i.test(b.check)
+          ? 'some pages are missing their text placement - regenerate those pages'
+          : /text|band|lines|copy/i.test(b.check)
           ? 'some pages have more words than fit nicely'
           : 'some illustrations are missing or could not be prepared'
     )
