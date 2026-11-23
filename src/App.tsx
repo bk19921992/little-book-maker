@@ -19,6 +19,7 @@ const TestimonialPreview = import.meta.env.DEV && import.meta.env.VITE_SHOW_TEST
 const ExportProofPreview = import.meta.env.DEV && import.meta.env.VITE_SHOW_EXPORT_PROOF === "true" ? lazy(() => import("./pages/ExportProofPreview")) : null;
 const BookApp = lazy(() => import("./pages/BookApp"));
 const Sample = lazy(() => import("./pages/Sample"));
+const GuideChristmas = lazy(() => import("./pages/GuideChristmas"));
 const queryClient = new QueryClient();
 
 const App = () => (
@@ -34,6 +35,7 @@ const App = () => (
             {ExportProofPreview && <Route path="/export-proof" element={<Suspense fallback={<p role="status">Opening preview...</p>}><ExportProofPreview /></Suspense>} /> }
             <Route path="/" element={<HomeRoute />} />
             <Route path="/sample" element={<Suspense fallback={<p role="status" className="p-8 text-center">Opening sample story...</p>}><Sample /></Suspense>} />
+            <Route path="/guides/personalised-christmas-book" element={<Suspense fallback={<p role="status" className="p-8 text-center">Opening the Christmas book guide...</p>}><GuideChristmas /></Suspense>} />
             <Route
               path="/app"
               element={(
