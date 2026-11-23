@@ -1810,7 +1810,9 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
 // blockers array still travels in the response for debugging.
 function plainReasons(blockers: { where: string; check: string }[]): string {
   const reasons = new Set(
-    blockers.map((b) =>
+    // The "panel: go/no-go" summary line restates the count of the others -
+    // it must not add a spurious reason of its own.
+    blockers.filter((b) => !/go\/no-go/i.test(b.where)).map((b) =>
       /title|story type|dedication|subtitle/i.test(b.check)
         ? 'the cover title, story type or dedication does not fit at a readable size'
         : /text zone/i.test(b.check)
