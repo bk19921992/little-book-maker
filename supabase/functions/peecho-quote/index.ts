@@ -16,7 +16,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // chargeable). Self-contained (no _shared imports) so it can deploy from
 // the dashboard editor as a single file; CORS mirrors _shared/cors.ts.
 
-const DEFAULT_BASE = 'https://test.www.peecho.com';
+const DEFAULT_BASE = 'https://www.peecho.com';
 
 function corsHeaders(req: Request): Record<string, string> {
   const allowed = (Deno.env.get('ALLOWED_ORIGINS') || 'https://little-book-maker.vercel.app')
@@ -182,7 +182,7 @@ serve(async (req) => {
       if (!res.ok) {
         // Never read/log the body: error payloads can echo the key.
         console.error('Peecho offering list failed:', res.status);
-        return json(503, { ok: false, error: 'Printer catalogue unavailable.' });
+        return json(503, { ok: false, error: 'Printer catalogue unavailable.', upstreamStatus: res.status });
       }
       const offerings = collectOfferings(await res.json());
       const payload = scrubKey(JSON.stringify({ ok: true, environment: base.includes('test.') ? 'test' : 'live', country, currency, offerings }), apiKey);
@@ -211,7 +211,7 @@ serve(async (req) => {
     }
     if (!res.ok) {
       console.error('Peecho quote failed:', res.status);
-      return json(503, { ok: false, error: 'Printer quote unavailable.' });
+      return json(503, { ok: false, error: 'Printer quote unavailable.', upstreamStatus: res.status });
     }
     const quote = sanitizeQuote(await res.json(), { offeringId, numberOfPages, quantity, currency, country });
     if (!quote) {
