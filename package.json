@@ -9,7 +9,8 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "test": "node --test --experimental-strip-types --disable-warning=ExperimentalWarning \"src/**/*.test.ts\" \"supabase/functions/**/*.test.ts\"",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke": "node scripts/smoke-site.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
