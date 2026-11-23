@@ -1590,12 +1590,12 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       qa.push({ where: 'back', severity: 'pass', check: 'back cover sign-off omitted (no child name on record)' });
     }
 
-    // Web only for now: print omitted branding by the 11 Nov 2026 customer
-    // decision, but the owner reversed that on 21 Nov 2026 - print back
-    // covers SHOULD carry the logo and "by The Children's Library" too.
-    // Plate them when the print layout is made format-aware (print ordering
-    // is off until then); keep the web/print difference until that work.
-    if (!includeBleed) {
+    // Print omitted branding by the 11 Nov 2026 customer decision; the
+    // owner reversed that on 21 Nov 2026 ("Yes I do" to logo + brand line
+    // on printed books), to land once the print layout was format-aware.
+    // That format-aware work has landed (21 Nov cvY/format fix), so web and
+    // print back covers both carry the logo and brand line now.
+    {
       // 21 Nov 2026 owner review: the "Make Your Own" logo (open-book mark +
       // wordmark) sits above the brand line, in the plate's ink colour: the
       // cream PNG on dark cover palettes, the dark PNG on light ones (the
@@ -1622,7 +1622,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       const brandSize = Math.max(9, Math.round(11 * sizeScale));
       const brandWidth = fonts.text.widthOfTextAtSize(brand, brandSize);
       backPage.drawText(brand, { x: (pageWidth - brandWidth) / 2, y: cvY(20), size: brandSize, font: fonts.text, color: paletteInk, opacity: 0.8 });
-      qa.push({ where: 'back', severity: 'pass', check: logoPlated ? 'web back cover brand line and Make Your Own logo plated (print omits them, 11 Nov 2026 decision)' : 'web back cover brand line plated; logo embed failed (print omits both, 11 Nov 2026 decision)' });
+      qa.push({ where: 'back', severity: 'pass', check: logoPlated ? `${includeBleed ? 'print' : 'web'} back cover brand line and Make Your Own logo plated` : `${includeBleed ? 'print' : 'web'} back cover brand line plated; logo embed failed` });
     }
     }
   }
