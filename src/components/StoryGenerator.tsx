@@ -253,7 +253,7 @@ export const StoryGenerator: React.FC<StoryGeneratorProps> = ({ onRequestAuth })
       {/* Footer */}
       <footer className="border-t bg-background/50 py-6 sm:py-8 mt-12 sm:mt-16">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 text-center text-muted-foreground">
-          <p className="text-sm sm:text-base">Create magical stories that bring joy to children's reading time</p>
+          <p className="text-sm sm:text-base">Little books. Made for reading together.</p>
         </div>
       </footer>
     </div>

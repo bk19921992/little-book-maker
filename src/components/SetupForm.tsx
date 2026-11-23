@@ -121,7 +121,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
           Create Your Story
         </h1>
         <p className="text-base sm:text-lg text-muted-foreground">
-          Let's build a magical storybook just for you
+          Let's make their little book
         </p>
       </div>
 

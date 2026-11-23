@@ -418,14 +418,14 @@ export const ExportPanel: React.FC<ExportPanelProps> = ({
         </CardHeader>
         <CardContent className="space-y-6">
           <p className="text-sm text-muted-foreground">
-            We print and post a paperback of your book. Generate your PDFs first, then tell us where to send it.
+            We print and post a 210 x 210 mm hardcover of your book. Generate your PDFs first, then tell us where to send it.
           </p>
 
           {config.pageSize !== 'A5 portrait' && (
             <Alert>
               <AlertCircle className="h-4 w-4" />
               <AlertDescription>
-                Printed books currently look best at A5. At {config.pageSize} the pictures print less sharply.
+                Printed books are 210 x 210 mm square. At {config.pageSize} the pictures print less sharply.
               </AlertDescription>
             </Alert>
           )}
