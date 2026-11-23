@@ -736,7 +736,7 @@ Deno.test({
     const backChecks = checks.filter((q) => q.where === "back").map((q) => q.check).join("\n");
     assert(coverChecks.includes("print cover colour: bedtime palette"), `palette QA present: ${coverChecks}`);
     assert(coverChecks.includes("print cover title above the art"), `title-above-art QA present: ${coverChecks}`);
-    assert(coverChecks.includes("white mount"), `framed art QA present: ${coverChecks}`);
+    assert(coverChecks.includes("on the cover colour"), `framed art QA present: ${coverChecks}`);
     assert(backChecks.includes("blurb"), `blurb QA present: ${backChecks}`);
     assert(backChecks.includes("sign-off plated"), `sign-off QA present: ${backChecks}`);
     const fails = checks.filter((q) => q.severity === "fail");

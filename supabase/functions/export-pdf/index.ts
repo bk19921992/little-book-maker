@@ -550,18 +550,16 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
         coverPage.drawImage(img, { x: (pageWidth - drawW) / 2, y: (pageHeight - drawH) / 2, width: drawW, height: drawH });
         qa.push({ where: 'cover', severity: 'pass', check: 'dedicated cover illustration, full-bleed, title space reserved' });
       } else {
-        // Print cover (v6): the art plates full-frame inside a white mount
-        // on the cover colour, uncropped, upscaled only to the 150 dpi
-        // floor (never beyond). A dedication raises the plate so the bottom
-        // text stays inside the safe margin. (Web keeps the band system:
-        // the art above a paper band carrying the title.)
+        // Print cover (v7, 23 Nov 2026 owner review): the art plates
+        // full-frame directly on the cover colour, uncropped, upscaled
+        // only to the 150 dpi floor (never beyond). The v6 white mount is
+        // retired - the owner rejected the white frame on the cover
+        // colour. A dedication raises the plate so the bottom text stays
+        // inside the safe margin. (Web keeps the band system: the art
+        // above a paper band carrying the title.)
         const platePt = includeBleed ? cvS(dedicationText ? 128 : 136) : 0;
         const plateX = includeBleed ? (pageWidth - platePt) / 2 : 0;
         const plateY = includeBleed ? cvY(dedicationText ? 34 : 26) : 0;
-        if (includeBleed) {
-          const framePt = cvS(2);
-          coverPage.drawRectangle({ x: plateX - framePt, y: plateY - framePt, width: platePt + framePt * 2, height: platePt + framePt * 2, color: WHITE });
-        }
         const coverTitleTop = (coverBandHeight + coverBlockHeight) / 2;
         const coverRegionBottom = coverTitleTop + titleSize * 0.35;
         const coverRegionH = Math.max(coverBandHeight, pageHeight - safeInset - coverRegionBottom);
@@ -654,7 +652,7 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
           coverPage.drawLine({ start: { x: cv(84), y: pageHeight - cv(62) }, end: { x: cv(96), y: pageHeight - cv(62) }, thickness: cv(0.2), color: OCHRE });
           coverPage.drawLine({ start: { x: cv(114), y: pageHeight - cv(62) }, end: { x: cv(126), y: pageHeight - cv(62) }, thickness: cv(0.2), color: OCHRE });
         }
-        qa.push({ where: 'cover', severity: 'pass', check: includeBleed ? (fromDedicated ? 'dedicated cover illustration plated full-frame in a white mount, uncropped, title above on the cover colour' : 'cover illustration plated full-frame in a white mount, uncropped, title above (page art fallback)') : (fromDedicated ? 'composed cover: framed art crop under a cream title cartouche (pass-2 design)' : 'composed cover: framed page-art crop under a cream title cartouche (pass-2 design)') });
+        qa.push({ where: 'cover', severity: 'pass', check: includeBleed ? (fromDedicated ? 'dedicated cover illustration plated full-frame on the cover colour, uncropped, title above' : 'cover illustration plated full-frame on the cover colour, uncropped, title above (page art fallback)') : (fromDedicated ? 'composed cover: framed art crop under a cream title cartouche (pass-2 design)' : 'composed cover: framed page-art crop under a cream title cartouche (pass-2 design)') });
       }
       if (dedicatedUnreadable) qa.push({ where: 'cover', severity: 'warn', check: 'dedicated cover illustration could not be read; reused page art, uncropped' });
       if (includeBleed) qa.push(dpiCheck('cover', effectiveDpi(img, { width: drawW, height: drawH })));
@@ -1456,12 +1454,17 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
           }
         }
       }
-      ep.drawRectangle({ x: cv(55), y: pageHeight - cvY(140), width: pageWidth - cv(110), height: cvY(55), color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+      // 23 Nov 2026 owner review (v4): a compact panel in the art's calm
+      // bottom grass band; the previous centred panel covered the child's
+      // torso and teddy.
+      const endPanelW = cv(110);
+      const endPanelH = cvY(20);
+      ep.drawRectangle({ x: (pageWidth - endPanelW) / 2, y: SAFE_MARGIN_PT, width: endPanelW, height: endPanelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
     }
     const endSize = Math.max(16, Math.round(24 * sizeScale));
     const endText = 'The End';
     const w = coverFonts.display.widthOfTextAtSize(endText, endSize);
-    ep.drawText(endText, { x: (pageWidth - w) / 2, y: pageHeight - cvY(108), size: endSize, font: coverFonts.display, color: INK });
+    ep.drawText(endText, { x: (pageWidth - w) / 2, y: includeBleed ? SAFE_MARGIN_PT + cvY(7) : pageHeight - cvY(108), size: endSize, font: coverFonts.display, color: INK });
     qa.push({ where: 'back matter', severity: 'pass', check: 'closing page: "The End" at 24pt, nothing else' });
   }
 
