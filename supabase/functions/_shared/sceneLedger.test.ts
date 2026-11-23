@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {sceneGateEnforced,sceneGateVerdict,sceneLedgerIssues,imageSceneIssues,sceneContext,type SceneLedger} from './sceneLedger.ts';
+import {sceneGateEnforced,sceneGateVerdict,sceneLedgerIssues,imageSceneIssues,pageCast,sceneContext,SCENE_PLAN_INSTRUCTIONS,type SceneLedger} from './sceneLedger.ts';
 const fixture=():SceneLedger=>({locations:{home:'blue door and bedroom',school:'yellow door and child coat hooks'},outfits:{day:'red jumper jeans',animal:'natural black coat'},scenes:[{page:1,locationId:'home',time:'morning',characters:['child','dog'],outfits:{child:'day',dog:'animal'},props:{bear:'child'},transition:''},{page:2,locationId:'school',time:'morning',characters:['child'],outfits:{child:'day'},props:{bear:'child'},transition:'They walk to school; dog waits outside at goodbye.'}]});
 test('complete explicit sequence is structurally valid, not a visual pass',()=>assert.deepEqual(sceneLedgerIssues(fixture(),2),[]));
 test('missing/out-of-order/unknown state fails before generation',()=>{for(const f of [undefined,{}, {...fixture(),scenes:[]},{...fixture(),scenes:fixture().scenes.slice().reverse()}])assert.ok(sceneLedgerIssues(f,2).length);const f=fixture();f.scenes[1].locationId='unknown';assert.ok(sceneLedgerIssues(f,2).length)});
@@ -18,4 +18,18 @@ test('gate verdict: invalid present ledger always rejects, missing ledger only r
   assert.equal(sceneGateVerdict(2,true,env('enforce')),'reject');
   assert.equal(sceneGateVerdict(2,false,env('permissive')),'reject');
   assert.equal(sceneGateVerdict(2,false,env(undefined)),'reject');
+});
+
+test('pageCast: visible cast for the page, every other known character absent',()=>{
+  const l=fixture();
+  assert.deepEqual(pageCast(l,1),{visible:['child','dog'],absent:[]});
+  assert.deepEqual(pageCast(l,2),{visible:['child'],absent:['dog']});
+  assert.equal(pageCast(l,3),null);
+  assert.equal(pageCast(undefined,1),null);
+  assert.equal(pageCast({scenes:4},1),null);
+});
+test('plan instructions hold grown-ups to stable outfits across pages',()=>{
+  assert.match(SCENE_PLAN_INSTRUCTIONS,/grown-up/);
+  assert.match(SCENE_PLAN_INSTRUCTIONS,/SAME outfit ID on every page/);
+  assert.match(SCENE_PLAN_INSTRUCTIONS,/must not appear in that page's illustration/);
 });

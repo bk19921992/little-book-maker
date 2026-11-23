@@ -333,3 +333,24 @@ test('page prompt reserves the declared text zone and review rejects occupied zo
   const plain = buildReviewPrompt({ label: 'page 2', brief: 'garden' });
   assert.ok(!plain.includes('TEXT ZONE'));
 });
+
+test('review prompt enforces the declared page cast when provided',()=>{
+  const ctx={label:'page 9',brief:'blocks scene',config:{},expectedCast:['child','friend'],absentCast:['dog']};
+  const p=buildReviewPrompt(ctx);
+  assert.match(p,/CAST: this page is planned to show ONLY: child, friend/);
+  assert.match(p,/must NOT show: dog/);
+  assert.match(p,/recognisable recurring character in the wrong scene is a reject/);
+  const bare=buildReviewPrompt({label:'page 1',brief:'x',config:{}});
+  assert.ok(!/CAST: this page/.test(bare));
+});
+test('page prompt locks the cast against the reference image',()=>{
+  const cast={visible:['child'],absent:['dog']};
+  const withRef=buildPagePrompt({page:3,prompt:'nursery scene'},'BIBLE','ANCHOR',true,cast);
+  assert.match(withRef,/CAST FOR THIS PAGE: this scene shows ONLY: child/);
+  assert.match(withRef,/Do NOT draw: dog/);
+  assert.match(withRef,/reference fixes how they look, not who is present/);
+  const noRef=buildPagePrompt({page:3,prompt:'nursery scene'},'BIBLE','ANCHOR',false,cast);
+  assert.match(noRef,/CAST FOR THIS PAGE/);
+  const oldWay=buildPagePrompt({page:3,prompt:'nursery scene'},'BIBLE','ANCHOR',true);
+  assert.ok(!/CAST FOR THIS PAGE/.test(oldWay));
+});

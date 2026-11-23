@@ -65,9 +65,23 @@ export function sceneContext(ledger:SceneLedger,page:number):string{
     `Transition from previous page: ${s.transition || 'Same state; action continues.'}`,
     'Do not invent clothes changes, teleport characters/props or reuse another location.'].join('\n');
 }
+
+// The declared cast for one page: who the plan shows, and every other known
+// character who must NOT appear. Review-gate input: prose exclusions alone
+// let recurring characters bleed into scenes they left (23 Nov 2026 nursery
+// book: the dog followed the child into 9 nursery scenes).
+export function pageCast(ledger:unknown,page:number):{visible:string[];absent:string[]}|null{
+  const l=ledger as SceneLedger;
+  if(!l||!Array.isArray(l.scenes))return null;
+  const s=l.scenes.find(s=>s.page===page);
+  if(!s||!Array.isArray(s.characters))return null;
+  const all=[...new Set(l.scenes.flatMap(sc=>Array.isArray(sc.characters)?sc.characters:[]))];
+  return {visible:[...s.characters],absent:all.filter(c=>!(s.characters as string[]).includes(c))};
+}
+
 export const SCENE_PLAN_INSTRUCTIONS=`WHOLE-BOOK CONTINUITY (required before any prose or illustration):
 Return sceneLedger with locations: object of stable location IDs -> visibly distinct building/door/interior descriptions; outfits: object of stable outfit IDs -> exact garment/colour descriptions (include animal-natural-coat for pets); scenes: array in page order with {page,locationId,time,characters:[stable character IDs],outfits:{characterId:outfitId},props:{stablePropId:holder-or-location},transition:string}.
-Scenery-only pages may have empty characters and outfits. Every animal needs an explicit natural-coat outfit, not human clothing. Use the SAME location ID and visual features on every return. Home and school/nursery must have different doors/interiors. Choose a fixed daytime outfit and reuse it until an explicit change. Pets cannot teleport inside after goodbye outside. Track each recurring toy across carried/put-down/retrieved states. Each state change must have an explicit causal transition, including travel, time, entry/exit, clothing or prop handoff. Keep the plan simple enough for the chosen page count. Ensure every page visualBrief and imagePrompt obey that state. Do not solve mismatched scenes with vague wording.`;
+Scenery-only pages may have empty characters and outfits. Every animal needs an explicit natural-coat outfit, not human clothing. Every visible grown-up (parent, carer, teacher, nursery worker) is a stable named character with their own ID and a fixed outfit for the day - the same adult keeps the SAME outfit ID on every page they appear unless an explicit transition explains a change. A character who is not listed for a page must not appear in that page's illustration at all. Use the SAME location ID and visual features on every return. Home and school/nursery must have different doors/interiors. Choose a fixed daytime outfit and reuse it until an explicit change. Pets cannot teleport inside after goodbye outside. Track each recurring toy across carried/put-down/retrieved states. Each state change must have an explicit causal transition, including travel, time, entry/exit, clothing or prop handoff. Keep the plan simple enough for the chosen page count. Ensure every page visualBrief and imagePrompt obey that state. Do not solve mismatched scenes with vague wording.`;
 
 export function imageSceneIssues(ledger:unknown,prompts:unknown):string[]{
  const l=ledger as SceneLedger;

@@ -1,4 +1,4 @@
-import { imageSceneIssues, sceneContext, sceneGateVerdict, type SceneLedger } from '../_shared/sceneLedger.ts';
+import { imageSceneIssues, pageCast, sceneContext, sceneGateVerdict, type SceneLedger } from '../_shared/sceneLedger.ts';
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { AuthError, requireUser, serviceClient, unauthorisedResponse } from "../_shared/auth.ts"
 import { getCorsHeaders } from "../_shared/cors.ts"
@@ -170,6 +170,9 @@ type JobRequest = {
   // The job owner's id, recorded at start so a later step can prove photo
   // ownership before reading the private bucket.
   userId?: string
+  // The declared whole-book scene plan, stored so every step's review gate
+  // can enforce this page's cast (who must be visible, who must not).
+  sceneLedger?: SceneLedger
 }
 
 const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -208,11 +211,12 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
     const photo = isCover ? null : await resolvePhoto(request)
     const sceneText = item.prompt ? `${item.prompt.prompt || ''} ${item.prompt.visualBrief || ''} ${item.prompt.text || ''}` : ''
     const usePhoto = !!photo && sceneMentionsCharacter(sceneText, photo.character)
+    const cast = isCover ? null : pageCast(request.sceneLedger, item.page!)
     const base = isCover
       ? buildCoverPrompt(styleBible, styleAnchor, !!reference)
       : usePhoto
-        ? `${buildPagePrompt(item.prompt!, styleBible, styleAnchor, false)}\n${photoReferenceClause(photo!.character)}`
-        : buildPagePrompt(item.prompt!, styleBible, styleAnchor, !!reference)
+        ? `${buildPagePrompt(item.prompt!, styleBible, styleAnchor, false, cast)}\n${photoReferenceClause(photo!.character)}`
+        : buildPagePrompt(item.prompt!, styleBible, styleAnchor, !!reference, cast)
     const prompt = feedback?.length ? withReviewFeedback(base, feedback, styleAnchor) : base
     const activeReference = usePhoto ? photo!.dataUrl : reference
     const label = isCover ? 'cover' : `page ${item.page}`
@@ -236,6 +240,8 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
       brief: isCover ? COVER_REVIEW_BRIEF : pageScene(item.prompt!) + (item.prompt!.text ? `\nPage text: ${item.prompt!.text}` : ''),
       config: request.config,
       ...(!isCover && item.prompt?.textZone ? { textZone: item.prompt.textZone } : {}),
+      ...(cast?.visible.length ? { expectedCast: cast.visible } : {}),
+      ...(cast?.absent.length ? { absentCast: cast.absent } : {}),
       referenceDataUrl: activeReference || undefined,
     })
     return { url, review }
@@ -506,6 +512,7 @@ serve(async (req) => {
         // The art-direction prompt personalises to the book's title when the
         // caller has one; today no UI field supplies it, so usually absent.
         ...(typeof body.title === 'string' && body.title.trim() ? { title: body.title.trim().slice(0, 120) } : {}),
+        ...(body.sceneLedger ? { sceneLedger: body.sceneLedger as SceneLedger } : {}),
       }
       // The config is stored once on the job, not on every item.
       const pagePrompts: ImagePrompt[] = (prompts as ImagePrompt[]).map((p) => ({
@@ -561,9 +568,10 @@ serve(async (req) => {
 
         const sceneText = `${promptData.prompt || ''} ${promptData.visualBrief || ''} ${promptData.text || ''}`
         const usePhoto = !!singlePhoto && sceneMentionsCharacter(sceneText, singlePhoto.character)
+        const cast = pageCast(body.sceneLedger, promptData.page)
         const fullPrompt = usePhoto
-          ? `${buildPagePrompt(promptData, styleBible, styleAnchor, false)}\n${photoReferenceClause(singlePhoto!.character)}`
-          : buildPagePrompt(promptData, styleBible, styleAnchor, !!referenceUrl)
+          ? `${buildPagePrompt(promptData, styleBible, styleAnchor, false, cast)}\n${photoReferenceClause(singlePhoto!.character)}`
+          : buildPagePrompt(promptData, styleBible, styleAnchor, !!referenceUrl, cast)
         const activeReference = usePhoto ? singlePhoto!.dataUrl : referenceUrl
 
         console.log(`Generating image for page ${promptData.page} with model ${model} (${size}, ${quality}${referenceUrl ? ', with reference' : ''})`)
@@ -598,6 +606,8 @@ serve(async (req) => {
             config: promptData.config,
             referenceDataUrl: activeReference || undefined,
             ...(promptData.textZone ? { textZone: promptData.textZone } : {}),
+            ...(cast?.visible.length ? { expectedCast: cast.visible } : {}),
+            ...(cast?.absent.length ? { absentCast: cast.absent } : {}),
           })
           if (review.pass) break
         }

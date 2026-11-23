@@ -80,6 +80,12 @@ export interface ReviewContext {
   // Declared print text zone: when set, the reviewer rejects any candidate
   // whose zone contains faces, characters or key subjects.
   textZone?: TextZone
+  // Declared page cast from the scene plan: who this page shows, and the
+  // book's other recurring characters who must NOT appear (cast bleed is
+  // the top defect class - the reference image alone cannot rule them out,
+  // it can even amplify them).
+  expectedCast?: string[]
+  absentCast?: string[]
 }
 
 // The vision reviewer's instructions for one candidate image.
@@ -104,6 +110,8 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
     '1. ANATOMY: for every person and animal in the scene, count their eyes, ears, arms, legs, hands and fingers. Reject if any count is wrong for that creature, or if hands are mangled or fused, faces distorted or duplicated, or extra or half-formed characters appear.',
     '2. ARTIFACTS: any legible text, letters or numbers rendered inside the artwork (this book prints no words inside its illustrations - the title is added at export), garbled glyphs, watermarks or signatures; glitch patches; smeared or melted regions; abrupt style breaks inside the image.',
     '3. CONSISTENCY: characters that contradict the book context (wrong species, wrong recurring toy, two different-looking versions of the same child in one image).',
+    ...(ctx.expectedCast?.length || ctx.absentCast?.length ? [
+      `3a. CAST: this page is planned to show ONLY: ${(ctx.expectedCast || []).join(', ') || 'no recurring characters'}. Reject if a planned character who should be visible is missing, or if any recurring character from the book who is NOT planned for this page is visible${ctx.absentCast?.length ? ` (this page must NOT show: ${ctx.absentCast.join(', ')})` : ''}. The reference image shows how those characters look, not who belongs in this scene - a recognisable recurring character in the wrong scene is a reject even when drawn perfectly. Unnamed background strangers (a crowd, other children at nursery) are fine unless one is clearly a recurring character.`] : []),
     '3b. SPECIES-FACE MATCH: every creature\'s face must belong to its species. A human-like face on an animal body (an owl, badger, rabbit or toy with a human child\'s face) or an animal muzzle on a human body is ALWAYS a reject, even if the eye and limb counts are correct.',
     '3c. TEXT MATCH: when the scene brief or page text names clothing, colours, props or a setting (for example a yellow shirt, a dino toy, an outdoor scene), the image must match it. A mismatch a reader would notice (the text says yellow shirt, the picture shows stripes; the story is outdoors, the child wears pyjamas while the text describes day clothes) is a reject. Sleepwear is fine when the text has the child in sleepwear.',
     ctx.referenceDataUrl ? '4. MATCH TO REFERENCE: the child, each recurring supporting character and the recurring toy in IMAGE 2 must be recognisably the same individual as in IMAGE 1 - same face, hair, skin tone, outfit palette and toy design, allowing for pose, expression and scene-appropriate clothing changes. A redesigned character or a different-looking toy is a reject.' : '',
@@ -284,13 +292,14 @@ export function pageScene(promptData: ImagePrompt): string {
 
 // The image prompt for one story page. With a reference image (an accepted
 // earlier page) the prompt asks for the same characters in a new scene.
-export function buildPagePrompt(promptData: ImagePrompt, styleBible: string, styleAnchor: string, hasReference: boolean): string {
+export function buildPagePrompt(promptData: ImagePrompt, styleBible: string, styleAnchor: string, hasReference: boolean, cast?: { visible: string[]; absent: string[] } | null): string {
   const scene = pageScene(promptData)
   if (hasReference) {
     return [
       `This is page ${promptData.page} of the same children's picture book as the reference image.`,
       'Keep the EXACT same characters from the reference image: the same child (same face, hair and skin tone), the same animals (same species, breed and colouring), and the same recurring props (toys, blankets, furniture). Identity stays stable; clothing and props follow this page\'s story text below - when the text names them, match the text exactly, even where it differs from the reference image.',
       'Use the same illustration style, linework, lighting and colour palette as the reference image.',
+      cast ? `CAST FOR THIS PAGE: this scene shows ONLY: ${cast.visible.join(', ') || 'no recurring characters'}.${cast.absent.length ? ` Do NOT draw: ${cast.absent.join(', ')} - they are not in this scene, even if they appear in the reference image. The reference fixes how they look, not who is present.` : ''}` : '',
       '',
       'STYLE BIBLE (must match every other page exactly):',
       styleBible,
@@ -319,6 +328,7 @@ export function buildPagePrompt(promptData: ImagePrompt, styleBible: string, sty
     promptData.text ? `Story text on this page: "${promptData.text}"` : '',
     '',
     promptData.textZone ? `TEXT ZONE: the printed words sit on a panel in the ${describeTextZone(promptData.textZone)} of the finished page. Keep that area calm, empty, low-contrast background (sky, grass, wall, floor) - no faces, heads, characters or important props there. Compose the scene so every face and key subject sits clearly OUTSIDE that area.` : '',
+    cast ? `CAST FOR THIS PAGE: this scene shows ONLY: ${cast.visible.join(', ') || 'no recurring characters'}.${cast.absent.length ? ` Do NOT draw: ${cast.absent.join(', ')} - they are not in this scene.` : ''}` : '',
     'Illustrate exactly what this page\'s story text describes, while keeping the characters, style, palette and setting from the style bible perfectly consistent with the other pages.',
     styleAnchor,
   ].filter(Boolean).join('\n')
