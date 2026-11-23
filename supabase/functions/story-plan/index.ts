@@ -164,6 +164,15 @@ Personal Details to Include:
 ${config.personal.pets ? `- Pets: ${config.personal.pets}` : ''}
 ${config.personal.dedication ? `- Dedication: ${config.personal.dedication}` : ''}
 
+CONTINUITY & CAST LOCK (owner direction 23 Nov 2026 - a book that contradicts itself is unsellable):
+- Open with a CHARACTER & PROP BIBLE: one locked line per character and recurring prop (species/breed, age, hair, face, outfit, colour) using the details above. Then repeat those locked descriptions VERBATIM in every page's imagePrompt - never paraphrase, never invent new props or outfits mid-book.
+- Wardrobe follows time of day: one outfit per part of day (e.g. pyjamas only at home in the morning; a daytime outfit once dressed). Never show pyjamas outside or at a day activity.
+- One comfort object only: pick a single toy (the favourite toy above, if given), name it once, and keep that exact name and description on every page it appears. It never changes colour, species or form.
+- Pets obey the setting: a pet stays where it belongs (e.g. the dog stays home during nursery/school hours and greets the child on return). Never place a pet somewhere it could not be.
+- Time-of-day arc: keep lighting and activity chronological across the book (morning -> day -> evening). No bedtime phrasing in morning or daytime scenes.
+- Rhyme & voice: if the narration style or story type calls for rhyme, write in a consistent AABB or ABCB ballad meter with TRUE rhymes only (no near-rhymes), readable aloud without stumbling. Keep one consistent POV (third-person limited on the child) across every page.
+- Negative space: every imagePrompt must name where clean, uncluttered, low-contrast space is left for printed text (e.g. 'soft empty sky in the upper third'), so no page needs a blank text-only plate.
+
 CRITICAL READING LEVEL REQUIREMENTS:
 ${config.readingLevel === 'Toddler 2–3' ? 
   `- Write ${planRange.min}-${planRange.max} words per page\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words\n- Example: "Big red ball. Ball is round. Ball bounces high. Fun, fun, fun!"` :

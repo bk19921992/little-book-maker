@@ -1061,7 +1061,7 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         });
       });
       if (printLines.length) {
-        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `text centred under the art: ${Math.min(printLines.length, 4)} line(s) at ${printFontSize}pt on ${printLeading}pt leading` });
+        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `text centred under the art: ${Math.min(printLines.length, 5)} line(s) at ${printFontSize}pt on ${printLeading}pt leading` });
       }
 
       // 21 Nov 2026 design overhaul: no folios (art-direction spec).
