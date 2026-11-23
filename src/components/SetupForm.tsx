@@ -353,14 +353,25 @@ export const SetupForm: React.FC<SetupFormProps> = ({
               </Badge>
             ))}
           </div>
-          {userId && config.characters.length > 0 && (
+          {config.characters.length > 0 && (userId ? (
             <CharacterPhotoPicker
               characters={config.characters}
               photos={config.characterPhotos ?? {}}
               onChange={(characterPhotos) => onConfigChange({ characterPhotos })}
               userId={userId}
             />
-          )}
+          ) : (
+            <div className="space-y-1 rounded-lg border border-dashed p-3">
+              <p className="text-xs text-muted-foreground">
+                Optional: add a photo of a character (your child, a pet, a family member) and the
+                illustrations will take their likeness. Photos are private to your account, are used
+                only to illustrate your books, and are never shared or made public.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                You can add photos once your free account is created, before your book is made.
+              </p>
+            </div>
+          ))}
         </CardContent>
       </Card>
 
