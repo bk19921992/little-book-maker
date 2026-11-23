@@ -7,8 +7,15 @@ export const BLEED_MM = 3; // legacy only: the printer now adds bleed itself
 // Peecho file spec (verified 10 Nov 2026, support.peecho.com softcover and
 // hardcover guidelines): the PDF page IS the trim size (the printer's
 // system generates bleed and cut marks), and all art and text keep a
-// minimum 10 mm margin on every side.
-export const SAFE_MARGIN_MM = 10;
+// minimum 10 mm margin on every side. Owner direction 23 Nov 2026 raises
+// the safe margin to 15 mm and adds a 20 mm gutter on the binding side.
+export const SAFE_MARGIN_MM = 15;
+export const GUTTER_MM = 20;
+export const GUTTER_PT = GUTTER_MM * MM_TO_PT;
+// Hardcover picture-book minimum (Peecho A4 landscape): pad with real
+// content, never blanks, to at least this many pages including the back
+// cover (owner direction 23 Nov 2026).
+export const MIN_PRINT_PAGES = 24;
 export const SAFE_MARGIN_PT = SAFE_MARGIN_MM * MM_TO_PT;
 
 // Trim and bleed boxes for a print page: printers read TrimBox for the

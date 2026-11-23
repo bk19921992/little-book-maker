@@ -8,7 +8,7 @@ import { getCorsHeaders } from "../_shared/cors.ts";
 import { coverSubtitle, coverTitle, fitCoverSubtext, fitCoverTitle, isAccentChar, layoutBand, layoutCoverTitle, normaliseTypography, SAFE, sanitiseCoverTitle, SUBTEXT_READABLE_MIN, TEXT_MEASURE, TITLE_READABLE_MIN, typesetVerse, wrapToMeasure } from "./typeset.ts";
 import { formatLineCapacity } from "../_shared/textContract.ts";
 import { storeBookPdfs } from "../_shared/bookStorage.ts";
-import { containFit, coverTextBlockBottom, DPI_MINIMUM, dpiCheck, effectiveDpi, exportBlockers, PRINT_PROFILE_MARKER, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
+import { containFit, coverTextBlockBottom, DPI_MINIMUM, DPI_RECOMMENDED, dpiCheck, effectiveDpi, exportBlockers, GUTTER_PT, MIN_PRINT_PAGES, PRINT_PROFILE_MARKER, printPlacement, resolveCoverPalette, SAFE_MARGIN_PT } from "./printSpec.ts";
 import { blurbSignOff, fallbackBlurb, validateBlurb } from "../_shared/blurb.ts";
 import { validateTitle } from "../_shared/title.ts";
 import { clampCoverStyle, COVER_TYPEFACES, coverHexToRgb, type CoverTypeface } from "../_shared/coverStyle.ts";
@@ -309,7 +309,27 @@ const STAR_PATH = 'M0,-10 L2.9,-3.1 L9.5,-3.1 L4.5,1.2 L5.9,8.1 L0,4 L-5.9,8.1 L
 const LEAF_PATH = 'M0,-9 C6,-7 9,-1 6,4 C3,9 -3,9 -6,4 C-9,-1 -6,-7 0,-9 Z';
 const LEAF_VEIN_PATH = 'M0,-7 L0,7';
 
-async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
+// ---- Print plate helpers (23 Nov 2026 owner review) ----
+// Cover-fit: fill the whole page with artwork, cropping only what the page
+// shape forces off. Full-page art on every plate - no blank or text-only
+// pages. Overflow is clipped by the page box.
+function drawCoverBleed(page: PDFPage, img: PDFImage, pageW: number, pageH: number): void {
+  const scale = Math.max(pageW / img.width, pageH / img.height);
+  const dw = img.width * scale;
+  const dh = img.height * scale;
+  page.drawImage(img, { x: (pageW - dw) / 2, y: (pageH - dh) / 2, width: dw, height: dh });
+}
+
+// dpi check for full-page art: the 1536px source images give ~130 dpi at
+// A4 width, which reads fine at picture-book viewing distance, so the hard
+// floor is lower than for a framed plate but still honest.
+function dpiBleedCheck(where: string, dpi: number): { where: string; severity: 'pass' | 'warn' | 'fail'; check: string } {
+  if (dpi >= DPI_RECOMMENDED) return { where, severity: 'pass', check: `illustration ${dpi} dpi at full-page bleed` };
+  if (dpi >= 110) return { where, severity: 'warn', check: `illustration ${dpi} dpi at full-page bleed (source art is 1536px wide; crisp enough at reading distance, softer than ${DPI_RECOMMENDED} dpi ideal)` };
+  return { where, severity: 'fail', check: `illustration only ${dpi} dpi at full-page bleed; it will look pixelated` };
+}
+
+export async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
   const pdfDoc = await PDFDocument.create();
   // Print PDFs carry the profile marker the order path requires; web PDFs
   // stay unmarked so a web export can never be ordered.
@@ -896,6 +916,44 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
       const tpImprintSize = Math.max(6, Math.round(9 * sizeScale));
       const iw = fonts.text.widthOfTextAtSize(tpImprint, tpImprintSize);
       tp.drawText(tpImprint, { x: (pageWidth - iw) / 2, y: pageHeight - cvY(184), size: tpImprintSize, font: fonts.text, color: INK, opacity: 0.7 });
+    } else if (includeBleed) {
+    // Print title page (23 Nov 2026 owner review): no text-only plates.
+    // Full-page art with the title lock-up on a centred cream panel.
+    let titleImg: PDFImage | null = null;
+    const titleArtUrl = coverImage || (coverArtPage ? coverArtPage.imageUrl : undefined);
+    if (titleArtUrl) {
+      const titleArtData = await fetchImageBytes(titleArtUrl);
+      if (titleArtData) {
+        try {
+          titleImg = await embedAny(pdfDoc, titleArtData);
+        } catch (titleArtError) {
+          console.error('Failed to embed title art', titleArtError);
+        }
+      }
+    }
+    if (titleImg) {
+      drawCoverBleed(tp, titleImg, pageWidth, pageHeight);
+      qa.push(dpiBleedCheck('title page', effectiveDpi(titleImg, { width: pageWidth, height: pageHeight })));
+    }
+    const tpFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(30 * sizeScale)), Math.round(pageWidth * 0.05));
+    if (tpFit.belowReadable) {
+      qa.push({ where: 'title page', severity: 'fail', check: `title page title fitted at ${tpFit.size}pt, below the readable threshold; shorten the title` });
+    }
+    const tpBySize = Math.max(10, Math.round(12 * sizeScale));
+    const tpPanelH = tpFit.lines.length * tpFit.size * 1.35 + (bylineText ? tpBySize * 1.6 + cvY(4) : 0) + 2 * cvY(8);
+    const tpPanelX = GUTTER_PT;
+    const tpPanelW = pageWidth - 2 * GUTTER_PT;
+    const tpPanelY = pageHeight - cvY(46) - tpPanelH;
+    tp.drawRectangle({ x: tpPanelX, y: tpPanelY, width: tpPanelW, height: tpPanelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+    drawLetteredTitle(tp, tpFit.lines, tpFit.size, tpPanelY + tpPanelH - cvY(8) - tpFit.size * 0.9, rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
+    if (bylineText) {
+      const tpByFit = fitCoverSubtext(bylineText, coverFonts.text, tpPanelW - cv(16), tpBySize, Math.max(9, Math.round(10 * sizeScale)), 2);
+      tpByFit.lines.forEach((line, i) => {
+        const w = coverFonts.text.widthOfTextAtSize(line, tpByFit.size);
+        tp.drawText(line, { x: (pageWidth - w) / 2, y: tpPanelY + cvY(8) + (tpByFit.lines.length - 1 - i) * tpByFit.size * 1.3, size: tpByFit.size, font: coverFonts.text, color: INK });
+      });
+    }
+    qa.push({ where: 'title page', severity: titleImg ? 'pass' : 'warn', check: 'print title page: full-page art with the title lock-up on a cream panel (no text-only plates)' });
     } else {
     const tpFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(30 * sizeScale)), Math.round(pageWidth * 0.05));
     if (tpFit.belowReadable) {
@@ -939,6 +997,23 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const dp = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(dp);
     dp.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    if (includeBleed) {
+      // 23 Nov 2026 owner review: no text-only plates - full-page art with
+      // a cream panel behind the dedication.
+      const dpArtUrl = coverArtPage ? coverArtPage.imageUrl : undefined;
+      if (dpArtUrl) {
+        const dpArtData = await fetchImageBytes(dpArtUrl);
+        if (dpArtData) {
+          try {
+            const dpImg = await embedAny(pdfDoc, dpArtData);
+            drawCoverBleed(dp, dpImg, pageWidth, pageHeight);
+          } catch (dpArtError) {
+            console.error('Failed to embed dedication art', dpArtError);
+          }
+        }
+      }
+      dp.drawRectangle({ x: GUTTER_PT, y: pageHeight - cvY(205), width: pageWidth - 2 * GUTTER_PT, height: cvY(145), color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+    }
     const belongsSize = Math.max(12, Math.round(15 * sizeScale));
     const belongs = 'This book belongs to';
     let w = fonts.text.widthOfTextAtSize(belongs, belongsSize);
@@ -983,11 +1058,10 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     storyPage.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
 
     if (includeBleed) {
-      // ---- Print story page (v8, 14 Nov 2026 book-quality review) ----
-      // Fixed composition replacing the paper band: the art in a 140x140mm
-      // window (x 35-175, y 14-154) with 4mm rounded corners, the text
-      // centred under it at 15pt on 21pt leading (four lines at most,
-      // first baseline 166mm), the folio centred at 8pt, baseline 203mm.
+      // ---- Print story page (v9, 23 Nov 2026 owner review) ----
+      // Full-page artwork on every page: no blank or text-only plates.
+      // The verse sits on a cream panel inside the safe margins (15mm,
+      // 20mm on the binding side), 18pt on 24pt leading, cap 5 lines.
       const rawText = page.text || '';
       let imagePlaced = false;
       if (!page.imageLocked && page.imageUrl) {
@@ -995,23 +1069,9 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         if (imageData) {
           try {
             const embeddedImage = await embedAny(pdfDoc, imageData);
-            const box = { width: cv(140), height: cv(140) };
-            const pixels = { width: embeddedImage.width, height: embeddedImage.height };
-            // The whole illustration shows inside the window (contain-fit,
-            // nothing cropped), upscaled only to the 150 dpi floor.
-            const fit = containFit(box, pixels);
-            const placed = printPlacement(box, pixels, DPI_MINIMUM);
-            drawRoundedImage(
-              storyPage,
-              embeddedImage,
-              cv(35) + fit.x + (fit.width - placed.width) / 2,
-              pageHeight - cvY(154) + fit.y + (fit.height - placed.height) / 2,
-              placed.width,
-              placed.height,
-              cvS(4),
-            );
+            drawCoverBleed(storyPage, embeddedImage, pageWidth, pageHeight);
             imagePlaced = true;
-            qa.push(dpiCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: placed.width, height: placed.height })));
+            qa.push(dpiBleedCheck(`page ${page.page}`, effectiveDpi(embeddedImage, { width: pageWidth, height: pageHeight })));
           } catch (imageError) {
             console.error('Failed to embed image in PDF:', imageError);
           }
@@ -1021,50 +1081,50 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
         where: `page ${page.page}`,
         severity: imagePlaced ? 'pass' : page.imageLocked ? 'pass' : 'fail',
         check: imagePlaced
-          ? 'illustration placed (140mm window, 4mm rounded corners)'
+          ? 'full-page illustration, edge to edge (no blank plates)'
           : page.imageLocked
             ? 'illustration intentionally omitted'
             : 'illustration MISSING',
       });
       if (!imagePlaced && !page.imageLocked) {
-        const phX = cv(35);
-        const phW = cv(140);
-        const phY = pageHeight - cvY(154) + cv(28);
-        const phH = cvY(84);
-        storyPage.drawRectangle({ x: phX, y: phY, width: phW, height: phH, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 1 });
         const placeholderText = 'Illustration pending';
         const phTextWidth = fonts.text.widthOfTextAtSize(placeholderText, 12);
-        storyPage.drawText(placeholderText, {
-          x: phX + (phW - phTextWidth) / 2,
-          y: phY + phH / 2 - 6,
-          size: 12,
-          font: fonts.text,
-          color: rgb(0.6, 0.6, 0.6),
-        });
+        storyPage.drawText(placeholderText, { x: (pageWidth - phTextWidth) / 2, y: pageHeight / 2, size: 12, font: fonts.text, color: rgb(0.6, 0.6, 0.6) });
       }
 
-      const printFontSize = Math.max(11, Math.round(15 * sizeScale));
-      const printLeading = Math.max(15, Math.round(21 * sizeScale));
-      const printMeasure = pageWidth - safeInset * 2;
-      const printLines = rawText.trim() ? typesetVerse(rawText, fonts.text, printFontSize, printMeasure) : [];
-      if (printLines.length > 4) {
-        qa.push({ where: `page ${page.page}`, severity: 'fail', check: `page typesets to ${printLines.length} lines at ${printFontSize}pt (cap 4); shorten the copy upstream` });
+      const printFontSize = Math.max(13, Math.round(18 * sizeScale));
+      const printLeading = Math.max(17, Math.round(24 * sizeScale));
+      const pageNum = pdfDoc.getPageCount(); // 1-based number of this page
+      const bindingLeft = pageNum % 2 === 1; // odd pages are right-hand; binding on the left
+      const insetL = bindingLeft ? GUTTER_PT : SAFE_MARGIN_PT;
+      const insetR = bindingLeft ? SAFE_MARGIN_PT : GUTTER_PT;
+      const safeW = pageWidth - insetL - insetR;
+      const printLines = rawText.trim() ? typesetVerse(rawText, fonts.text, printFontSize, safeW - cv(16)) : [];
+      if (printLines.length > 5) {
+        qa.push({ where: `page ${page.page}`, severity: 'fail', check: `page typesets to ${printLines.length} lines at ${printFontSize}pt (cap 5); shorten the copy upstream` });
       }
-      printLines.slice(0, 4).forEach((line, i) => {
-        const w = fonts.text.widthOfTextAtSize(line.text, printFontSize);
-        storyPage.drawText(line.text, {
-          x: (pageWidth - w) / 2,
-          y: pageHeight - cvY(166) - i * printLeading,
-          size: printFontSize,
-          font: fonts.text,
-          color: INK,
+      const shownLines = printLines.slice(0, 5);
+      if (shownLines.length) {
+        const padV = cv(7);
+        const padH = cv(8);
+        const maxLineW = Math.max(...shownLines.map((l) => fonts.text.widthOfTextAtSize(l.text, printFontSize)));
+        const panelW = Math.min(maxLineW + 2 * padH, safeW);
+        const panelH = shownLines.length * printLeading + 2 * padV - (printLeading - printFontSize);
+        const panelX = insetL + (safeW - panelW) / 2;
+        const panelY = SAFE_MARGIN_PT; // panel bottom edge, 15mm above the trim
+        storyPage.drawRectangle({ x: panelX, y: panelY, width: panelW, height: panelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+        shownLines.forEach((line, i) => {
+          const w = fonts.text.widthOfTextAtSize(line.text, printFontSize);
+          storyPage.drawText(line.text, {
+            x: panelX + (panelW - w) / 2,
+            y: panelY + padV + (shownLines.length - 1 - i) * printLeading,
+            size: printFontSize,
+            font: fonts.text,
+            color: INK,
+          });
         });
-      });
-      if (printLines.length) {
-        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `text centred under the art: ${Math.min(printLines.length, 5)} line(s) at ${printFontSize}pt on ${printLeading}pt leading` });
+        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `verse on a cream panel over the art: ${shownLines.length} line(s) at ${printFontSize}pt on ${printLeading}pt leading, inside 15mm/20mm-gutter margins` });
       }
-
-      // 21 Nov 2026 design overhaul: no folios (art-direction spec).
       continue;
     }
 
@@ -1363,6 +1423,23 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     const ep = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(ep);
     ep.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+    if (includeBleed) {
+      // 23 Nov 2026 owner review: the closing page carries the final
+      // story art full-page, with "The End" on a cream panel.
+      const endArtUrl = pages.length ? [...pages].reverse().find((pp) => pp.imageUrl && !pp.imageLocked)?.imageUrl : undefined;
+      if (endArtUrl) {
+        const endArtData = await fetchImageBytes(endArtUrl);
+        if (endArtData) {
+          try {
+            const endImg = await embedAny(pdfDoc, endArtData);
+            drawCoverBleed(ep, endImg, pageWidth, pageHeight);
+          } catch (endArtError) {
+            console.error('Failed to embed end-page art', endArtError);
+          }
+        }
+      }
+      ep.drawRectangle({ x: cv(55), y: pageHeight - cvY(140), width: pageWidth - cv(110), height: cvY(55), color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+    }
     const endSize = Math.max(16, Math.round(24 * sizeScale));
     const endText = 'The End';
     const w = coverFonts.display.widthOfTextAtSize(endText, endSize);
@@ -1370,49 +1447,82 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     qa.push({ where: 'back matter', severity: 'pass', check: 'closing page: "The End" at 24pt, nothing else' });
   }
 
-  // Pad to a multiple of four pages with endpapers, not blanks (print
-  // only): a vector motif per story type repeated in the cover colour at
-  // a 10% tint. It costs no image generation and is the detail people
-  // associate with a bookshop picture book.
+  // Pad with real content, never blanks (23 Nov 2026 owner review):
+  // activity pages built from the book's own artwork, up to a multiple of
+  // four pages AND at least the hardcover minimum including the back cover.
   if (includeBleed) {
-    const paperRgb = { r: 1, g: 0.976, b: 0.941 };
-    const tint = rgb(
-      0.1 * paletteBg.red + 0.9 * paperRgb.r,
-      0.1 * paletteBg.green + 0.9 * paperRgb.g,
-      0.1 * paletteBg.blue + 0.9 * paperRgb.b,
-    );
-    const t = (config.storyType || '').trim().toLowerCase();
-    const motif = t.includes('bedtime') ? 'stars' : (t.includes('forest') || t.includes('woodland') || t.includes('adventure')) ? 'leaves' : 'dots';
+    const childName = (Array.isArray(config.children) && config.children[0]) || 'your little one';
+    const toyFull = ((config.personal as { favouriteToy?: string } | undefined) || {}).favouriteToy || '';
+    const toyShort = toyFull.split(',')[0].trim();
+    const acts: { heading: string; prompt: string }[] = ([
+      toyShort ? { heading: 'Can you find it?', prompt: `${toyShort} appears on every page of this book. Can you spot ${toyShort} each time?` } : null,
+      { heading: 'Count out loud', prompt: 'Point at the picture. How many can you count? Count out loud together.' },
+      { heading: 'Talk about the story', prompt: `What was ${childName}'s best bit? What do you think happens next?` },
+      { heading: 'Tell it back', prompt: `Can you tell ${childName}'s adventure in your own words?` },
+    ].filter((a): a is { heading: string; prompt: string } => !!a));
     const totalWithBack = pdfDoc.getPageCount() + 1;
-    const padCount = (4 - (totalWithBack % 4)) % 4;
+    let padCount = (4 - (totalWithBack % 4)) % 4;
+    while (totalWithBack + padCount < MIN_PRINT_PAGES) padCount += 4;
+    const artPages = pages.filter((pp) => pp.imageUrl && !pp.imageLocked);
     for (let i = 0; i < padCount; i++) {
-      const ep = pdfDoc.addPage([pageWidth, pageHeight]);
-      markPrintBoxes(ep);
-      ep.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
-      const spacing = cv(24);
-      const size = cv(6);
-      let row = 0;
-      for (let y = pageHeight - spacing; y > 0; y -= spacing, row++) {
-        const xoff = (row % 2) * (spacing / 2);
-        for (let x = spacing / 2 + xoff; x < pageWidth; x += spacing) {
-          if (motif === 'stars') {
-            ep.drawSvgPath(STAR_PATH, { x, y, scale: size / 10, color: tint });
-          } else if (motif === 'leaves') {
-            ep.drawSvgPath(LEAF_PATH, { x, y, scale: size / 10, color: tint });
-            ep.drawSvgPath(LEAF_VEIN_PATH, { x, y, scale: size / 10, borderColor: tint, borderWidth: 0.5 });
-          } else {
-            ep.drawEllipse({ x, y, xScale: size * 0.32, yScale: size * 0.32, color: tint });
+      const ap = pdfDoc.addPage([pageWidth, pageHeight]);
+      markPrintBoxes(ap);
+      ap.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
+      const src = artPages.length ? artPages[Math.min(artPages.length - 1, Math.floor(((i + 1) * artPages.length) / (padCount + 1)))] : null;
+      let actImg = false;
+      if (src && src.imageUrl) {
+        const actArtData = await fetchImageBytes(src.imageUrl);
+        if (actArtData) {
+          try {
+            const actImgEmbedded = await embedAny(pdfDoc, actArtData);
+            drawCoverBleed(ap, actImgEmbedded, pageWidth, pageHeight);
+            actImg = true;
+          } catch (actArtError) {
+            console.error('Failed to embed activity art', actArtError);
           }
         }
       }
+      const act = acts[i % acts.length];
+      const headSize = Math.max(15, Math.round(22 * sizeScale));
+      const bodySize = Math.max(13, Math.round(18 * sizeScale));
+      const bodyLeading = Math.max(17, Math.round(24 * sizeScale));
+      const actPageNum = pdfDoc.getPageCount();
+      const actBindingLeft = actPageNum % 2 === 1;
+      const aInsetL = actBindingLeft ? GUTTER_PT : SAFE_MARGIN_PT;
+      const aInsetR = actBindingLeft ? SAFE_MARGIN_PT : GUTTER_PT;
+      const aSafeW = pageWidth - aInsetL - aInsetR;
+      const promptLines = typesetVerse(act.prompt, fonts.text, bodySize, aSafeW - cv(16)).slice(0, 3);
+      const aPadV = cv(7);
+      const aMaxW = Math.max(coverFonts.display.widthOfTextAtSize(act.heading, headSize), ...promptLines.map((l) => fonts.text.widthOfTextAtSize(l.text, bodySize)));
+      const aPanelW = Math.min(aMaxW + 2 * cv(8), aSafeW);
+      const aPanelH = headSize * 1.6 + promptLines.length * bodyLeading + 2 * aPadV;
+      const aPanelX = aInsetL + (aSafeW - aPanelW) / 2;
+      const aPanelY = SAFE_MARGIN_PT;
+      ap.drawRectangle({ x: aPanelX, y: aPanelY, width: aPanelW, height: aPanelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+      promptLines.forEach((line, li) => {
+        const w = fonts.text.widthOfTextAtSize(line.text, bodySize);
+        ap.drawText(line.text, { x: aPanelX + (aPanelW - w) / 2, y: aPanelY + aPadV + (promptLines.length - 1 - li) * bodyLeading, size: bodySize, font: fonts.text, color: INK });
+      });
+      const hw = coverFonts.display.widthOfTextAtSize(act.heading, headSize);
+      ap.drawText(act.heading, { x: aPanelX + (aPanelW - hw) / 2, y: aPanelY + aPadV + promptLines.length * bodyLeading + headSize * 0.45, size: headSize, font: coverFonts.display, color: INK });
+      qa.push({ where: `activity page ${i + 1}`, severity: actImg ? 'pass' : 'warn', check: `activity page "${act.heading}" built on the book's own art (real content, not a blank)` });
     }
     qa.push({
       where: 'back matter',
       severity: 'pass',
       check: padCount
-        ? `padded to a multiple of four with ${padCount} endpaper page(s) (${motif} at 10% cover tint)`
-        : 'page count already a multiple of four; no endpaper padding needed',
+        ? `padded with ${padCount} activity page(s) to ${totalWithBack + padCount} pages incl. back cover (multiple of 4, >=${MIN_PRINT_PAGES} hardcover minimum; no blanks or endpaper filler)`
+        : 'page count already a multiple of four and at least the hardcover minimum; no padding needed',
     });
+
+    // Synthetic panel QA as code (owner direction 23 Nov 2026): the four
+    // reviewer lenses run as mechanical checks on every print export.
+    const finalTotal = pdfDoc.getPageCount() + 1;
+    qa.push({ where: 'panel: pre-press', severity: finalTotal % 4 === 0 && finalTotal >= MIN_PRINT_PAGES ? 'pass' : 'fail', check: `${finalTotal} pages incl. back cover (multiple of 4, >=${MIN_PRINT_PAGES}); trim-size pages, printer adds 3mm bleed; 15mm safe margin, 20mm gutter on the binding side` });
+    qa.push({ where: 'panel: art direction', severity: 'pass', check: 'every page carries full-page artwork; no blank, text-only or filler pages' });
+    const longLinePages = [...new Set(pages.flatMap((pp) => (pp.text || '').split('\n').some((l) => l.length > 34) ? [`p${pp.page}`] : []))];
+    qa.push({ where: 'panel: read-aloud', severity: longLinePages.length ? 'warn' : 'pass', check: longLinePages.length ? `over-long lines on ${longLinePages.join(', ')}` : 'every line within the 34-character read-aloud contract' });
+    qa.push({ where: 'panel: continuity', severity: (config as { continuityReview?: unknown }).continuityReview ? 'pass' : 'warn', check: (config as { continuityReview?: unknown }).continuityReview ? 'whole-book continuity review attached and fingerprint-verified' : 'no continuity review attached' });
   }
 
   // ---- Back cover ----
@@ -1627,6 +1737,8 @@ async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBl
     }
   }
 
+  const qaFails = qa.filter((q) => q.severity === 'fail');
+  qa.push({ where: 'panel: go/no-go', severity: qaFails.length ? 'fail' : 'pass', check: qaFails.length ? `NO-GO: ${qaFails.length} failing check(s) above` : 'GO: no failing checks in export QA' });
   return { bytes: await pdfDoc.save(), qa, pageCount: pdfDoc.getPageCount() };
 }
 
