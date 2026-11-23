@@ -42,17 +42,24 @@ export interface TitleValidation {
 // typeset.ts relies on the same boundary, so generation and rendering agree.
 export const TITLE_AND_THE = /^(?<before>\S(?:.*?\S)?)\s+and\s+the\s+(?<after>\S(?:.*?\S)?)$/i;
 
+// Real titles also come in the wider "<Child> and <Companion or thing>..."
+// family - "William and Ivy's Big Nursery Day" is a genuine title, not a
+// template failure (23 Nov 2026 owner feedback: the validator warned on the
+// best-received book). Generation still composes the classic form; this
+// family only widens what validation ACCEPTS.
+export const TITLE_AND_FAMILY = /^(?<before>\S(?:.*?\S)?)\s+and\s+(?!the\b)(?<after>\S(?:.*?\S)?)$/i;
+
 // knownText: the book's own story text, used to reject hallucinated proper
 // names (same rule as the blurb validator).
 export function validateTitle(title: string, childName: string | undefined, knownText: string): TitleValidation {
   const reasons: string[] = [];
   const text = (title || '').trim().replace(/\s+/g, ' ');
   const words = text ? text.split(/\s+/).length : 0;
-  if (words < 2 || words > 6) {
-    reasons.push(`word count ${words} outside 2-6`);
+  if (words < 2 || words > 8) {
+    reasons.push(`word count ${words} outside 2-8`);
   }
-  if (text && !TITLE_AND_THE.test(text)) {
-    reasons.push('not in the "<Child> and the <thing>" form');
+  if (text && !TITLE_AND_THE.test(text) && !TITLE_AND_FAMILY.test(text)) {
+    reasons.push('not in the "<Child> and the <thing>" or "<Child> and <companion>..." form');
   }
   for (const banned of TITLE_BANNED) {
     if (banned.test(text)) reasons.push(`banned word ${banned}`);
@@ -65,7 +72,9 @@ export function validateTitle(title: string, childName: string | undefined, know
     ['and', 'the'].forEach((w) => known.add(w));
     const tokens = text.match(/[A-Za-z][A-Za-z'-]*/g) ?? [];
     tokens.forEach((tok) => {
-      if (/^[A-Z]/.test(tok) && !known.has(tok.toLowerCase())) {
+      // A possessive tail is grammar, not a name: "Ivy's" is known when Ivy is.
+      const stem = tok.replace(/'s$/i, '').toLowerCase();
+      if (/^[A-Z]/.test(tok) && !known.has(tok.toLowerCase()) && !known.has(stem)) {
         reasons.push(`unknown capitalised name "${tok}" not found in the story text`);
       }
     });

@@ -59,3 +59,18 @@ describe('buildTitlePrompt', () => {
     assert.match(p, /2 to 5 words/);
   });
 });
+
+describe('validateTitle: the wider real-title family (D4-11)', () => {
+  const NURSERY = "Today is a nursery day.\nWilliam packs his blue truck.\nAt the big blue door, friends are waving.\nOne busy day. One brave boy.";
+  it('accepts "<Child> and <Companion>\'s <Thing>" real titles', () => {
+    assert.deepEqual(validateTitle("William and Ivy's Big Nursery Day", 'William', NURSERY + "\nIvy wags her tail."), { ok: true, reasons: [] });
+  });
+  it('still rejects formless and template titles', () => {
+    assert.equal(validateTitle('Blue Bear Bedtime', 'Amelia', STORY).ok, false);
+    assert.equal(validateTitle("William's Amazing Story", 'William', NURSERY).ok, false);
+  });
+  it('allows the longer family titles up to 8 words', () => {
+    assert.equal(validateTitle("William and Ivy's Big Nursery Day", 'William', NURSERY + "\nIvy wags her tail.").ok, true);
+    assert.equal(validateTitle('A very long title indeed with far too many words in it', 'Amelia', STORY).ok, false);
+  });
+});
