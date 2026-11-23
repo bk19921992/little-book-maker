@@ -311,3 +311,25 @@ test('pickBackCoverSubject prefers the first companion, then the setting', () =>
   assert.equal(pickBackCoverSubject([], 'Cozy bedroom'), 'Cozy bedroom')
   assert.equal(pickBackCoverSubject([], ''), "the story's little world")
 })
+
+// 23 Nov 2026 owner review: anatomy gate + declared text zones.
+import { buildAnatomyPrompt, isTextZone, describeTextZone } from './prompts.ts';
+test('anatomy prompt demands limb, hand and face counts with JSON verdict', () => {
+  const p = buildAnatomyPrompt('page 4 of the book');
+  for (const needle of ['arms', 'legs', 'hands', 'eyes', 'face', '"pass"']) assert.ok(p.toLowerCase().includes(needle.toLowerCase()), needle);
+});
+test('text zone vocabulary is closed and described', () => {
+  assert.ok(isTextZone('bottom-center') && isTextZone('top'));
+  assert.ok(!isTextZone('middle-ish') && !isTextZone(7) && !isTextZone(undefined));
+  assert.ok(describeTextZone('bottom-center').length > 10);
+});
+test('page prompt reserves the declared text zone and review rejects occupied zones', () => {
+  const zoned = buildPagePrompt({ page: 2, prompt: 'garden', textZone: 'bottom-center' }, 'BIBLE', 'ANCHOR', false);
+  assert.match(zoned, /TEXT ZONE/); assert.match(zoned, /lower-centre/);
+  const unzoned = buildPagePrompt({ page: 2, prompt: 'garden' }, 'BIBLE', 'ANCHOR', false);
+  assert.ok(!unzoned.includes('TEXT ZONE'));
+  const review = buildReviewPrompt({ label: 'page 2', brief: 'garden', textZone: 'bottom-center' });
+  assert.match(review, /TEXT ZONE/);
+  const plain = buildReviewPrompt({ label: 'page 2', brief: 'garden' });
+  assert.ok(!plain.includes('TEXT ZONE'));
+});

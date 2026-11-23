@@ -77,6 +77,9 @@ export interface ReviewContext {
   // present the reviewer compares the candidate against it, which is the only
   // way to catch page-to-page character/toy drift - text config alone cannot.
   referenceDataUrl?: string
+  // Declared print text zone: when set, the reviewer rejects any candidate
+  // whose zone contains faces, characters or key subjects.
+  textZone?: TextZone
 }
 
 // The vision reviewer's instructions for one candidate image.
@@ -105,10 +108,32 @@ export function buildReviewPrompt(ctx: ReviewContext): string {
     '3c. TEXT MATCH: when the scene brief or page text names clothing, colours, props or a setting (for example a yellow shirt, a dino toy, an outdoor scene), the image must match it. A mismatch a reader would notice (the text says yellow shirt, the picture shows stripes; the story is outdoors, the child wears pyjamas while the text describes day clothes) is a reject. Sleepwear is fine when the text has the child in sleepwear.',
     ctx.referenceDataUrl ? '4. MATCH TO REFERENCE: the child, each recurring supporting character and the recurring toy in IMAGE 2 must be recognisably the same individual as in IMAGE 1 - same face, hair, skin tone, outfit palette and toy design, allowing for pose, expression and scene-appropriate clothing changes. A redesigned character or a different-looking toy is a reject.' : '',
     `${ctx.referenceDataUrl ? '5' : '4'}. APPROPRIATENESS: anything frightening, violent or unsuitable for a bedtime story.`,
+    ctx.textZone ? `${ctx.referenceDataUrl ? '6' : '5'}. TEXT ZONE: the ${describeTextZone(ctx.textZone)} of the image is reserved for printed words. Reject if any face, head, character, or important prop sits in or overlaps that area - it must read as calm, empty background.` : '',
     '',
     'Judge only what is visible. Stylisation (big heads, simple shapes, paper-cut proportions) is NOT a defect - reject only clear errors a customer would notice. Calm or empty background areas are intentional, not missing content.',
     'Return ONLY JSON: {"pass": true} or {"pass": false, "issues": ["one specific visible problem per string"]}.',
   ].filter(Boolean).join('\n')
+}
+
+// The dedicated ANATOMY inspector (23 Nov 2026 owner review: a three-armed
+// child shipped past the general checklist). One focused pass per image,
+// nothing but bodies - a specialist gate is harder to talk past than one
+// item in a long list. Same JSON verdict contract as the general review.
+export function buildAnatomyPrompt(label: string): string {
+  return [
+    'You are an anatomy inspector for a children\'s picture book. The illustration cannot ship to a paying customer unless every body in it is right.',
+    `This image is: ${label}.`,
+    '',
+    'List every person, animal and toy character you can see. For EACH one, write down the count: eyes, ears, arms, legs, hands. For the MAIN child, trace each arm from the shoulder to its hand and say where every hand is and what it is doing (raised, holding the toy, waving). If a character hugs or holds something, name WHICH arm does it and account for the others. Counting shortcuts are how defects ship: two raised arms PLUS an arm around a toy is THREE arms and always a reject.',
+    'Then check:',
+    '1. LIMBS: exactly the right number of arms and legs for that creature, in plausible positions. Watch for limbs hidden behind bodies that reappear elsewhere, extra hands at the end of sleeves, and limbs shared between characters.',
+    '2. HANDS: each visible hand has a believable shape with fingers - no fused mitts, melted fingers, or hands with far too many or too few fingers.',
+    '3. FACES: one face per head, two eyes, one nose, one mouth, all in the right places - no duplicated, distorted, half-formed or misplaced features, on characters or in the background.',
+    '4. STRAYS: no half-formed extra characters, floating heads, disconnected limbs or spare body parts anywhere in the scene.',
+    '',
+    'Judge only what is clearly visible. Stylisation (big heads, simple shapes, paper-cut proportions) is NOT a defect. A limb genuinely hidden behind a body is fine - reject only counts that are CLEARLY wrong.',
+    'Return ONLY JSON: {"characters": [{"who": "...", "arms": 0, "legs": 0, "hands": 0, "arm_trace": "where each arm goes"}], "pass": true} or {"characters": [...], "pass": false, "issues": ["one specific visible anatomy problem per string"]}.',,
+  ].join('\n')
 }
 
 // Largest reference image accepted from a client (a base64 data URL). A
@@ -168,6 +193,29 @@ export function interpretReviewResponse(httpStatus: number, body: unknown): Revi
   return { verdict: 'reject', issues: ['the reviewer gave no clear pass or fail; the image could not be verified'] }
 }
 
+// Declared text zones (23 Nov 2026 owner review: panels must sit only in
+// space the art reserves for them, never over faces). The generator keeps
+// the zone clear, the reviewer checks it, and export-pdf places the printed
+// panel in exactly this zone.
+export const TEXT_ZONES = ['top', 'top-left', 'top-center', 'top-right', 'bottom', 'bottom-left', 'bottom-center', 'bottom-right'] as const
+export type TextZone = (typeof TEXT_ZONES)[number]
+export function isTextZone(value: unknown): value is TextZone {
+  return typeof value === 'string' && (TEXT_ZONES as readonly string[]).includes(value)
+}
+const TEXT_ZONE_DESCRIPTIONS: Record<TextZone, string> = {
+  top: 'top band (the full width of the upper third)',
+  'top-left': 'upper-left area',
+  'top-center': 'upper-centre area',
+  'top-right': 'upper-right area',
+  bottom: 'bottom band (the full width of the lower third)',
+  'bottom-left': 'lower-left area',
+  'bottom-center': 'lower-centre area',
+  'bottom-right': 'lower-right area',
+}
+export function describeTextZone(zone: TextZone): string {
+  return TEXT_ZONE_DESCRIPTIONS[zone]
+}
+
 export type ImagePrompt = {
   page: number
   prompt?: string
@@ -175,6 +223,7 @@ export type ImagePrompt = {
   visualBrief?: string
   config?: StoryConfig
   seed?: number
+  textZone?: TextZone
 }
 
 // gpt-image-1 only supports these sizes; map each page preset onto the closest one.
@@ -253,6 +302,7 @@ export function buildPagePrompt(promptData: ImagePrompt, styleBible: string, sty
       promptData.text ? promptData.text : '',
       '',
       'Illustrate exactly this scene in a new composition. Do not copy the reference image\'s scene - only its characters, props, style and palette.',
+      promptData.textZone ? `TEXT ZONE: the printed words sit on a panel in the ${describeTextZone(promptData.textZone)} of the finished page. Keep that area calm, empty, low-contrast background (sky, grass, wall, floor) - no faces, heads, characters or important props there. Compose the scene so every face and key subject sits clearly OUTSIDE that area.` : '',
       'The image must contain no text, letters, numbers, words, captions or watermarks anywhere - illustration only.',
       styleAnchor,
     ].filter(Boolean).join('\n')
@@ -268,6 +318,7 @@ export function buildPagePrompt(promptData: ImagePrompt, styleBible: string, sty
     promptData.visualBrief ? `Visual brief: ${promptData.visualBrief}` : '',
     promptData.text ? `Story text on this page: "${promptData.text}"` : '',
     '',
+    promptData.textZone ? `TEXT ZONE: the printed words sit on a panel in the ${describeTextZone(promptData.textZone)} of the finished page. Keep that area calm, empty, low-contrast background (sky, grass, wall, floor) - no faces, heads, characters or important props there. Compose the scene so every face and key subject sits clearly OUTSIDE that area.` : '',
     'Illustrate exactly what this page\'s story text describes, while keeping the characters, style, palette and setting from the style bible perfectly consistent with the other pages.',
     styleAnchor,
   ].filter(Boolean).join('\n')

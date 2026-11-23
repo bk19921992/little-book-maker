@@ -743,3 +743,51 @@ Deno.test({
     assertEquals(fails.length, 0, `no export-blocking QA: ${JSON.stringify(fails)}`);
   },
 });
+
+Deno.test({
+  name: "story panel: a declared textZone is where the verse panel sits and the QA entry names it",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    reset();
+    const res = await postReviewed({
+      config: CONFIG,
+      pages: [{ page: 1, text: "Fern met Badger by the oak.", imageUrl: "https://images.test/ok.jpg", textZone: "top-left" }],
+      storyId: "story-zone-top-left",
+      includeBleed: true,
+      coverImage: "https://images.test/cover-light.jpg",
+    });
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.success, true);
+    const checks = (body.qa as { where: string; check: string }[]).filter((q) => q.where === "page 1").map((q) => q.check);
+    assert(
+      checks.some((c) => c.includes("declared text zone (top-left)")),
+      `panel QA names the declared zone: ${JSON.stringify(checks)}`,
+    );
+  },
+});
+
+Deno.test({
+  name: "story panel: an undeclared zone falls back to bottom-centre, the pre-zone layout",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    reset();
+    const res = await postReviewed({
+      config: CONFIG,
+      pages: [{ page: 1, text: "Fern met Badger by the oak.", imageUrl: "https://images.test/ok.jpg" }],
+      storyId: "story-zone-default",
+      includeBleed: true,
+      coverImage: "https://images.test/cover-light.jpg",
+    });
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.success, true);
+    const checks = (body.qa as { where: string; check: string }[]).filter((q) => q.where === "page 1").map((q) => q.check);
+    assert(
+      checks.some((c) => c.includes("declared text zone (bottom)")),
+      `panel QA names the default zone: ${JSON.stringify(checks)}`,
+    );
+  },
+});

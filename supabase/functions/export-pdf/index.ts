@@ -205,6 +205,9 @@ interface StoryPage {
   imageUrl?: string;
   imageLocked?: boolean;
   layout?: string;
+  // Declared text zone (23 Nov 2026 owner review): the ONLY place the verse
+  // panel may sit; generate-images keeps this area free of faces/subjects.
+  textZone?: string;
 }
 
 interface StoryConfigInput {
@@ -329,7 +332,7 @@ function dpiBleedCheck(where: string, dpi: number): { where: string; severity: '
   return { where, severity: 'fail', check: `illustration only ${dpi} dpi at full-page bleed; it will look pixelated` };
 }
 
-export async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
+export async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string, titleImageUrl?: string, dedicationImageUrl?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
   const pdfDoc = await PDFDocument.create();
   // Print PDFs carry the profile marker the order path requires; web PDFs
   // stay unmarked so a web export can never be ordered.
@@ -919,8 +922,10 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
     } else if (includeBleed) {
     // Print title page (23 Nov 2026 owner review): no text-only plates.
     // Full-page art with the title lock-up on a centred cream panel.
+    // titleImageUrl (when supplied) is art composed with a calm top band,
+    // so the panel sits in reserved space and never over a face.
     let titleImg: PDFImage | null = null;
-    const titleArtUrl = coverImage || (coverArtPage ? coverArtPage.imageUrl : undefined);
+    const titleArtUrl = titleImageUrl || coverImage || (coverArtPage ? coverArtPage.imageUrl : undefined);
     if (titleArtUrl) {
       const titleArtData = await fetchImageBytes(titleArtUrl);
       if (titleArtData) {
@@ -943,7 +948,9 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
     const tpPanelH = tpFit.lines.length * tpFit.size * 1.35 + (bylineText ? tpBySize * 1.6 + cvY(4) : 0) + 2 * cvY(8);
     const tpPanelX = GUTTER_PT;
     const tpPanelW = pageWidth - 2 * GUTTER_PT;
-    const tpPanelY = pageHeight - cvY(46) - tpPanelH;
+    // Panel top edge 10mm below the trim: inside the reserved calm band of
+    // a zone-composed title art, above any subject's head.
+    const tpPanelY = pageHeight - cvY(10) - tpPanelH;
     tp.drawRectangle({ x: tpPanelX, y: tpPanelY, width: tpPanelW, height: tpPanelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
     drawLetteredTitle(tp, tpFit.lines, tpFit.size, tpPanelY + tpPanelH - cvY(8) - tpFit.size * 0.9, rgb01(coverStyle.titleColor), rgb01(coverStyle.accentColor));
     if (bylineText) {
@@ -999,8 +1006,10 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
     dp.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
     if (includeBleed) {
       // 23 Nov 2026 owner review: no text-only plates - full-page art with
-      // a cream panel behind the dedication.
-      const dpArtUrl = coverArtPage ? coverArtPage.imageUrl : undefined;
+      // a cream panel behind the dedication. dedicationImageUrl (when
+      // supplied) is art composed with a calm top band; the panel is sized
+      // to the lock-up and sits in that band, never over a face.
+      const dpArtUrl = dedicationImageUrl || (coverArtPage ? coverArtPage.imageUrl : undefined);
       if (dpArtUrl) {
         const dpArtData = await fetchImageBytes(dpArtUrl);
         if (dpArtData) {
@@ -1012,12 +1021,17 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
           }
         }
       }
-      dp.drawRectangle({ x: GUTTER_PT, y: pageHeight - cvY(205), width: pageWidth - 2 * GUTTER_PT, height: cvY(145), color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+      // Compact panel in the reserved top band (8mm to ~66mm), sized to
+      // the lock-up below - not a page-filling wash over the subject.
+      const dpPanelTop = cvY(8);
+      const dpPanelH = cvY(dedicationText ? 66 : 44);
+      dp.drawRectangle({ x: GUTTER_PT, y: pageHeight - dpPanelTop - dpPanelH, width: pageWidth - 2 * GUTTER_PT, height: dpPanelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
     }
+    const dpTextBase = includeBleed ? 14 : 88; // lock-up starts 14mm from the top when it sits on the top panel
     const belongsSize = Math.max(12, Math.round(15 * sizeScale));
     const belongs = 'This book belongs to';
     let w = fonts.text.widthOfTextAtSize(belongs, belongsSize);
-    dp.drawText(belongs, { x: (pageWidth - w) / 2, y: pageHeight - cvY(88), size: belongsSize, font: fonts.text, color: INK });
+    dp.drawText(belongs, { x: (pageWidth - w) / 2, y: pageHeight - cvY(dpTextBase + 8), size: belongsSize, font: fonts.text, color: INK });
     if (coverChildName) {
       const nameSize = Math.max(16, Math.round(24 * sizeScale));
       const nameFit = fitCoverSubtext(coverChildName, coverFonts.display, pageWidth * TEXT_MEASURE, nameSize, Math.max(12, Math.round(14 * sizeScale)), 1);
@@ -1025,10 +1039,10 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
         qa.push({ where: 'dedication', severity: 'fail', check: "the child's name cannot fit the dedication page at a readable size" });
       }
       w = coverFonts.display.widthOfTextAtSize(coverChildName, nameFit.size);
-      dp.drawText(coverChildName, { x: (pageWidth - w) / 2, y: pageHeight - cvY(102), size: nameFit.size, font: coverFonts.display, color: INK });
+      dp.drawText(coverChildName, { x: (pageWidth - w) / 2, y: pageHeight - cvY(dpTextBase + 22), size: nameFit.size, font: coverFonts.display, color: INK });
     } else {
       // A ruled line the family writes the name on, as in a bookshop book.
-      dp.drawLine({ start: { x: cv(60), y: pageHeight - cvY(100) }, end: { x: pageWidth - cv(60), y: pageHeight - cvY(100) }, thickness: 0.6, color: INK, opacity: 0.5 });
+      dp.drawLine({ start: { x: cv(60), y: pageHeight - cvY(dpTextBase + 20) }, end: { x: pageWidth - cv(60), y: pageHeight - cvY(dpTextBase + 20) }, thickness: 0.6, color: INK, opacity: 0.5 });
     }
     if (dedicationText) {
       // The family's message is preserved whole: it wraps up to 6 lines,
@@ -1041,7 +1055,7 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
       }
       msgFit.lines.forEach((line, i) => {
         const lw = fonts.text.widthOfTextAtSize(line, msgFit.size);
-        dp.drawText(line, { x: (pageWidth - lw) / 2, y: pageHeight - cvY(122) - i * msgFit.size * 1.4, size: msgFit.size, font: fonts.text, color: INK });
+        dp.drawText(line, { x: (pageWidth - lw) / 2, y: pageHeight - cvY(dpTextBase + 36) - i * msgFit.size * 1.4, size: msgFit.size, font: fonts.text, color: INK });
       });
     }
     const imprintSize = Math.max(6, Math.round(7 * sizeScale));
@@ -1110,8 +1124,12 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
         const maxLineW = Math.max(...shownLines.map((l) => fonts.text.widthOfTextAtSize(l.text, printFontSize)));
         const panelW = Math.min(maxLineW + 2 * padH, safeW);
         const panelH = shownLines.length * printLeading + 2 * padV - (printLeading - printFontSize);
-        const panelX = insetL + (safeW - panelW) / 2;
-        const panelY = SAFE_MARGIN_PT; // panel bottom edge, 15mm above the trim
+        // The panel sits ONLY in the page's declared text zone (default
+        // bottom-centre, the layout every pre-zone book was composed for).
+        const zone = typeof page.textZone === 'string' ? page.textZone : 'bottom';
+        const zoneTop = zone.startsWith('top');
+        const panelX = zone.endsWith('-left') ? insetL : zone.endsWith('-right') ? insetL + safeW - panelW : insetL + (safeW - panelW) / 2;
+        const panelY = zoneTop ? pageHeight - SAFE_MARGIN_PT - panelH : SAFE_MARGIN_PT;
         storyPage.drawRectangle({ x: panelX, y: panelY, width: panelW, height: panelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
         shownLines.forEach((line, i) => {
           const w = fonts.text.widthOfTextAtSize(line.text, printFontSize);
@@ -1123,7 +1141,7 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
             color: INK,
           });
         });
-        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `verse on a cream panel over the art: ${shownLines.length} line(s) at ${printFontSize}pt on ${printLeading}pt leading, inside 15mm/20mm-gutter margins` });
+        qa.push({ where: `page ${page.page}`, severity: 'pass', check: `verse on a cream panel in the declared text zone (${zone}) over the art: ${shownLines.length} line(s) at ${printFontSize}pt on ${printLeading}pt leading, inside 15mm/20mm-gutter margins` });
       }
       continue;
     }
@@ -1772,7 +1790,7 @@ serve(async (req) => {
       throw authError;
     }
 
-    const { config, pages, storyId, includeBleed = true, coverImage, backCoverImage } = await req.json();
+    const { config, pages, storyId, includeBleed = true, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl } = await req.json();
 
     if (!storyId || typeof storyId !== 'string' || storyId.length > 100) {
       throw new Error('Missing story id.');
@@ -1814,8 +1832,8 @@ serve(async (req) => {
     // gating the customer's digital PDF on press QA would refuse contract-valid
     // books. Resolve the press composition's format awareness before enabling.
     const printEnabled = Deno.env.get('PRINT_ENABLED') === 'true';
-    const web = await createPDF(config, pages, false, coverImage, backCoverImage);
-    const print = printEnabled ? await createPDF(config, pages, true, coverImage, backCoverImage) : null;
+    const web = await createPDF(config, pages, false, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl);
+    const print = printEnabled ? await createPDF(config, pages, true, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl) : null;
     // Web and print runs raise many of the same findings; drop exact
     // duplicates but keep distinct print passes (print cover, front matter,
     // back cover) so the QA trail shows how the press pages were typeset.

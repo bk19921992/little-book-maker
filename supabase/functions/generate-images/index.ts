@@ -6,7 +6,7 @@ import { claimBook, bookPaymentRequired } from "../_shared/bookGate.ts"
 import { checkAndRecordUsage, tooManyRequestsResponse } from "../_shared/usage.ts"
 import { buildItems, MAX_ATTEMPTS, runStep, summarise, type AttemptWorker } from "./jobs.ts"
 import { SupabaseJobStore } from "./jobStore.ts"
-import { acceptedReferenceImage, BACK_COVER_REVIEW_BRIEF, BACK_COVER_REVIEW_LABEL, buildBackCoverPrompt, buildCoverArtDirectionPrompt, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, pickBackCoverSubject, type ImagePrompt, ART_DIRECTION_SKIPPED, artDirectionEnabled, artDirectionOutcome, interpretArtDirectionResponse, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
+import { acceptedReferenceImage, BACK_COVER_REVIEW_BRIEF, BACK_COVER_REVIEW_LABEL, buildAnatomyPrompt, buildBackCoverPrompt, buildCoverArtDirectionPrompt, buildCoverPrompt, buildPagePrompt, buildReviewPrompt, buildStyleBible, COVER_REVIEW_BRIEF, COVER_REVIEW_LABEL, pickBackCoverSubject, type ImagePrompt, ART_DIRECTION_SKIPPED, artDirectionEnabled, artDirectionOutcome, interpretArtDirectionResponse, interpretReviewResponse, OPENAI_SIZES, pageScene, type ReviewVerdict, type ReviewContext, type StoryConfig, styleProfile, withReviewFeedback } from "./prompts.ts"
 import { ART_DIRECTION_TEST_MODEL, isServiceRoleRequest, runArtDirectionSelfTest } from "./artDirectionTest.ts"
 import { buildBlurbPrompt, validateBlurb } from "../_shared/blurb.ts"
 import { editImageWithReference, generateOneImage, preflightImageRequest, resolveImageModel, resolveImageQuality, resolveImageSize } from "./openai.ts"
@@ -39,11 +39,11 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
           model: reviewModel,
           messages: [{ role: 'user', content: [
             { type: 'text', text: reviewPrompt },
-            ...(ctx.referenceDataUrl ? [{ type: 'image_url', image_url: { url: ctx.referenceDataUrl } }] : []),
-            { type: 'image_url', image_url: { url: imageDataUrl } },
+            ...(ctx.referenceDataUrl ? [{ type: 'image_url', image_url: { url: ctx.referenceDataUrl, detail: 'high' } }] : []),
+            { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
           ] }],
           // Room for a long issues list: a reply cut off mid-JSON is a reject.
-          max_completion_tokens: 600,
+          max_completion_tokens: 1200,
           response_format: { type: 'json_object' },
         }),
       })
@@ -60,6 +60,52 @@ async function reviewImage(openaiKey: string, reviewModel: string, imageDataUrl:
   // Genuine outage: keep the image but mark it UNREVIEWED. It is surfaced
   // to the client, which re-checks it before checkout - never silently passed.
   return { pass: true, issues: [], skipped: true }
+}
+
+// Dedicated anatomy pass: a second, specialist vision call that checks only
+// limbs, hands, faces and stray body parts. Runs AFTER the general review;
+// a candidate ships only when both pass (23 Nov 2026 owner review).
+async function anatomyImage(openaiKey: string, reviewModel: string, imageDataUrl: string, label: string): Promise<ImageReview> {
+  const anatomyPrompt = buildAnatomyPrompt(label)
+  for (let call = 1; call <= 2; call++) {
+    let verdict: ReviewVerdict
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: reviewModel,
+          messages: [{ role: 'user', content: [
+            { type: 'text', text: anatomyPrompt },
+            { type: 'image_url', image_url: { url: imageDataUrl, detail: 'high' } },
+          ] }],
+          max_completion_tokens: 1200,
+          response_format: { type: 'json_object' },
+        }),
+      })
+      const body = await response.json().catch(() => null)
+      verdict = interpretReviewResponse(response.status, body)
+    } catch (networkError) {
+      verdict = { verdict: 'unavailable', reason: networkError instanceof Error ? networkError.message : String(networkError) }
+    }
+    if (verdict.verdict === 'pass') return { pass: true, issues: [] }
+    if (verdict.verdict === 'reject') return { pass: false, issues: verdict.issues }
+    console.error(`Anatomy review unavailable for ${label} (call ${call}): ${verdict.reason}`)
+    if (call === 1) await new Promise((r) => setTimeout(r, 1500))
+  }
+  return { pass: true, issues: [], skipped: true }
+}
+
+// The full gate for one candidate image: general quality review, then the
+// dedicated anatomy pass when the general review accepts. Rejections merge
+// into one issues list that feeds the next attempt's prompt; an outage in
+// BOTH passes marks the image unreviewed (never silently passed).
+async function reviewCandidate(openaiKey: string, reviewModel: string, imageDataUrl: string, ctx: ReviewContext): Promise<ImageReview> {
+  const general = await reviewImage(openaiKey, reviewModel, imageDataUrl, ctx)
+  if (!general.pass) return general
+  const anatomy = await anatomyImage(openaiKey, reviewModel, imageDataUrl, ctx.label)
+  if (!anatomy.pass) return anatomy
+  return { pass: true, issues: [], ...(general.skipped && anatomy.skipped ? { skipped: true } : {}) }
 }
 
 // Cover art direction: once the cover illustration has PASSED the vision
@@ -182,13 +228,14 @@ function jobWorker(openaiKey: string): AttemptWorker<JobRequest, ImagePrompt> {
     } else {
       url = await generateOneImage(openaiKey, model, request.size, quality, prompt)
     }
-    const review = await reviewImage(openaiKey, reviewModel, url, {
+    const review = await reviewCandidate(openaiKey, reviewModel, url, {
       label: isCover ? COVER_REVIEW_LABEL : label,
       // The reviewer sees the page's printed words as well as the scene
       // brief, so text/image drift (named clothing, props, setting) is
       // actually checked - the image prompt alone never contained them.
       brief: isCover ? COVER_REVIEW_BRIEF : pageScene(item.prompt!) + (item.prompt!.text ? `\nPage text: ${item.prompt!.text}` : ''),
       config: request.config,
+      ...(!isCover && item.prompt?.textZone ? { textZone: item.prompt.textZone } : {}),
       referenceDataUrl: activeReference || undefined,
     })
     return { url, review }
@@ -257,11 +304,12 @@ serve(async (req) => {
       for (const item of reviewOnly.slice(0, 12)) {
         const url = typeof item === 'string' ? item : item?.url
         if (!url) continue
-        const r = await reviewImage(openaiKey, reviewModel0, url, {
+        const r = await reviewCandidate(openaiKey, reviewModel0, url, {
           label: (typeof item === 'object' && item?.label) || 'an illustration',
           brief: (typeof item === 'object' && item?.brief) || "children's book illustration",
           config: (typeof item === 'object' && item?.config) || prompts?.[0]?.config,
           referenceDataUrl: (typeof item === 'object' && item?.reference) || undefined,
+          ...(typeof item === 'object' && item?.textZone ? { textZone: item.textZone } : {}),
         })
         reviews.push({ label: (typeof item === 'object' && item?.label) || 'image', ...r })
       }
@@ -305,7 +353,7 @@ serve(async (req) => {
           } else {
             url = await generateOneImage(openaiKey, suiteModel, suiteSize, suiteQuality, attemptPrompt)
           }
-          review = await reviewImage(openaiKey, suiteReviewModel, url, {
+          review = await reviewCandidate(openaiKey, suiteReviewModel, url, {
             label,
             brief,
             config: suiteConfig,
@@ -461,7 +509,7 @@ serve(async (req) => {
       }
       // The config is stored once on the job, not on every item.
       const pagePrompts: ImagePrompt[] = (prompts as ImagePrompt[]).map((p) => ({
-        page: Number(p.page), prompt: `${p.prompt || ''}\n${body.sceneLedger ? sceneContext(body.sceneLedger as SceneLedger,Number(p.page)) : ''}`, text: p.text, visualBrief: `${p.visualBrief || ''}\n${body.sceneLedger ? sceneContext(body.sceneLedger as SceneLedger,Number(p.page)) : ''}`,
+        page: Number(p.page), prompt: `${p.prompt || ''}\n${body.sceneLedger ? sceneContext(body.sceneLedger as SceneLedger,Number(p.page)) : ''}`, text: p.text, visualBrief: `${p.visualBrief || ''}\n${body.sceneLedger ? sceneContext(body.sceneLedger as SceneLedger,Number(p.page)) : ''}`, ...(p.textZone ? { textZone: p.textZone } : {}),
       }))
       if (pagePrompts.some((p) => !Number.isInteger(p.page)) || new Set(pagePrompts.map((p) => p.page)).size !== pagePrompts.length) {
         return json({ error: 'Each page must have a unique page number.' }, 400)
@@ -544,11 +592,12 @@ serve(async (req) => {
           } else {
             url = await generateOneImage(openaiKey, model, size, quality, attemptPrompt)
           }
-          review = await reviewImage(openaiKey, reviewModel, url, {
+          review = await reviewCandidate(openaiKey, reviewModel, url, {
             label: `page ${promptData.page}`,
             brief: scene,
             config: promptData.config,
             referenceDataUrl: activeReference || undefined,
+            ...(promptData.textZone ? { textZone: promptData.textZone } : {}),
           })
           if (review.pass) break
         }
@@ -603,7 +652,7 @@ serve(async (req) => {
           } else {
             coverUrl = await generateOneImage(openaiKey, model, size, quality, fullCoverPrompt)
           }
-          coverReview = await reviewImage(openaiKey, reviewModel, coverUrl, {
+          coverReview = await reviewCandidate(openaiKey, reviewModel, coverUrl, {
             label: COVER_REVIEW_LABEL,
             brief: COVER_REVIEW_BRIEF,
             config: prompts[0]?.config,
