@@ -332,7 +332,7 @@ function dpiBleedCheck(where: string, dpi: number): { where: string; severity: '
   return { where, severity: 'fail', check: `illustration only ${dpi} dpi at full-page bleed; it will look pixelated` };
 }
 
-export async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string, titleImageUrl?: string, dedicationImageUrl?: string): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
+export async function createPDF(config: StoryConfigInput, pages: StoryPage[], includeBleed: boolean, coverImage?: string, backCoverImage?: string, titleImageUrl?: string, dedicationImageUrl?: string, mergeTitleDedication?: boolean): Promise<{ bytes: Uint8Array; qa: QaEntry[] }> {
   const pdfDoc = await PDFDocument.create();
   // Print PDFs carry the profile marker the order path requires; web PDFs
   // stay unmarked so a web export can never be ordered.
@@ -958,6 +958,47 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
         tp.drawText(line, { x: (pageWidth - w) / 2, y: tpPanelY + cvY(8) + (tpByFit.lines.length - 1 - i) * tpByFit.size * 1.3, size: tpByFit.size, font: coverFonts.text, color: INK });
       });
     }
+    if (includeBleed && mergeTitleDedication) {
+      // Merged bookplate (23 Nov 2026 owner review, v5): the opening read
+      // as three near-identical cover-style plates, so the dedication
+      // lock-up joins the title page as a compact bottom bookplate and the
+      // separate dedication page is retired (print only; the padding below
+      // keeps the page count a multiple of four with real content).
+      const bpBelSize = Math.max(10, Math.round(11 * sizeScale));
+      const bpNameSize = Math.max(13, Math.round(16 * sizeScale));
+      const bpBel = 'This book belongs to';
+      const bpDedFit = dedicationText ? fitCoverSubtext(dedicationText, fonts.text, pageWidth * TEXT_MEASURE, Math.max(9, Math.round(10 * sizeScale)), Math.max(8, Math.round(9 * sizeScale)), 2) : null;
+      const bpNameFit = coverChildName ? fitCoverSubtext(coverChildName, coverFonts.display, pageWidth * TEXT_MEASURE, bpNameSize, Math.max(11, Math.round(12 * sizeScale)), 1) : null;
+      const lineWs = [fonts.text.widthOfTextAtSize(bpBel, bpBelSize)];
+      if (bpNameFit) lineWs.push(coverFonts.display.widthOfTextAtSize(coverChildName, bpNameFit.size));
+      else lineWs.push(cv(60));
+      if (bpDedFit) bpDedFit.lines.forEach((l) => lineWs.push(fonts.text.widthOfTextAtSize(l, bpDedFit.size)));
+      const bpPanelW = Math.min(Math.max(...lineWs) + 2 * cv(10), pageWidth - 2 * GUTTER_PT);
+      const bpPanelH = 2 * cvY(5) + bpBelSize * 1.5 + (bpNameFit ? bpNameFit.size * 1.7 : cvY(10)) + (bpDedFit ? bpDedFit.lines.length * bpDedFit.size * 1.5 : 0);
+      const bpPanelX = (pageWidth - bpPanelW) / 2;
+      const bpPanelY = SAFE_MARGIN_PT;
+      tp.drawRectangle({ x: bpPanelX, y: bpPanelY, width: bpPanelW, height: bpPanelH, color: PAPER, opacity: 0.92, borderColor: MOSS, borderWidth: 0.5, borderOpacity: 0.4 });
+      let bpY = bpPanelY + bpPanelH - cvY(5) - bpBelSize;
+      let bw = fonts.text.widthOfTextAtSize(bpBel, bpBelSize);
+      tp.drawText(bpBel, { x: (pageWidth - bw) / 2, y: bpY, size: bpBelSize, font: fonts.text, color: INK });
+      if (bpNameFit) {
+        bpY -= bpNameFit.size * 1.7;
+        bw = coverFonts.display.widthOfTextAtSize(coverChildName, bpNameFit.size);
+        tp.drawText(coverChildName, { x: (pageWidth - bw) / 2, y: bpY, size: bpNameFit.size, font: coverFonts.display, color: INK });
+      } else {
+        tp.drawLine({ start: { x: (pageWidth - cv(60)) / 2, y: bpY - cvY(6) }, end: { x: (pageWidth + cv(60)) / 2, y: bpY - cvY(6) }, thickness: 0.6, color: INK, opacity: 0.5 });
+        bpY -= cvY(10);
+      }
+      if (bpDedFit) {
+        bpDedFit.lines.forEach((line) => {
+          bpY -= bpDedFit.size * 1.5;
+          const lw = fonts.text.widthOfTextAtSize(line, bpDedFit.size);
+          tp.drawText(line, { x: (pageWidth - lw) / 2, y: bpY, size: bpDedFit.size, font: fonts.text, color: INK });
+        });
+        qa.push({ where: 'dedication', severity: bpDedFit.fits ? 'pass' : 'fail', check: bpDedFit.fits ? `dedication message fitted at ${bpDedFit.size}pt on the merged bookplate${bpDedFit.lines.length > 1 ? `, wrapped to ${bpDedFit.lines.length} lines` : ''} - every word preserved` : 'the dedication cannot fit the merged bookplate at a readable size; shorten the dedication' });
+      }
+      qa.push({ where: 'title page', severity: 'pass', check: 'title and bookplate share one page: the opening is cover, title, story (23 Nov 2026 owner review)' });
+    }
     qa.push({ where: 'title page', severity: titleImg ? 'pass' : 'warn', check: 'print title page: full-page art with the title lock-up on a cream panel (no text-only plates)' });
     } else {
     const tpFit = fitCoverTitle(titleText, coverFonts.display, pageWidth * TEXT_MEASURE, Math.max(16, Math.round(30 * sizeScale)), Math.round(pageWidth * 0.05));
@@ -998,7 +1039,9 @@ export async function createPDF(config: StoryConfigInput, pages: StoryPage[], in
   // Dedication page: "This book belongs to" with the child's name at
   // 24pt (or a write-in line when no name is on record), the family's own
   // message when one was collected, and the imprint at 7pt at the foot.
-  {
+  // Retired in print when mergeTitleDedication folds the lock-up into the
+  // title page's bottom bookplate.
+  if (!(includeBleed && mergeTitleDedication)) {
     const dp = pdfDoc.addPage([pageWidth, pageHeight]);
     markPrintBoxes(dp);
     dp.drawRectangle({ x: 0, y: 0, width: pageWidth, height: pageHeight, color: PAPER });
@@ -1793,7 +1836,7 @@ serve(async (req) => {
       throw authError;
     }
 
-    const { config, pages, storyId, includeBleed = true, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl } = await req.json();
+    const { config, pages, storyId, includeBleed = true, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl, mergeTitleDedication } = await req.json();
 
     if (!storyId || typeof storyId !== 'string' || storyId.length > 100) {
       throw new Error('Missing story id.');
@@ -1835,8 +1878,8 @@ serve(async (req) => {
     // gating the customer's digital PDF on press QA would refuse contract-valid
     // books. Resolve the press composition's format awareness before enabling.
     const printEnabled = Deno.env.get('PRINT_ENABLED') === 'true';
-    const web = await createPDF(config, pages, false, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl);
-    const print = printEnabled ? await createPDF(config, pages, true, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl) : null;
+    const web = await createPDF(config, pages, false, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl, mergeTitleDedication);
+    const print = printEnabled ? await createPDF(config, pages, true, coverImage, backCoverImage, titleImageUrl, dedicationImageUrl, mergeTitleDedication) : null;
     // Web and print runs raise many of the same findings; drop exact
     // duplicates but keep distinct print passes (print cover, front matter,
     // back cover) so the QA trail shows how the press pages were typeset.
