@@ -382,6 +382,7 @@ export const SetupForm: React.FC<SetupFormProps> = ({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="Read-aloud 0–2">Read-aloud 0–2 years</SelectItem>
                   <SelectItem value="Toddler 2–3">Toddler 2–3 years</SelectItem>
                   <SelectItem value="Early 4–5">Early reader 4–5 years</SelectItem>
                   <SelectItem value="Primary 6–8">Primary 6–8 years</SelectItem>

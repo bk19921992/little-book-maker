@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { contractViolations, endsComplete, lineShapeViolations, wordRange, packLines } from './textContract.ts';
+import { contractViolations, endsComplete, lineBudget, lineShapeViolations, wordRange, packLines } from './textContract.ts';
 
 // Early 4-5 on A4 landscape: 5 lines x 6 full-line words = 20-30 total.
 test('word range for Early 4-5 A4 landscape is 20-30', () => {
@@ -70,4 +70,11 @@ test('a page ending mid-sentence is a contract violation', () => {
 test('closing punctuation with a trailing quote passes', () => {
   const page = 'Alex puts on his yellow shirt.\nAlex picks up his blue truck.\nThey walk to the front door.\nAlex smiles when Pip is near.\nPip wags her soft black tail!"';
   assert.ok(!contractViolations(page, 'Early 4–5', 'A4 landscape').some((s) => s.includes('mid-sentence')));
+});
+
+test('read-aloud 0-2 band: 2-4 short lines, tiny word range, refrain-age copy',()=>{
+  assert.equal(lineBudget('Read-aloud 0–2','210×210 mm square'),4);
+  assert.deepEqual(wordRange('Read-aloud 0–2','210×210 mm square'),{min:3,max:16});
+  assert.deepEqual(contractViolations("Thump, thump, thump.\nIvy's tail is drumming the rug.",'Read-aloud 0–2','210×210 mm square'),[]);
+  assert.ok(contractViolations("The little boy walked slowly down the long winding road towards the nursery school gates.","Read-aloud 0–2","210×210 mm square").length>0);
 });

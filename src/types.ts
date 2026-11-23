@@ -2,7 +2,7 @@ import type { SequenceReview } from '../supabase/functions/_shared/bookContinuit
 import type { SceneLedger } from '../supabase/functions/_shared/sceneLedger';
 // Core types for the storybook generator
 
-export type ReadingLevel = 'Toddler 2–3' | 'Early 4–5' | 'Primary 6–8';
+export type ReadingLevel = 'Read-aloud 0–2' | 'Toddler 2–3' | 'Early 4–5' | 'Primary 6–8';
 
 export type PageSizePreset = 'A5 portrait' | 'A4 portrait' | '210×210 mm square' | 'A4 landscape';
 

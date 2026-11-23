@@ -101,7 +101,15 @@ ${pageSceneContext(pageOutline.page)}
 - This is page ${pageOutline.page} of ${config.lengthPages}
 
 CRITICAL READING LEVEL REQUIREMENTS FOR ${config.readingLevel}:
-${config.readingLevel === 'Toddler 2–3' ? 
+${config.readingLevel === 'Read-aloud 0–2' ?
+  `- Write ${range.min}-${range.max} words per page total
+- 2-4 very short lines; the pictures carry the meaning, the words are for reading ALOUD to a baby
+- Familiar objects, sounds to join in (thump thump, beep beep), and the book's ONE repeated refrain where it fits
+- Name feelings simply and warmly
+- Example: "Thump, thump, thump.
+Ivy's tail is drumming the rug.
+Good morning, Ivy!"` :
+config.readingLevel === 'Toddler 2–3' ? 
   `- Write ${range.min}-${range.max} words per page total\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort and learning\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words only\n- Be descriptive but simple\n- Example: "Big red ball. Ball is round. Ball bounces up and down. Up, up, up! Down, down, down! Fun ball!"` :
 config.readingLevel === 'Early 4–5' ?
   `- Write ${range.min}-${range.max} words per page total\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language that toddlers love\n- Focus on everyday experiences and emotions\n- Use descriptive but simple words\n- Create engaging, flowing text\n- Example: "The little boy ran fast. He ran to the big tree. The tree had pretty green leaves. So many leaves! He touched the soft grass. Green, soft grass!"` :

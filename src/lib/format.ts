@@ -43,7 +43,7 @@ export const fallbackFormat = (config: StoryConfig): ResolvedFormat => {
       source: 'fallback',
     };
   }
-  if (config.readingLevel === 'Toddler 2–3') {
+  if (config.readingLevel === 'Read-aloud 0–2' || config.readingLevel === 'Toddler 2–3') {
     return {
       pageSize: '210×210 mm square',
       pageLayout: 'split',

@@ -174,7 +174,15 @@ CONTINUITY & CAST LOCK (owner direction 23 Nov 2026 - a book that contradicts it
 - Negative space: every imagePrompt must name where clean, uncluttered, low-contrast space is left for printed text (e.g. 'soft empty sky in the upper third'), so no page needs a blank text-only plate.
 
 CRITICAL READING LEVEL REQUIREMENTS:
-${config.readingLevel === 'Toddler 2–3' ? 
+${config.readingLevel === 'Read-aloud 0–2' ?
+  `- Write ${planRange.min}-${planRange.max} words per page
+- 2-4 very short lines; the pictures carry the meaning, the words are for reading ALOUD to a baby
+- Fill the page with familiar objects, sounds to join in (thump thump, beep beep) and ONE repeated refrain across the book
+- Name feelings simply and warmly
+- Example: "Thump, thump, thump.
+Ivy's tail is drumming the rug.
+Good morning, Ivy!"` :
+config.readingLevel === 'Toddler 2–3' ? 
   `- Write ${planRange.min}-${planRange.max} words per page\n- Use simple 2-5 word sentences\n- Repeat key phrases for comfort\n- Focus on basic concepts (colors, animals, actions)\n- Use familiar, concrete words\n- Example: "Big red ball. Ball is round. Ball bounces high. Fun, fun, fun!"` :
 config.readingLevel === 'Early 4–5' ?
   `- Write ${planRange.min}-${planRange.max} words per page\n- Use simple 3-6 word sentences\n- Include repetitive, rhythmic language\n- Focus on everyday experiences\n- Use descriptive but simple words\n- Example: "The little girl ran fast. She ran to the big tree. The tree had green leaves. Pretty, pretty leaves!"` :

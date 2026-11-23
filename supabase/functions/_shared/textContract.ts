@@ -19,7 +19,7 @@ export const MAX_LINE_CHARS = 34;
 // for ordinary copy.
 const WORDS_PER_FULL_LINE = 6;
 
-export type ReadingLevelName = 'Toddler 2–3' | 'Early 4–5' | 'Primary 6–8';
+export type ReadingLevelName = 'Read-aloud 0–2' | 'Toddler 2–3' | 'Early 4–5' | 'Primary 6–8';
 
 // Lines the band holds for a page size. Unknown or not-yet-chosen formats
 // (auto mode before the planner picks) get the smaller capacity.
@@ -28,12 +28,13 @@ export function formatLineCapacity(pageSize?: string): number {
 }
 
 export function lineBudget(readingLevel: string, pageSize?: string): number {
-  return readingLevel === 'Toddler 2–3' ? 4 : formatLineCapacity(pageSize);
+  return readingLevel === 'Toddler 2–3' || readingLevel === 'Read-aloud 0–2' ? 4 : formatLineCapacity(pageSize);
 }
 
 export function wordRange(readingLevel: string, pageSize?: string): { min: number; max: number } {
   const ceiling = lineBudget(readingLevel, pageSize) * WORDS_PER_FULL_LINE;
   switch (readingLevel) {
+    case 'Read-aloud 0–2': return { min: 3, max: Math.min(16, ceiling) };
     case 'Toddler 2–3': return { min: 5, max: Math.min(24, ceiling) };
     case 'Early 4–5': return { min: 20, max: ceiling };
     case 'Primary 6–8': return { min: 24, max: ceiling };
