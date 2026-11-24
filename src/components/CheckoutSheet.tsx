@@ -373,7 +373,7 @@ export const CheckoutSheet = (props: CheckoutSheetProps) => {
           {item === 'export' && (
             <p className="text-sm text-muted-foreground">
               {PAID_CHECKOUT_ENABLED
-                ? 'Your first book is free. Each additional book and PDF costs £2.99, paid before generation.'
+                ? 'Your first book is free. Each additional book, PDF included, costs £2.99, paid before generation.'
                 : `Your first PDF is free. Additional PDFs will cost £2.99 when paid checkout opens. ${PAID_CHECKOUT_NOTICE}`}
             </p>
           )}

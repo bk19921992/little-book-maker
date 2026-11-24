@@ -13,7 +13,7 @@ export const CURRENCY = 'gbp';
 // until Ben approves go-live.
 export const PAID_CHECKOUT_ENABLED = true;
 export const PAID_CHECKOUT_NOTICE = 'Paid checkout is not available yet.';
-export const ADDITIONAL_BOOK_POLICY = 'Each additional book and PDF costs £2.99, paid before generation. Your first book stays free.';
+export const ADDITIONAL_BOOK_POLICY = 'Each additional book, PDF included, costs £2.99, paid before generation. Your first book stays free.';
 export const PRINT_ORDERS_ENABLED = false;
 
 // Capability gates (docs/CAPABILITIES.md). Ship each slice behind its flag.

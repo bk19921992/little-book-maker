@@ -7,7 +7,7 @@ import './landing.css';
 const questions = [
   ['What can I personalise?', 'Choose your characters, the setting, the kind of story and the illustration style. You can review the story and edit its pages before downloading.'],
   ['How do I get my book?', 'Download your finished book as a PDF to read together or print at home. Your books are saved to your account.'],
-  ['Is there a free book?', 'Your first PDF download is free. Re-download that same book without paying again. Additional books and PDFs are £2.99 each, paid before generation.'],
+  ['Is there a free book?', 'Your first PDF download is free. Re-download that same book without paying again. Each additional book, PDF included, is £2.99, paid before generation.'],
   ['Can I order a printed book?', 'Not yet. Printed book ordering is still in preparation. For now, you can download a PDF.'],
   ['How are the stories made?', 'Make, from The Children\'s Library, uses AI to write and illustrate your story from your choices. Always review the words and pictures before sharing them with a child.'],
 ];
@@ -33,7 +33,7 @@ export default function Landing() {
             ) : (
               <>
                 <div className="sprout-actions"><Link className="sprout-button" to="/app">Create your first book <ArrowRight aria-hidden="true" /></Link><Link className="sprout-secondary" to="/sample">See a sample story</Link></div>
-                <p className="sprout-note">No account needed to start. Your first generation and PDF are free; each additional book and PDF is £2.99. Printed orders are not available yet.</p>
+                <p className="sprout-note">No account needed to start. Your first generation and PDF are free; each additional book, PDF included, is £2.99. Printed orders are not available yet.</p>
               </>
             )}
           </div>
